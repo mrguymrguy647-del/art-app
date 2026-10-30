@@ -8,6 +8,7 @@
 
 mod brush_panel;
 mod canvas_view;
+mod color_panel;
 mod paint_tool;
 mod pen_input;
 mod pen_test;

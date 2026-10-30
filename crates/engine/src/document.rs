@@ -1,5 +1,6 @@
 //! A document: one picture you are working on.
 
+use crate::color::over_paper;
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE};
@@ -57,6 +58,16 @@ impl Document {
         (0..columns as i32).contains(&coord.x) && (0..rows as i32).contains(&coord.y)
     }
 
+    /// The colour you see at canvas position (x, y): the paint laid over
+    /// the paper. `None` outside the canvas. Used by the eyedropper.
+    pub fn sample_color(&self, x: f32, y: f32) -> Option<[u8; 3]> {
+        if !self.contains(x, y) {
+            return None;
+        }
+        let pixel = self.layer.pixel(x.floor() as i32, y.floor() as i32);
+        Some(over_paper(pixel, self.paper))
+    }
+
     /// Wipes the picture (back to blank paper). Returns the tiles as they
     /// were, so clearing can be undone.
     pub fn clear(&mut self) -> TilesBefore {
@@ -97,6 +108,18 @@ mod tests {
         assert!(doc.contains(99.9, 49.9));
         assert!(!doc.contains(100.0, 10.0));
         assert!(!doc.contains(-0.1, 10.0));
+    }
+
+    #[test]
+    fn sampling_shows_paint_on_paper() {
+        let mut doc = Document::new(100, 100);
+        doc.layer.set_pixel(10, 20, Rgba8::new(200, 0, 0, 255));
+        assert_eq!(doc.sample_color(10.5, 20.9), Some([200, 0, 0]));
+        // Unpainted canvas shows the paper.
+        assert_eq!(doc.sample_color(50.0, 50.0), Some([255, 255, 255]));
+        // Off the canvas there is nothing to pick.
+        assert_eq!(doc.sample_color(-1.0, 50.0), None);
+        assert_eq!(doc.sample_color(50.0, 100.0), None);
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! `cargo test`, and it doesn't care which interface sits on top.
 
 pub mod brush;
+pub mod color;
 pub mod document;
 pub mod history;
 pub mod pen;

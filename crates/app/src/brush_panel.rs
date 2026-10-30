@@ -1,8 +1,10 @@
-//! The brush panel: pick brush or eraser, and adjust its settings.
+//! The tool panel: pick brush, eraser or eyedropper, choose a colour, and
+//! adjust the brush settings.
 
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use eframe::egui::{self, Slider};
 
+use crate::color_panel::ColorPicker;
 use crate::paint_tool::{PaintTool, Tool};
 
 /// What the user asked for in the panel this frame.
@@ -12,64 +14,66 @@ pub struct PanelActions {
 }
 
 /// Shows the panel for the painting tools.
-pub fn brush_panel(ui: &mut egui::Ui, tools: &mut PaintTool) -> PanelActions {
+pub fn brush_panel(
+    ui: &mut egui::Ui,
+    tools: &mut PaintTool,
+    colors: &mut ColorPicker,
+) -> PanelActions {
     let mut actions = PanelActions::default();
 
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.selectable_value(&mut tools.tool, Tool::Brush, "Brush (B)");
         ui.selectable_value(&mut tools.tool, Tool::Eraser, "Eraser (E)");
+        ui.selectable_value(&mut tools.tool, Tool::Eyedropper, "Pick (I)")
+            .on_hover_text(
+                "Pick a colour from the canvas. You can also hold Alt, or the pen's side button.",
+            );
     });
     ui.add_space(4.0);
 
-    let is_brush = tools.tool == Tool::Brush;
-    let settings = tools.settings_mut();
-    if is_brush {
-        ui.horizontal(|ui| {
-            ui.label("Colour");
-            // A simple colour button for now; Step 6 adds a colour wheel and eyedropper.
-            ui.color_edit_button_srgb(&mut settings.color);
-        });
-    }
-    ui.add(
-        Slider::new(&mut settings.size, MIN_SIZE..=MAX_SIZE)
-            .logarithmic(true)
-            .text("Size")
-            .suffix(" px"),
-    );
-    // For the eraser, "opacity" is how strongly it rubs out.
-    let strength_name = if is_brush { "Opacity" } else { "Strength" };
-    ui.add(percent_slider(
-        &mut settings.opacity,
-        0.01..=1.0,
-        strength_name,
-    ));
-    ui.add(percent_slider(&mut settings.flow, 0.01..=1.0, "Flow"));
-    ui.add(percent_slider(
-        &mut settings.hardness,
-        0.0..=1.0,
-        "Hardness",
-    ));
-    ui.add(percent_slider(&mut settings.spacing, 0.02..=1.0, "Spacing"));
+    // Scrolls if the window is too short to show everything.
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        let is_eraser = tools.tool == Tool::Eraser;
+        if !is_eraser {
+            let recent = tools.recent_colors.clone();
+            colors.ui(ui, &mut tools.brush.color, &recent);
+            ui.separator();
+        }
 
-    ui.separator();
-    ui.label("Pen pressure changes:");
-    ui.checkbox(&mut settings.pressure_size, "Size");
-    ui.checkbox(&mut settings.pressure_opacity, strength_name);
-    ui.checkbox(&mut settings.pressure_flow, "Flow");
+        let settings = tools.settings_mut();
+        ui.add(
+            Slider::new(&mut settings.size, MIN_SIZE..=MAX_SIZE)
+                .logarithmic(true)
+                .text("Size")
+                .suffix(" px"),
+        );
+        // For the eraser, "opacity" is how strongly it rubs out.
+        let strength_name = if is_eraser { "Strength" } else { "Opacity" };
+        ui.add(percent_slider(&mut settings.opacity, 0.01..=1.0, strength_name));
+        ui.add(percent_slider(&mut settings.flow, 0.01..=1.0, "Flow"));
+        ui.add(percent_slider(&mut settings.hardness, 0.0..=1.0, "Hardness"));
+        ui.add(percent_slider(&mut settings.spacing, 0.02..=1.0, "Spacing"));
 
-    ui.separator();
-    // Smoothing is shared by the brush and the eraser.
-    ui.add(percent_slider(&mut tools.smoothing, 0.0..=1.0, "Smoothing"));
+        ui.separator();
+        ui.label("Pen pressure changes:");
+        ui.checkbox(&mut settings.pressure_size, "Size");
+        ui.checkbox(&mut settings.pressure_opacity, strength_name);
+        ui.checkbox(&mut settings.pressure_flow, "Flow");
 
-    ui.separator();
-    // Clearing can be undone like any other change.
-    if ui.button("Clear canvas").clicked() {
-        actions.clear_canvas = true;
-    }
+        ui.separator();
+        // Smoothing is shared by the brush and the eraser.
+        ui.add(percent_slider(&mut tools.smoothing, 0.0..=1.0, "Smoothing"));
 
-    ui.add_space(8.0);
-    ui.weak("Tips: [ and ] change the size. Turn the pen round to erase.");
+        ui.separator();
+        // Clearing can be undone like any other change.
+        if ui.button("Clear canvas").clicked() {
+            actions.clear_canvas = true;
+        }
+
+        ui.add_space(8.0);
+        ui.weak("Tips: [ and ] change the size. Turn the pen round to erase. Hold Alt to pick a colour.");
+    });
 
     actions
 }

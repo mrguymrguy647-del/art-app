@@ -25,6 +25,7 @@ use eframe::egui::{
 };
 
 use crate::brush_panel::brush_panel;
+use crate::color_panel::ColorPicker;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
 
@@ -74,6 +75,7 @@ pub struct CanvasView {
     /// The canvas pixel under the mouse, for the status bar.
     pointer_on_canvas: Option<Point>,
     tools: PaintTool,
+    colors: ColorPicker,
 }
 
 impl Default for CanvasView {
@@ -85,6 +87,7 @@ impl Default for CanvasView {
             drag: None,
             pointer_on_canvas: None,
             tools: PaintTool::default(),
+            colors: ColorPicker::default(),
         }
     }
 }
@@ -103,7 +106,7 @@ impl CanvasView {
         egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
-                let actions = brush_panel(ui, &mut self.tools);
+                let actions = brush_panel(ui, &mut self.tools, &mut self.colors);
                 if actions.clear_canvas {
                     let tiles_before = document.clear();
                     if !tiles_before.is_empty() {
@@ -148,10 +151,17 @@ impl CanvasView {
         let painter = ui.painter_at(rect);
         self.paint(&painter, document, rect, &visible);
 
-        // The brush outline replaces the mouse pointer over the canvas.
+        // The brush outline (or, when picking a colour, a preview of the
+        // colour underneath) replaces the mouse pointer over the canvas.
         if let Some(position) = self.tools.outline_position(ui, rect) {
-            let radius = self.tools.settings().size / 2.0 * self.view.zoom();
-            draw_brush_outline(&painter, position, radius);
+            if self.tools.eyedropper_active(ui) {
+                let on_canvas = self.view.screen_to_canvas(to_point(position));
+                let colour = document.sample_color(on_canvas.x, on_canvas.y);
+                draw_eyedropper(&painter, position, colour);
+            } else {
+                let radius = self.tools.settings().size / 2.0 * self.view.zoom();
+                draw_brush_outline(&painter, position, radius);
+            }
             if !navigating {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
             }
@@ -299,6 +309,9 @@ impl CanvasView {
             }
             if presses(Key::E) > 0 {
                 self.tools.tool = Tool::Eraser;
+            }
+            if presses(Key::I) > 0 {
+                self.tools.tool = Tool::Eyedropper;
             }
         }
 
@@ -511,7 +524,7 @@ impl CanvasView {
             ui.label(format!("Undo steps: {} ({megabytes:.0} MB)", history.undo_steps()));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak("Wheel: zoom · Space+drag: pan · Shift+Space+drag: rotate · [ ]: brush size · 0: fit");
+                ui.weak("Wheel: zoom · Space+drag: pan · Shift+Space+drag: rotate · [ ]: size · Alt: pick colour · 0: fit");
             });
         });
     }
@@ -519,6 +532,33 @@ impl CanvasView {
 
 /// Draws the brush outline: a circle the size of the brush, in black and
 /// white so it shows up on any colour. Tiny brushes get a small cross.
+/// Draws the eyedropper: a thick ring showing the colour under the
+/// pointer (grey off the canvas), with a small cross in the middle.
+fn draw_eyedropper(painter: &egui::Painter, centre: Pos2, colour: Option<[u8; 3]>) {
+    let fill = colour.map_or(Color32::from_gray(128), |[r, g, b]| {
+        Color32::from_rgb(r, g, b)
+    });
+    let radius = 18.0;
+    painter.circle_stroke(
+        centre,
+        radius,
+        Stroke::new(10.0, Color32::from_black_alpha(160)),
+    );
+    painter.circle_stroke(centre, radius, Stroke::new(8.0, fill));
+    painter.circle_stroke(
+        centre,
+        radius - 4.5,
+        Stroke::new(1.0, Color32::from_white_alpha(200)),
+    );
+    for stroke in [
+        Stroke::new(3.0, Color32::from_black_alpha(140)),
+        Stroke::new(1.0, Color32::from_white_alpha(230)),
+    ] {
+        painter.line_segment([centre - vec2(4.0, 0.0), centre + vec2(4.0, 0.0)], stroke);
+        painter.line_segment([centre - vec2(0.0, 4.0), centre + vec2(0.0, 4.0)], stroke);
+    }
+}
+
 fn draw_brush_outline(painter: &egui::Painter, centre: Pos2, radius: f32) {
     let dark = Stroke::new(3.0, Color32::from_black_alpha(140));
     let light = Stroke::new(1.0, Color32::from_white_alpha(230));

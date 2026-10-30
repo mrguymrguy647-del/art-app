@@ -2,9 +2,9 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1, Step 5: paint and erase with a round brush (pen pressure changes size and
-opacity), undo and redo, on a canvas you can zoom, pan and rotate. The pen test is under **Pen test**
-in the top bar.
+**Status:** Phase 1, Step 6: paint and erase with a round brush (pen pressure changes size and
+opacity), pick colours from a colour wheel or the canvas, undo and redo, on a canvas you can zoom,
+pan and rotate. The pen test is under **Pen test** in the top bar.
 
 ## Run it on Windows (no terminal needed)
 
@@ -38,6 +38,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 |---|---|---|
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
 | Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
+| Choose a colour | Colour wheel (ring = hue, square = how vivid / bright), type a hex code like `#FF8800`, or click a recent colour | Same, by tapping |
+| Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`), or the **Undo** / **Redo** buttons | Tap the buttons |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
@@ -63,12 +65,13 @@ art-app/
     │       ├── lib.rs
     │       ├── tile.rs       256×256 blocks of pixels
     │       ├── surface.rs    a layer's pixels: only painted tiles exist
-    │       ├── document.rs   canvas size, paper, layer
+    │       ├── document.rs   canvas size, paper, layer, colour sampling
     │       ├── view.rs       zoom / pan / rotate maths
     │       ├── brush.rs      brush settings, dab shape
     │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
     │       ├── smoothing.rs  steadier lines
     │       ├── history.rs    undo / redo
+    │       ├── color.rs      RGB ↔ HSV, hex codes, colour on paper
     │       └── pen.rs        pen samples + tilt maths
     └── app/              the program: window and interface (egui)
         ├── build.rs      puts the icon into ArtApp.exe
@@ -77,7 +80,8 @@ art-app/
             ├── main.rs        starts the app, switches screens
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
             ├── paint_tool.rs  brush and eraser: pen/mouse input into strokes
-            ├── brush_panel.rs the brush / eraser settings panel
+            ├── brush_panel.rs the tool panel (brush, eraser, pick, settings)
+            ├── color_panel.rs colour wheel, hex code, recent colours
             ├── pen_input.rs   reads pressure/tilt from Windows Ink
             └── pen_test.rs    the pen test screen
 ```

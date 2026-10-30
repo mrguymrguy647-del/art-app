@@ -7,6 +7,10 @@
 //!
 //! Turning the pen round to its eraser end switches to the eraser, and
 //! turning it back switches back to the tool you had before.
+//!
+//! The eyedropper picks a colour from the canvas instead of painting. You
+//! can choose it as a tool, or hold Alt (or the pen's side button) to pick
+//! a colour while using any tool.
 
 use std::time::{Duration, Instant};
 
@@ -19,6 +23,7 @@ use art_engine::stroke::{Stroke, StrokePoint};
 use art_engine::view::{Point, View};
 use eframe::egui::{self, PointerButton, Pos2, Rect, pos2};
 
+use crate::color_panel::MAX_RECENT_COLORS;
 use crate::pen_input::InkEvent;
 
 /// After the pen or a finger was used, ignore the mouse for this long.
@@ -34,6 +39,8 @@ const LONGEST_SMOOTHING_STRING: f32 = 60.0;
 pub enum Tool {
     Brush,
     Eraser,
+    /// Picks a colour from the canvas, then switches back to the brush.
+    Eyedropper,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -93,13 +100,19 @@ pub struct PaintTool {
     pub eraser: BrushSettings,
     /// How much lines are steadied: 0 = not at all, 1 = the most.
     pub smoothing: f32,
+    /// Colours recently painted with, newest first.
+    pub recent_colors: Vec<[u8; 3]>,
     /// While the pen is turned round to its eraser end: the tool that was
     /// selected before, to go back to when it's turned back.
     tool_before_pen_flip: Option<Tool>,
     stroke: Option<ActiveStroke>,
+    /// Set while a colour is being picked (the pen or mouse button is down).
+    picking: Option<Source>,
     last_ink_event: Option<Instant>,
     /// Where the pen hovers, in screen points, while it is near the tablet.
     pen_position: Option<Pos2>,
+    /// The pen's side button is held.
+    pen_side_button: bool,
 }
 
 impl Default for PaintTool {
@@ -109,28 +122,40 @@ impl Default for PaintTool {
             brush: BrushSettings::default(),
             eraser: BrushSettings::eraser(),
             smoothing: 0.25,
+            recent_colors: Vec::new(),
             tool_before_pen_flip: None,
             stroke: None,
+            picking: None,
             last_ink_event: None,
             pen_position: None,
+            pen_side_button: false,
         }
     }
 }
 
 impl PaintTool {
-    /// The selected tool's settings.
+    /// The selected tool's settings (the eyedropper shows the brush's).
     pub fn settings(&self) -> &BrushSettings {
         match self.tool {
-            Tool::Brush => &self.brush,
+            Tool::Brush | Tool::Eyedropper => &self.brush,
             Tool::Eraser => &self.eraser,
         }
     }
 
     pub fn settings_mut(&mut self) -> &mut BrushSettings {
         match self.tool {
-            Tool::Brush => &mut self.brush,
+            Tool::Brush | Tool::Eyedropper => &mut self.brush,
             Tool::Eraser => &mut self.eraser,
         }
+    }
+
+    /// True if pressing on the canvas now would pick a colour rather than
+    /// paint: the eyedropper is selected, or Alt or the pen's side button is held.
+    pub fn eyedropper_active(&self, ui: &egui::Ui) -> bool {
+        self.tool == Tool::Eyedropper
+            || self.picking.is_some()
+            || ui.input(|i| i.modifiers.alt)
+            || (self.pen_side_button && self.pen_position.is_some())
     }
 
     /// Reads this frame's pen and mouse input and paints. Finished strokes
@@ -159,6 +184,7 @@ impl PaintTool {
             let point = view.screen_to_canvas(Point::new(pos.x, pos.y));
             StrokePoint::new(point.x, point.y, pressure)
         };
+        let alt_held = ui.input(|i| i.modifiers.alt);
 
         // 1. The pen.
         for event in ink_events {
@@ -174,20 +200,38 @@ impl PaintTool {
                 event.sample.y * points_per_pixel,
             );
             self.pen_position = event.in_range.then_some(pos);
+            self.pen_side_button = event.barrel_button;
             let point = to_canvas(pos, event.sample.pressure);
 
-            match &mut self.stroke {
-                Some(active) if active.source == Source::Pen => {
-                    if event.in_contact {
+            let pen_is_painting =
+                matches!(&self.stroke, Some(active) if active.source == Source::Pen);
+            if pen_is_painting {
+                if event.in_contact {
+                    if let Some(active) = &mut self.stroke {
                         active.add(document, point);
-                    } else {
-                        self.finish_stroke(document, history); // the pen was lifted
                     }
+                } else {
+                    self.finish_stroke(document, history); // the pen was lifted
                 }
-                None if event.in_contact && !navigating && on_canvas(pos) => {
+            } else if self.picking == Some(Source::Pen) {
+                if event.in_contact {
+                    self.pick(document, point);
+                } else {
+                    self.finish_picking();
+                }
+            } else if self.stroke.is_none()
+                && self.picking.is_none()
+                && event.in_contact
+                && !navigating
+                && on_canvas(pos)
+            {
+                // The pen touched the canvas: pick a colour, or start painting.
+                if self.tool == Tool::Eyedropper || alt_held || event.barrel_button {
+                    self.picking = Some(Source::Pen);
+                    self.pick(document, point);
+                } else {
                     self.start_stroke(Source::Pen, view, document, point);
                 }
-                _ => {}
             }
         }
 
@@ -195,8 +239,9 @@ impl PaintTool {
         let ink_is_recent = self
             .last_ink_event
             .is_some_and(|time| now - time < INK_TAKES_PRIORITY_FOR);
-        let pen_is_painting = matches!(&self.stroke, Some(active) if active.source == Source::Pen);
-        if ink_is_recent || pen_is_painting {
+        let pen_is_busy = matches!(&self.stroke, Some(active) if active.source == Source::Pen)
+            || self.picking == Some(Source::Pen);
+        if ink_is_recent || pen_is_busy {
             return;
         }
 
@@ -209,13 +254,21 @@ impl PaintTool {
                     pressed: true,
                     ..
                 } => {
-                    if self.stroke.is_none() && !navigating && on_canvas(pos) {
-                        self.start_stroke(Source::Mouse, view, document, to_canvas(pos, 1.0));
+                    let free = self.stroke.is_none() && self.picking.is_none();
+                    if free && !navigating && on_canvas(pos) {
+                        if self.tool == Tool::Eyedropper || alt_held {
+                            self.picking = Some(Source::Mouse);
+                            self.pick(document, to_canvas(pos, 1.0));
+                        } else {
+                            self.start_stroke(Source::Mouse, view, document, to_canvas(pos, 1.0));
+                        }
                     }
                 }
                 egui::Event::PointerMoved(pos) => {
                     if let Some(active) = &mut self.stroke {
                         active.add(document, to_canvas(pos, 1.0));
+                    } else if self.picking.is_some() {
+                        self.pick(document, to_canvas(pos, 1.0));
                     }
                 }
                 egui::Event::PointerButton {
@@ -223,13 +276,32 @@ impl PaintTool {
                     pressed: false,
                     ..
                 }
-                | egui::Event::PointerGone => self.finish_stroke(document, history),
+                | egui::Event::PointerGone => {
+                    self.finish_stroke(document, history);
+                    self.finish_picking();
+                }
                 _ => {}
             }
         }
         // In case the button was let go outside the window.
         if !primary_down {
             self.finish_stroke(document, history);
+            self.finish_picking();
+        }
+    }
+
+    /// Takes the colour under `point` as the brush colour.
+    fn pick(&mut self, document: &Document, point: StrokePoint) {
+        if let Some(color) = document.sample_color(point.x, point.y) {
+            self.brush.color = color;
+        }
+    }
+
+    /// The button was let go after picking. The eyedropper tool hands
+    /// over to the brush, ready to paint with the new colour.
+    fn finish_picking(&mut self) {
+        if self.picking.take().is_some() && self.tool == Tool::Eyedropper {
+            self.tool = Tool::Brush;
         }
     }
 
@@ -266,6 +338,9 @@ impl PaintTool {
     ) {
         let string_length = self.smoothing * LONGEST_SMOOTHING_STRING / view.zoom();
         let settings = *self.settings();
+        if settings.mode == BrushMode::Paint {
+            self.remember_color(settings.color);
+        }
         let mut active = ActiveStroke {
             name: match settings.mode {
                 BrushMode::Paint => "Brush stroke",
@@ -284,6 +359,13 @@ impl PaintTool {
         if let Some(active) = self.stroke.take() {
             active.finish(document, history);
         }
+    }
+
+    /// Puts `color` at the front of the recent colours.
+    fn remember_color(&mut self, color: [u8; 3]) {
+        self.recent_colors.retain(|&c| c != color);
+        self.recent_colors.insert(0, color);
+        self.recent_colors.truncate(MAX_RECENT_COLORS);
     }
 
     /// True while a stroke is being painted (undo waits until it's done).

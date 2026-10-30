@@ -140,3 +140,22 @@ remember, because the old version of an empty tile is just "no tile".
 The history keeps up to 1 GB of changes and forgets the oldest when it's
 full. The status bar shows how many steps it holds and how much memory
 they use. Undo waits until you finish the stroke you're painting.
+
+## 19. The colour wheel: a hue ring around a square
+Around the ring you choose the hue (red, yellow, green, ...). In the
+square you choose saturation (grey to vivid, left to right) and value
+(dark to bright, bottom to top). This "HSV" way of choosing colours
+matches how people think about colour better than red/green/blue
+sliders. The wheel is drawn on the graphics card as coloured shapes, so
+it updates instantly while you drag.
+
+The picker remembers the hue itself rather than working it out from the
+RGB colour each time. Otherwise, dragging down to black or grey (which
+have no hue) and back up would always jump to red.
+
+## 20. The eyedropper picks what you see
+The eyedropper picks the colour you see on screen: the paint on top of
+the paper. You can choose it as a tool (`I`), which switches back to the
+brush after one pick. Or hold `Alt`, or the pen's side button, to pick
+without changing tools. "Recent colours" lists colours you've actually
+painted with, newest first.
