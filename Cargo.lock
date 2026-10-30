@@ -231,6 +231,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "art_cli"
+version = "0.1.0"
+dependencies = [
+ "art_engine",
+]
+
+[[package]]
 name = "art_engine"
 version = "0.1.0"
 dependencies = [

@@ -11,6 +11,7 @@ pub mod document;
 pub mod file;
 pub mod fill;
 pub mod history;
+pub mod image;
 pub mod layer;
 pub mod layer_commands;
 pub mod pen;

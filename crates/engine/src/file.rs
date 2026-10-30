@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::color::over_paper;
 use crate::document::{Document, MAX_CANVAS_SIDE};
+use crate::image::Image;
 use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
 use crate::surface::{Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
@@ -101,7 +101,7 @@ impl From<io::Error> for FileError {
 }
 
 /// Turns any other kind of error that happens while *writing* into an I/O error.
-fn write_error(error: impl fmt::Display) -> FileError {
+pub(crate) fn write_error(error: impl fmt::Display) -> FileError {
     FileError::Io(io::Error::other(error.to_string()))
 }
 
@@ -346,75 +346,14 @@ pub fn write_png(
     background: Background,
     writer: impl Write,
 ) -> Result<(), FileError> {
-    let (width, height) = (document.width() as usize, document.height() as usize);
-    let channels = match background {
-        Background::Paper => 3,       // red, green, blue
-        Background::Transparent => 4, // plus opacity
-    };
-    let mut image = vec![0u8; width * height * channels];
-
-    // Work through the canvas one tile at a time.
-    let (columns, rows) = document.tile_grid_size();
-    for tile_y in 0..rows as i32 {
-        for tile_x in 0..columns as i32 {
-            let coord = TileCoord::new(tile_x, tile_y);
-            let tile = document.composite_tile(coord, background);
-            let (left, top) = coord.origin();
-            let (left, top) = (left as usize, top as usize);
-            for y in top..(top + TILE_SIZE).min(height) {
-                for x in left..(left + TILE_SIZE).min(width) {
-                    let pixel = tile.as_ref().map_or(
-                        match background {
-                            Background::Paper => document.paper(),
-                            Background::Transparent => Rgba8::TRANSPARENT,
-                        },
-                        |t| t.pixel(x - left, y - top),
-                    );
-                    let start = (y * width + x) * channels;
-                    match background {
-                        Background::Paper => {
-                            image[start..start + 3]
-                                .copy_from_slice(&over_paper(pixel, document.paper()));
-                        }
-                        Background::Transparent => {
-                            image[start..start + 4].copy_from_slice(&unpremultiply(pixel));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut encoder = png::Encoder::new(writer, width as u32, height as u32);
-    encoder.set_color(match background {
-        Background::Paper => png::ColorType::Rgb,
-        Background::Transparent => png::ColorType::Rgba,
-    });
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut png_writer = encoder.write_header().map_err(write_error)?;
-    png_writer.write_image_data(&image).map_err(write_error)?;
-    png_writer.finish().map_err(write_error)
-}
-
-/// PNG images store normal ("straight") colours, not premultiplied ones.
-fn unpremultiply(pixel: Rgba8) -> [u8; 4] {
-    if pixel.a == 0 {
-        return [0, 0, 0, 0];
-    }
-    let alpha = u32::from(pixel.a);
-    let straight = |c: u8| ((u32::from(c) * 255 + alpha / 2) / alpha).min(255) as u8;
-    [
-        straight(pixel.r),
-        straight(pixel.g),
-        straight(pixel.b),
-        pixel.a,
-    ]
+    Image::of_document(document, background)
+        .write_png(writer, background == Background::Transparent)
 }
 
 // ---- Shared -----------------------------------------------------------------
 
 /// Writes a file via a temporary file next to it, then swaps it in.
-fn write_safely(
+pub(crate) fn write_safely(
     path: &Path,
     write: impl FnOnce(BufWriter<File>) -> Result<(), FileError>,
 ) -> Result<(), FileError> {

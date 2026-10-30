@@ -313,3 +313,34 @@ A preview plays the script at a smaller scale: the canvas, every
 position and every brush size are multiplied by the same number (for
 example 0.25). That's much faster than painting at full size and
 shrinking, and it shows the same picture, only smaller.
+
+## 33. `art-cli`: the engine without a window
+`art-cli` is a small program that only uses the engine: no window, no
+graphics card, no egui. So it builds and runs anywhere Rust does,
+including a server with no screen, where an AI assistant can write a
+script, render it, look at the picture and improve the script.
+
+It's made for checking work quickly:
+- `--preview` paints the whole script at a smaller size (fast);
+- `--crop` saves one area at full size, and `--zoom` enlarges it so
+  single pixels are easy to see;
+- `--snapshots` saves the picture at each `snapshot` command and each
+  time the script moves on from a layer, and `--sheet` puts them all
+  in one image (a "contact sheet"), so progress can be judged at once;
+- `check` finds mistakes in a script in milliseconds, without painting.
+
+Mistakes print the command's number and what's wrong, and the program
+ends with code 1 (or 2 if the command line itself was wrong), so a
+script calling it can tell that something failed.
+
+The contact sheet labels use a tiny 5x7 pixel font drawn by hand in
+`font.rs`, so no font files are needed.
+
+`render-script.bat` does the same on Windows without a terminal: drag a
+script onto it.
+
+## 34. The engine is optimised in test builds too
+Tests that render whole pictures were slow (about 25 seconds) because
+debug builds don't optimise our own code. The engine now gets the same
+optimisation as the libraries in debug and test builds: tests take a few
+seconds, and it only recompiles a little slower.

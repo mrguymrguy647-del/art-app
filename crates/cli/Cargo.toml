@@ -1,0 +1,14 @@
+[package]
+name = "art_cli"
+description = "Art App on the command line: render painting scripts, check them, look inside .artapp files. No window or graphics card needed."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# The program is called art-cli (art-cli.exe on Windows).
+[[bin]]
+name = "art-cli"
+path = "src/main.rs"
+
+[dependencies]
+art_engine.workspace = true

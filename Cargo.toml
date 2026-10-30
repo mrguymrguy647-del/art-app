@@ -3,12 +3,13 @@
 #
 #   crates/engine - the painting engine (plain Rust, no window or UI code)
 #   crates/app    - the program you run: window, interface, pen input
+#   crates/cli    - art-cli: renders painting scripts without a window
 #
-# The app uses the engine, but the engine never uses the app.
+# The app and art-cli use the engine, but the engine never uses them.
 
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/app"]
+members = ["crates/engine", "crates/app", "crates/cli"]
 
 # Settings shared by every crate in the workspace.
 [workspace.package]
@@ -22,4 +23,10 @@ art_engine = { path = "crates/engine" }
 # While developing ("debug" builds), still optimise the libraries we use.
 # Our own code stays quick to recompile, but egui and friends run at full speed.
 [profile.dev.package."*"]
+opt-level = 2
+
+# The engine does the heavy pixel work: optimise it in debug builds and
+# tests too, so tests (and test.bat) run quickly. It recompiles a little
+# slower, which is worth it.
+[profile.dev.package.art_engine]
 opt-level = 2

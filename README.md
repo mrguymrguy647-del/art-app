@@ -30,6 +30,7 @@ Open the `C:\dev\art-app` folder in File Explorer and double-click:
 | `run.bat` | Builds the app (only what changed) and starts it. The very first time takes a few minutes. |
 | `create-shortcut.bat` | Puts an **Art App** icon on your desktop. Do this once, after `run.bat` has worked. |
 | `test.bat` | Runs the painting engine's tests. |
+| `render-script.bat` | Turns a painting script into a picture without opening the app: **drag a `.json` script onto it**. Double-click it to render the example, `examples\sunset.json`. The picture (and a contact sheet of every stage) is saved in a `render` folder next to the script and opened. |
 
 **Getting new versions:** in GitHub Desktop click **Fetch origin**, then **Pull origin**, then
 double-click `run.bat` once. Your desktop shortcut then opens the new version.
@@ -65,12 +66,34 @@ double-click from then on.
 Art App reads pressure and tilt through **Windows Ink**. If your tablet's driver (Wacom, XP-Pen,
 Huion, …) has a "Use Windows Ink" option, keep it switched on.
 
+## Painting scripts and `art-cli`
+
+A painting script is a JSON file describing a picture step by step: layers, gradients, shapes,
+strokes, hatching and more. The format, with examples, is in
+[docs/script-format.md](docs/script-format.md); [examples/sunset.json](examples/sunset.json) is a
+full example.
+
+`art-cli` renders scripts without a window or graphics card (it works on a server too):
+
+```
+art-cli render examples/sunset.json                      # out/sunset.png and out/sunset.artapp
+art-cli render examples/sunset.json --preview --sheet    # quick half-size render + contact sheet
+art-cli render examples/sunset.json --snapshots          # a picture at every snapshot and layer
+art-cli render examples/sunset.json --crop 1040,220,180,100 --zoom 3   # close-up of one area
+art-cli check examples/sunset.json                       # find mistakes without painting
+art-cli info out/sunset.artapp                           # size, paper and layers of a picture
+```
+
+Build it with `cargo build --release -p art_cli`; the program is `target/release/art-cli`
+(`art-cli.exe` on Windows). `art-cli help` lists every option.
+
 ## Project layout
 
 ```
 art-app/
 ├── Cargo.toml            workspace: lists the two crates below
-├── run.bat / test.bat / create-shortcut.bat
+├── run.bat / test.bat / create-shortcut.bat / render-script.bat
+├── examples/sunset.json  an example painting script
 ├── docs/decisions.md     why we chose things, in plain words
 ├── docs/script-format.md painting scripts: every command, with examples
 └── crates/
@@ -88,6 +111,7 @@ art-app/
     │       ├── fill.rs       paint bucket, gradients, filling any area
     │       ├── blend.rs      blend modes (Multiply, Screen, ...)
     │       ├── random.rs     random numbers that repeat exactly (for scripts)
+    │       ├── image.rs      flat images: crop, shrink, enlarge, save PNG
     │       ├── script.rs     painting scripts: the format, reading, errors
     │       ├── script/
     │       │   ├── player.rs   plays a script: commands into strokes and fills
@@ -97,6 +121,11 @@ art-app/
     │       ├── file.rs       saving and opening .artapp files, PNG export
     │       ├── color.rs      RGB ↔ HSV, hex codes, colour on paper
     │       └── pen.rs        pen samples + tilt maths
+    ├── cli/              art-cli: renders painting scripts, no window needed
+    │   └── src/
+    │       ├── main.rs        render / check / info commands
+    │       ├── sheet.rs       contact sheets (every stage in one image)
+    │       └── font.rs        a tiny pixel font for the labels
     └── app/              the program: window and interface (egui)
         ├── build.rs      puts the icon into ArtApp.exe
         ├── assets/       icon files
