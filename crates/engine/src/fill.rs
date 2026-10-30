@@ -13,7 +13,7 @@
 
 use crate::brush::BrushMode;
 use crate::color::over_paper;
-use crate::document::Document;
+use crate::document::{Background, Document};
 use crate::layer::LayerId;
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface, TileCoord};
@@ -291,14 +291,14 @@ fn sampled_pixels(
 ) -> Vec<Rgba8> {
     let width = (bounds.right - bounds.left) as usize;
     let height = (bounds.bottom - bounds.top) as usize;
-    let paper = over_paper(Rgba8::TRANSPARENT, document.paper);
+    let paper = over_paper(Rgba8::TRANSPARENT, document.paper());
     let empty = match sample {
         SampleFrom::Layer => Rgba8::TRANSPARENT,
         SampleFrom::Visible => Rgba8::new(paper[0], paper[1], paper[2], 255),
     };
     let mut pixels = vec![empty; width * height];
 
-    let mut copy_tile = |coord: TileCoord, tile: &Tile, on_paper: bool| {
+    let mut copy_tile = |coord: TileCoord, tile: &Tile| {
         let (left, top) = coord.origin();
         let size = TILE_SIZE as i32;
         let area = bounds.intersect(&PixelRect::new(left, top, left + size, top + size));
@@ -307,27 +307,19 @@ fn sampled_pixels(
             let from = (y - top) as usize * TILE_SIZE + (area.left - left) as usize;
             let source = &tile.pixels()[from..from + row_width];
             let to = (y - bounds.top) as usize * width + (area.left - bounds.left) as usize;
-            let target = &mut pixels[to..to + row_width];
-            if on_paper {
-                for (target, &pixel) in target.iter_mut().zip(source) {
-                    let [r, g, b] = over_paper(pixel, document.paper);
-                    *target = Rgba8::new(r, g, b, 255);
-                }
-            } else {
-                target.copy_from_slice(source);
-            }
+            pixels[to..to + row_width].copy_from_slice(source);
         }
     };
     for coord in bounds.tiles() {
         match sample {
             SampleFrom::Layer => {
                 if let Some(tile) = document.layer(layer).and_then(|l| l.surface.tile(coord)) {
-                    copy_tile(coord, tile, false);
+                    copy_tile(coord, tile);
                 }
             }
             SampleFrom::Visible => {
-                if let Some(tile) = document.composite_tile(coord) {
-                    copy_tile(coord, &tile, true);
+                if let Some(tile) = document.composite_tile(coord, Background::Paper) {
+                    copy_tile(coord, &tile);
                 }
             }
         }

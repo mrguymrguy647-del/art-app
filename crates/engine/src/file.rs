@@ -129,7 +129,7 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
         version: FORMAT_VERSION,
         width: document.width(),
         height: document.height(),
-        paper: [document.paper.r, document.paper.g, document.paper.b],
+        paper: [document.paper().r, document.paper().g, document.paper().b],
         pixels: PIXEL_FORMAT.to_owned(),
         active_layer: document.layer_index(document.active_id()).unwrap_or(0),
         next_layer_number: document.next_layer_number(),
@@ -139,7 +139,7 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
                 name: layer.name().to_owned(),
                 visible: layer.visible(),
                 opacity: layer.opacity(),
-                blend: blend_name(layer.blend()).to_owned(),
+                blend: layer.blend().name().to_owned(),
             })
             .collect(),
     };
@@ -155,12 +155,6 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
         }
     }
     zip.finish().map_err(write_error)
-}
-
-fn blend_name(blend: BlendMode) -> &'static str {
-    match blend {
-        BlendMode::Normal => "normal",
-    }
 }
 
 fn encode_tile(tile: &Tile, writer: impl Write) -> Result<(), FileError> {
@@ -252,8 +246,10 @@ pub fn read_document<R: Read + Seek>(reader: R) -> Result<Document, FileError> {
                 name: saved.name,
                 visible: saved.visible,
                 opacity: saved.opacity,
+                // Checked by `check_description`.
+                blend: BlendMode::from_name(&saved.blend).unwrap_or_default(),
             };
-            Layer::from_saved(LayerId(index as u64 + 1), props, BlendMode::Normal, surface)
+            Layer::from_saved(LayerId(index as u64 + 1), props, surface)
         })
         .collect::<Vec<_>>();
     let [r, g, b] = description.paper;
@@ -289,7 +285,7 @@ fn check_description(description: &Description) -> Result<(), FileError> {
     if description
         .layers
         .iter()
-        .any(|layer| layer.blend != "normal")
+        .any(|layer| BlendMode::from_name(&layer.blend).is_none())
     {
         return damaged("a layer uses a blend mode this version doesn't know");
     }
@@ -332,13 +328,7 @@ fn decode_tile(bytes: &[u8]) -> Result<Tile, String> {
 // ---- Exporting PNG ----------------------------------------------------------
 
 /// What goes behind the picture in an exported PNG.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Background {
-    /// The paper colour (the image has no transparent parts).
-    Paper,
-    /// Nothing: unpainted areas are transparent.
-    Transparent,
-}
+pub use crate::document::Background;
 
 /// Exports all visible layers, combined, as one PNG image the size of the
 /// canvas. Like saving, it writes a temporary file first.
@@ -368,19 +358,23 @@ pub fn write_png(
     for tile_y in 0..rows as i32 {
         for tile_x in 0..columns as i32 {
             let coord = TileCoord::new(tile_x, tile_y);
-            let tile = document.composite_tile(coord);
+            let tile = document.composite_tile(coord, background);
             let (left, top) = coord.origin();
             let (left, top) = (left as usize, top as usize);
             for y in top..(top + TILE_SIZE).min(height) {
                 for x in left..(left + TILE_SIZE).min(width) {
-                    let pixel = tile
-                        .as_ref()
-                        .map_or(Rgba8::TRANSPARENT, |t| t.pixel(x - left, y - top));
+                    let pixel = tile.as_ref().map_or(
+                        match background {
+                            Background::Paper => document.paper(),
+                            Background::Transparent => Rgba8::TRANSPARENT,
+                        },
+                        |t| t.pixel(x - left, y - top),
+                    );
                     let start = (y * width + x) * channels;
                     match background {
                         Background::Paper => {
                             image[start..start + 3]
-                                .copy_from_slice(&over_paper(pixel, document.paper));
+                                .copy_from_slice(&over_paper(pixel, document.paper()));
                         }
                         Background::Transparent => {
                             image[start..start + 4].copy_from_slice(&unpremultiply(pixel));
@@ -451,7 +445,7 @@ mod tests {
     /// including half-transparent pixels.
     fn sample_document() -> Document {
         let mut doc = Document::new(700, 500);
-        doc.paper = Rgba8::new(250, 240, 220, 255);
+        doc.set_paper(Rgba8::new(250, 240, 220, 255));
         doc.active_layer_mut()
             .surface
             .set_pixel(10, 10, Rgba8::new(255, 0, 0, 255));
@@ -469,6 +463,7 @@ mod tests {
         doc.active_layer_mut().set_visible(false);
         let renamed = LayerProps {
             name: "Sketch ✏".into(),
+            blend: BlendMode::Multiply,
             ..doc.active_layer().props()
         };
         doc.active_layer_mut().set_props(renamed);
@@ -490,7 +485,7 @@ mod tests {
         let opened = read_document(Cursor::new(save_to_memory(&original))).expect("opens");
 
         assert_eq!((opened.width(), opened.height()), (700, 500));
-        assert_eq!(opened.paper, original.paper);
+        assert_eq!(opened.paper(), original.paper());
         assert_eq!(opened.layers().len(), 3);
         assert_eq!(opened.layer_index(opened.active_id()), Some(1));
         for (before, after) in original.layers().iter().zip(opened.layers()) {

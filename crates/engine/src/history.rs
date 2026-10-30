@@ -94,6 +94,51 @@ impl Command for TileCommand {
     }
 }
 
+/// Several changes that are undone and redone together, as one step
+/// (e.g. playing a whole painting script).
+pub struct CommandGroup {
+    name: String,
+    /// In the order they were made.
+    commands: Vec<Box<dyn Command>>,
+}
+
+impl CommandGroup {
+    /// Groups changes that have already been made, oldest first.
+    pub fn new(name: impl Into<String>, commands: Vec<Box<dyn Command>>) -> Self {
+        Self {
+            name: name.into(),
+            commands,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+}
+
+impl Command for CommandGroup {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn undo(&mut self, document: &mut Document) {
+        // Newest first, so each change finds the document as it left it.
+        for command in self.commands.iter_mut().rev() {
+            command.undo(document);
+        }
+    }
+
+    fn redo(&mut self, document: &mut Document) {
+        for command in &mut self.commands {
+            command.redo(document);
+        }
+    }
+
+    fn memory_size(&self) -> usize {
+        self.commands.iter().map(|c| c.memory_size()).sum()
+    }
+}
+
 /// The undo and redo lists.
 pub struct History {
     /// Oldest first, newest last.

@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
-use art_engine::document::Document;
+use art_engine::document::{Background, Document};
 use art_engine::history::{History, TileCommand};
 use art_engine::surface::{PixelRect, TileCoord};
 use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
@@ -494,7 +494,7 @@ impl CanvasView {
             }
 
             // All visible layers combined into one tile.
-            let Some(tile) = document.composite_tile(coord) else {
+            let Some(tile) = document.composite_tile(coord, Background::Paper) else {
                 self.textures.remove(&coord);
                 continue;
             };
@@ -552,7 +552,7 @@ impl CanvasView {
         let (width, height) = (document.width() as f32, document.height() as f32);
         let paper = [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
             .map(|(x, y)| to_pos2(self.view.canvas_to_screen(Point::new(x, y))));
-        let colour = document.paper;
+        let colour = document.paper();
         painter.add(Shape::convex_polygon(
             paper.to_vec(),
             Color32::from_rgba_premultiplied(colour.r, colour.g, colour.b, colour.a),

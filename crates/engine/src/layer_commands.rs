@@ -1,10 +1,11 @@
 //! Undoable layer actions: add, delete, move, and changing a layer's name,
-//! visibility or opacity. See `history.rs` for how commands work.
+//! visibility, opacity or blend mode; also changing the paper colour.
+//! See `history.rs` for how commands work.
 
 use crate::document::Document;
 use crate::history::Command;
 use crate::layer::{Layer, LayerId, LayerProps};
-use crate::tile::TILE_PIXELS;
+use crate::tile::{Rgba8, TILE_PIXELS};
 
 /// Adding or deleting a layer.
 ///
@@ -40,10 +41,35 @@ impl LayerPresenceCommand {
         }
     }
 
+    /// Adds a new, empty layer called `name` at position `index` in the
+    /// stack (0 = bottom) and makes it active.
+    pub fn insert_layer(document: &mut Document, name: &str, index: usize) -> Self {
+        let mut layer = document.new_layer();
+        layer.set_props(LayerProps {
+            name: name.to_owned(),
+            ..layer.props()
+        });
+        let id = layer.id();
+        let index = index.min(document.layers().len());
+        document.insert_layer(index, layer);
+        document.set_active(id);
+        Self {
+            name: "Add layer",
+            id,
+            index,
+            stored: None,
+        }
+    }
+
     /// Deletes the active layer. Returns `None` (and does nothing) if it's
     /// the only layer.
     pub fn delete_active_layer(document: &mut Document) -> Option<Self> {
-        let id = document.active_id();
+        Self::delete_layer(document, document.active_id())
+    }
+
+    /// Deletes a layer. Returns `None` (and does nothing) if it's the only
+    /// layer, or there's no such layer.
+    pub fn delete_layer(document: &mut Document, id: LayerId) -> Option<Self> {
         let (index, layer) = document.remove_layer(id)?;
         Some(Self {
             name: "Delete layer",
@@ -109,6 +135,18 @@ impl MoveLayerCommand {
         document.move_layer(id, to);
         Some(Self { id, from, to })
     }
+
+    /// Moves a layer to position `to` in the stack (0 = bottom). Returns
+    /// `None` if there's no such layer or it's already there.
+    pub fn move_layer(document: &mut Document, id: LayerId, to: usize) -> Option<Self> {
+        let from = document.layer_index(id)?;
+        let to = to.min(document.layers().len() - 1);
+        if from == to {
+            return None;
+        }
+        document.move_layer(id, to);
+        Some(Self { id, from, to })
+    }
 }
 
 impl Command for MoveLayerCommand {
@@ -165,6 +203,8 @@ impl LayerPropsCommand {
             }
         } else if before.opacity != after.opacity {
             "Layer opacity"
+        } else if before.blend != after.blend {
+            "Blend mode"
         } else {
             return None;
         };
@@ -199,9 +239,47 @@ impl Command for LayerPropsCommand {
     }
 }
 
+/// Changing the paper colour.
+pub struct PaperCommand {
+    before: Rgba8,
+    after: Rgba8,
+}
+
+impl PaperCommand {
+    /// Changes the paper to `after` and returns the command, or `None` if
+    /// it was that colour already.
+    pub fn apply(document: &mut Document, after: Rgba8) -> Option<Self> {
+        let before = document.paper();
+        if before == after {
+            return None;
+        }
+        document.set_paper(after);
+        Some(Self { before, after })
+    }
+}
+
+impl Command for PaperCommand {
+    fn name(&self) -> &str {
+        "Paper colour"
+    }
+
+    fn undo(&mut self, document: &mut Document) {
+        document.set_paper(self.before);
+    }
+
+    fn redo(&mut self, document: &mut Document) {
+        document.set_paper(self.after);
+    }
+
+    fn memory_size(&self) -> usize {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::Background;
     use crate::history::{History, TileCommand};
     use crate::tile::Rgba8;
 
@@ -258,12 +336,15 @@ mod tests {
         );
         history.push(Box::new(delete));
         assert_eq!(names(&doc), ["Layer 1"]);
-        assert_eq!(doc.composite_pixel(5, 5), Rgba8::TRANSPARENT);
+        assert_eq!(
+            doc.composite_pixel(5, 5, Background::Transparent),
+            Rgba8::TRANSPARENT
+        );
 
         history.undo(&mut doc);
         assert_eq!(names(&doc), ["Layer 1", "Layer 2"]);
         assert_eq!(doc.active_layer().name(), "Layer 2");
-        assert_eq!(doc.composite_pixel(5, 5), RED);
+        assert_eq!(doc.composite_pixel(5, 5, Background::Transparent), RED);
     }
 
     #[test]
@@ -375,5 +456,25 @@ mod tests {
         history.undo(&mut doc);
         assert_eq!(doc.layer(top).unwrap().surface.tile_count(), 0);
         assert_eq!(doc.layer(bottom).unwrap().surface.pixel(1, 1), RED);
+    }
+
+    #[test]
+    fn changing_the_blend_mode_can_be_undone() {
+        let mut doc = Document::new(100, 100);
+        let mut history = History::default();
+        let id = doc.active_id();
+        let after = LayerProps {
+            blend: crate::layer::BlendMode::Multiply,
+            ..doc.active_layer().props()
+        };
+        let command = LayerPropsCommand::apply(&mut doc, id, after).expect("a change");
+        assert_eq!(command.name(), "Blend mode");
+        history.push(Box::new(command));
+        assert_eq!(
+            doc.active_layer().blend(),
+            crate::layer::BlendMode::Multiply
+        );
+        history.undo(&mut doc);
+        assert_eq!(doc.active_layer().blend(), crate::layer::BlendMode::Normal);
     }
 }

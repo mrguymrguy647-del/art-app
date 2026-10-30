@@ -1,5 +1,6 @@
 //! The Layers panel: the stack of layers, buttons to add, delete and move
-//! them, a show/hide switch for each, and the selected layer's opacity.
+//! them, a show/hide switch for each, and the selected layer's opacity
+//! and blend mode.
 //!
 //! Every change here goes into the undo history. The layer you click is
 //! the one you paint on (choosing a layer isn't undoable, like in other
@@ -7,7 +8,7 @@
 
 use art_engine::document::Document;
 use art_engine::history::History;
-use art_engine::layer::{LayerId, LayerProps};
+use art_engine::layer::{BlendMode, LayerId, LayerProps};
 use art_engine::layer_commands::{LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand};
 use eframe::egui::{self, Button, Key, TextEdit, vec2};
 
@@ -36,6 +37,8 @@ impl LayersPanel {
         self.buttons(ui, document, history);
         ui.add_space(4.0);
         self.opacity_slider(ui, document, history);
+        ui.add_space(4.0);
+        blend_mode_menu(ui, document, history);
         ui.separator();
         self.layer_list(ui, document, history);
     }
@@ -209,6 +212,29 @@ impl LayersPanel {
                     history.push(Box::new(command));
                 }
             }
+        }
+    }
+}
+
+/// The selected layer's blend mode: how it mixes with the layers below.
+fn blend_mode_menu(ui: &mut egui::Ui, document: &mut Document, history: &mut History) {
+    let id = document.active_id();
+    let before = document.active_layer().props();
+    let mut blend = before.blend;
+    ui.label("Blend mode");
+    egui::ComboBox::from_id_salt("blend_mode")
+        .selected_text(blend.label())
+        .width(ui.available_width())
+        .height(500.0) // tall enough to show every mode without scrolling
+        .show_ui(ui, |ui| {
+            for mode in BlendMode::ALL {
+                ui.selectable_value(&mut blend, mode, mode.label());
+            }
+        });
+    if blend != before.blend {
+        let after = LayerProps { blend, ..before };
+        if let Some(command) = LayerPropsCommand::apply(document, id, after) {
+            history.push(Box::new(command));
         }
     }
 }

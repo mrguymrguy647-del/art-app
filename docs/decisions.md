@@ -265,3 +265,51 @@ their own.
 
 Fills and gradients are undone like strokes: they keep only the tiles
 they changed.
+
+## 29. Blend modes, and the paper takes part
+Each layer has a blend mode: how its colours mix with what's below.
+Normal covers; Multiply darkens (shadows); Screen and Add lighten
+(light, glow); Overlay and Soft light add contrast; Colour gives a grey
+drawing colour; and more. The formulas are the ones in the public W3C
+"Compositing and Blending" standard that web browsers use.
+
+The picture is now combined *on the paper*, so a Screen layer over white
+paper disappears and a Difference layer over white inverts, as in other
+painting apps. A PNG exported with a transparent background is combined
+without the paper. Changing the blend mode can be undone like other
+layer changes.
+
+## 30. Painting scripts: pictures as text
+A painting script is a JSON file: a list of commands like "make a layer",
+"draw an ellipse", "paint a stroke through these points". Playing it
+gives the picture. It's made for writing by hand or by an AI assistant,
+so it's:
+- **Predictable.** The same script always gives exactly the same picture.
+- **Strict and helpful.** A misspelt field is an error, not silently
+  ignored, and every error names the command's number and what's wrong.
+  Value problems (an unknown colour name, a layer that doesn't exist) are
+  found before anything is painted for that command.
+- **Short.** One command draws a whole rectangle, ellipse, polygon,
+  smooth curve, tapered line, hatching or scattering, so a picture
+  doesn't need thousands of strokes.
+
+Under the hood, every command becomes simple jobs (brush strokes, areas
+to fill, paint bucket fills) that reuse exactly the same engine code as
+the app's tools. That's why a scripted stroke looks the same as a hand-
+drawn one. The jobs can be done all at once (for rendering) or a little
+at a time (so the app can show a script being painted).
+
+## 31. "Random" that repeats exactly
+Jitter, hatching and scattering look random, but use a small number
+generator written into the engine ("SplitMix64"), started from a seed.
+The same seed always gives the same numbers on every computer. We don't
+use a library for this, because a library update could change the
+numbers and with them every scripted picture. Each command mixes the
+script's seed with its own seed (or its number), so two scatters don't
+repeat the same pattern.
+
+## 32. Quick previews paint the whole script smaller
+A preview plays the script at a smaller scale: the canvas, every
+position and every brush size are multiplied by the same number (for
+example 0.25). That's much faster than painting at full size and
+shrinking, and it shows the same picture, only smaller.

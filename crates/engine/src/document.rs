@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use crate::color::over_paper;
-use crate::layer::{Layer, LayerId, blend_over};
+use crate::layer::{BlendMode, Layer, LayerId, blend_over};
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
@@ -24,7 +24,7 @@ pub struct Document {
     width: u32,
     height: u32,
     /// The colour of the "paper" under all layers.
-    pub paper: Rgba8,
+    paper: Rgba8,
     /// Bottom layer first. Never empty.
     layers: Vec<Layer>,
     active: LayerId,
@@ -84,6 +84,20 @@ impl Document {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// The colour of the "paper" under all layers.
+    pub fn paper(&self) -> Rgba8 {
+        self.paper
+    }
+
+    /// Changes the paper colour. Every painted tile is redrawn, because
+    /// the paper shows through (and takes part in blend modes).
+    pub fn set_paper(&mut self, paper: Rgba8) {
+        self.paper = paper;
+        for layer in &mut self.layers {
+            layer.surface.mark_all_dirty();
+        }
     }
 
     /// The whole canvas as a rectangle.
@@ -204,7 +218,16 @@ impl Document {
     /// Wipes the active layer. Returns its tiles as they were, so clearing
     /// can be undone.
     pub fn clear_active_layer(&mut self) -> TilesBefore {
-        self.active_layer_mut()
+        self.clear_layer(self.active)
+    }
+
+    /// Makes a layer completely empty. Returns its tiles as they were
+    /// before (empty if there is no such layer), for undo.
+    pub fn clear_layer(&mut self, id: LayerId) -> TilesBefore {
+        let Some(layer) = self.layer_mut(id) else {
+            return TilesBefore::new();
+        };
+        layer
             .surface
             .clear()
             .into_iter()
@@ -238,42 +261,74 @@ impl Document {
             .any(|layer| layer.visible() && layer.surface.tile(coord).is_some())
     }
 
-    /// All visible layers in this tile laid over each other, bottom to top
-    /// (without the paper). `None` if nothing visible is painted there.
-    pub fn composite_tile(&self, coord: TileCoord) -> Option<Tile> {
+    /// All visible layers in this tile laid over each other, bottom to top,
+    /// on `background`. `None` if nothing visible is painted there (so
+    /// it's just the background).
+    ///
+    /// On the paper is what you see. The paper takes part in blend modes
+    /// (a Screen layer over white paper disappears, as in other painting
+    /// apps), and is only there inside the canvas: the parts of edge
+    /// tiles outside the canvas stay transparent.
+    pub fn composite_tile(&self, coord: TileCoord, background: Background) -> Option<Tile> {
         let mut showing = self
             .layers
             .iter()
             .filter(|layer| layer.visible() && layer.opacity() > 0.0)
-            .filter_map(|layer| layer.surface.tile(coord).map(|tile| (layer, tile)));
+            .filter_map(|layer| layer.surface.tile(coord).map(|tile| (layer, tile)))
+            .peekable();
+        let (first_layer, first_tile) = *showing.peek()?;
 
-        let (first_layer, first_tile) = showing.next()?;
-        // Start from the lowest tile (made fainter if its layer isn't fully
-        // opaque), then lay each higher one over it.
-        let mut result = if first_layer.opacity() >= 1.0 {
-            first_tile.clone()
-        } else {
-            combine(&Tile::new(), first_tile, first_layer)
+        let mut result = match background {
+            // Quickest case: the lowest tile simply covers nothing.
+            Background::Transparent
+                if first_layer.opacity() >= 1.0 && first_layer.blend() == BlendMode::Normal =>
+            {
+                showing.next();
+                first_tile.clone()
+            }
+            Background::Transparent => Tile::new(),
+            Background::Paper => self.paper_tile(coord),
         };
         for (layer, tile) in showing {
-            result = combine(&result, tile, layer);
+            combine(&mut result, tile, layer);
         }
         Some(result)
     }
 
-    /// The combined colour of all visible layers at one pixel (no paper).
-    pub fn composite_pixel(&self, x: i32, y: i32) -> Rgba8 {
-        self.layers.iter().filter(|layer| layer.visible()).fold(
-            Rgba8::TRANSPARENT,
-            |below, layer| {
+    /// A tile of plain paper, transparent outside the canvas.
+    fn paper_tile(&self, coord: TileCoord) -> Tile {
+        let mut tile = Tile::new();
+        let (left, top) = coord.origin();
+        let size = TILE_SIZE as i32;
+        let area = self
+            .bounds()
+            .intersect(&PixelRect::new(left, top, left + size, top + size));
+        for y in area.top..area.bottom {
+            let start = (y - top) as usize * TILE_SIZE + (area.left - left) as usize;
+            let end = start + (area.right - area.left) as usize;
+            tile.pixels_mut()[start..end].fill(self.paper);
+        }
+        tile
+    }
+
+    /// The combined colour of all visible layers at one pixel, on `background`.
+    pub fn composite_pixel(&self, x: i32, y: i32, background: Background) -> Rgba8 {
+        let inside = x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height;
+        let start = match background {
+            Background::Paper if inside => self.paper,
+            _ => Rgba8::TRANSPARENT,
+        };
+        self.layers
+            .iter()
+            .filter(|layer| layer.visible())
+            .fold(start, |below, layer| {
                 blend_over(
                     below,
                     layer.surface.pixel(x, y),
                     layer.opacity(),
                     layer.blend(),
                 )
-            },
-        )
+            })
     }
 
     /// The colour you see at canvas position (x, y): all visible layers on
@@ -282,31 +337,32 @@ impl Document {
         if !self.contains(x, y) {
             return None;
         }
-        let pixel = self.composite_pixel(x.floor() as i32, y.floor() as i32);
+        let pixel = self.composite_pixel(x.floor() as i32, y.floor() as i32, Background::Paper);
         Some(over_paper(pixel, self.paper))
     }
 }
 
-/// `top` (a tile of `layer`) laid over `below`, pixel by pixel.
-fn combine(below: &Tile, top: &Tile, layer: &Layer) -> Tile {
-    let mut result = below.clone();
-    for y in 0..TILE_SIZE {
-        for x in 0..TILE_SIZE {
-            let pixel = blend_over(
-                below.pixel(x, y),
-                top.pixel(x, y),
-                layer.opacity(),
-                layer.blend(),
-            );
-            result.set_pixel(x, y, pixel);
-        }
+/// What's under all the layers when they are combined.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Background {
+    /// The paper colour (the picture has no transparent parts).
+    Paper,
+    /// Nothing: unpainted areas are transparent.
+    Transparent,
+}
+
+/// Lays `top` (a tile of `layer`) over `result`, pixel by pixel.
+fn combine(result: &mut Tile, top: &Tile, layer: &Layer) {
+    let (opacity, blend) = (layer.opacity(), layer.blend());
+    for (below, &pixel) in result.pixels_mut().iter_mut().zip(top.pixels()) {
+        *below = blend_over(*below, pixel, opacity, blend);
     }
-    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layer::LayerProps;
 
     const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
     const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
@@ -329,7 +385,7 @@ mod tests {
     fn new_document_has_one_empty_active_layer() {
         let doc = Document::new(4000, 3000);
         assert_eq!((doc.width(), doc.height()), (4000, 3000));
-        assert_eq!(doc.paper, Rgba8::WHITE);
+        assert_eq!(doc.paper(), Rgba8::WHITE);
         assert_eq!(doc.layers().len(), 1);
         assert_eq!(doc.active_layer().name(), "Layer 1");
         assert_eq!(doc.tile_count(), 0);
@@ -348,7 +404,7 @@ mod tests {
     fn the_top_layer_covers_the_bottom_one() {
         let (doc, _, _) = red_under_blue();
         let tile = doc
-            .composite_tile(TileCoord::new(0, 0))
+            .composite_tile(TileCoord::new(0, 0), Background::Transparent)
             .expect("something is painted");
         assert_eq!(tile.pixel(10, 10), BLUE);
         assert_eq!(doc.sample_color(10.5, 10.5), Some([0, 0, 255]));
@@ -358,9 +414,9 @@ mod tests {
     fn hidden_layers_do_not_show() {
         let (mut doc, _, top) = red_under_blue();
         doc.layer_mut(top).unwrap().set_visible(false);
-        assert_eq!(doc.composite_pixel(10, 10), RED);
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), RED);
         assert_eq!(
-            doc.composite_tile(TileCoord::new(0, 0))
+            doc.composite_tile(TileCoord::new(0, 0), Background::Transparent)
                 .unwrap()
                 .pixel(10, 10),
             RED
@@ -372,9 +428,9 @@ mod tests {
         let (mut doc, _, top) = red_under_blue();
         doc.layer_mut(top).unwrap().set_opacity(0.5);
         let mixed = Rgba8::new(128, 0, 128, 255);
-        assert_eq!(doc.composite_pixel(10, 10), mixed);
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), mixed);
         assert_eq!(
-            doc.composite_tile(TileCoord::new(0, 0))
+            doc.composite_tile(TileCoord::new(0, 0), Background::Transparent)
                 .unwrap()
                 .pixel(10, 10),
             mixed
@@ -386,15 +442,46 @@ mod tests {
         let mut doc = Document::new(100, 100);
         doc.active_layer_mut().surface.set_pixel(1, 1, BLUE);
         doc.active_layer_mut().set_opacity(0.5);
-        let tile = doc.composite_tile(TileCoord::new(0, 0)).unwrap();
+        let tile = doc
+            .composite_tile(TileCoord::new(0, 0), Background::Transparent)
+            .unwrap();
         assert_eq!(tile.pixel(1, 1), Rgba8::new(0, 0, 128, 128));
-        assert_eq!(doc.sample_color(1.0, 1.0), Some([127, 127, 255])); // light blue on white
+        // Light blue on white: half of 255 is 127.5, which rounds to 128.
+        assert_eq!(doc.sample_color(1.0, 1.0), Some([128, 128, 255]));
+    }
+
+    #[test]
+    fn the_paper_takes_part_in_blend_modes() {
+        let mut doc = Document::new(100, 100);
+        let grey = Rgba8::new(128, 128, 128, 255);
+        doc.active_layer_mut().surface.set_pixel(1, 1, grey);
+        let id = doc.active_id();
+        let screen = LayerProps {
+            blend: BlendMode::Screen,
+            ..doc.active_layer().props()
+        };
+        doc.layer_mut(id).unwrap().set_props(screen);
+        // Screen over white paper is white; with no paper it's just the grey.
+        let on_paper = doc
+            .composite_tile(TileCoord::new(0, 0), Background::Paper)
+            .unwrap();
+        assert_eq!(on_paper.pixel(1, 1), Rgba8::WHITE);
+        let alone = doc
+            .composite_tile(TileCoord::new(0, 0), Background::Transparent)
+            .unwrap();
+        assert_eq!(alone.pixel(1, 1), grey);
+        // Unpainted pixels show the paper, but only inside the canvas.
+        assert_eq!(on_paper.pixel(50, 50), Rgba8::WHITE);
+        assert_eq!(on_paper.pixel(150, 50), Rgba8::TRANSPARENT);
     }
 
     #[test]
     fn nothing_painted_means_no_tile() {
         let doc = Document::new(1000, 1000);
-        assert!(doc.composite_tile(TileCoord::new(1, 1)).is_none());
+        assert!(
+            doc.composite_tile(TileCoord::new(1, 1), Background::Transparent)
+                .is_none()
+        );
         assert!(!doc.has_visible_tile(TileCoord::new(1, 1)));
         assert_eq!(doc.sample_color(500.0, 500.0), Some([255, 255, 255]));
     }
@@ -415,7 +502,7 @@ mod tests {
         assert_eq!((index, removed.id()), (1, top));
         assert_eq!(doc.active_id(), bottom);
         assert_eq!(doc.take_dirty_tiles(), vec![TileCoord::new(0, 0)]);
-        assert_eq!(doc.composite_pixel(10, 10), RED);
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), RED);
     }
 
     #[test]
@@ -433,7 +520,7 @@ mod tests {
         doc.move_layer(top, 0);
         assert_eq!(doc.layer_index(top), Some(0));
         assert_eq!(doc.layer_index(bottom), Some(1));
-        assert_eq!(doc.composite_pixel(10, 10), RED); // red is on top now
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), RED); // red is on top now
         assert_eq!(doc.take_dirty_tiles(), vec![TileCoord::new(0, 0)]);
     }
 

@@ -2,7 +2,8 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1 is complete, plus a paint bucket and gradients. Paint and erase with a round brush (pen pressure changes size
+**Status:** Phase 1 is complete, plus a paint bucket, gradients, blend modes, and **painting
+scripts**: pictures described as text, step by step (see [docs/script-format.md](docs/script-format.md)). Paint and erase with a round brush (pen pressure changes size
 and opacity) on layers, pick colours from a colour wheel or the canvas, undo and redo, zoom, pan
 and rotate the canvas, and save, open and export your pictures. The pen test is under
 **Pen test** in the top bar.
@@ -47,7 +48,7 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Gradient | `G` or the **Gradient** button, then drag from where it starts to where it ends (hold `Shift` for straight angles). **Straight** or **Round**, from the colour to transparent or to a second colour. It covers the whole layer, so use a new layer | Drag |
 | Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
-| Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, double-click a name to rename | Same, by tapping |
+| Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, **Blend mode** (Multiply for shadows, Screen for light, …), double-click a name to rename | Same, by tapping |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`), or the **Undo** / **Redo** buttons | Tap the buttons |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
 | Pan (move) | Hold **Space** and drag, or drag with the middle mouse button | Two-finger drag (touchscreen) |
@@ -71,6 +72,7 @@ art-app/
 ├── Cargo.toml            workspace: lists the two crates below
 ├── run.bat / test.bat / create-shortcut.bat
 ├── docs/decisions.md     why we chose things, in plain words
+├── docs/script-format.md painting scripts: every command, with examples
 └── crates/
     ├── engine/           painting engine: plain Rust, no window/UI code
     │   └── src/
@@ -84,6 +86,12 @@ art-app/
     │       ├── brush.rs      brush settings, dab shape
     │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
     │       ├── fill.rs       paint bucket, gradients, filling any area
+    │       ├── blend.rs      blend modes (Multiply, Screen, ...)
+    │       ├── random.rs     random numbers that repeat exactly (for scripts)
+    │       ├── script.rs     painting scripts: the format, reading, errors
+    │       ├── script/
+    │       │   ├── player.rs   plays a script: commands into strokes and fills
+    │       │   └── geometry.rs shapes, smooth curves, hatching, wobble
     │       ├── smoothing.rs  steadier lines
     │       ├── history.rs    undo / redo
     │       ├── file.rs       saving and opening .artapp files, PNG export

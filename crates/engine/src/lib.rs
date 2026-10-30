@@ -4,6 +4,7 @@
 //! It has no window or UI code, so it can be tested on its own with
 //! `cargo test`, and it doesn't care which interface sits on top.
 
+pub mod blend;
 pub mod brush;
 pub mod color;
 pub mod document;
@@ -13,6 +14,8 @@ pub mod history;
 pub mod layer;
 pub mod layer_commands;
 pub mod pen;
+pub mod random;
+pub mod script;
 pub mod smoothing;
 pub mod stroke;
 pub mod surface;

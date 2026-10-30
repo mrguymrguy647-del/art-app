@@ -4,6 +4,7 @@
 //! switch and an opacity. The picture you see is all visible layers laid
 //! over each other, bottom to top, on the paper.
 
+pub use crate::blend::BlendMode;
 use crate::surface::Surface;
 use crate::tile::Rgba8;
 
@@ -12,23 +13,13 @@ use crate::tile::Rgba8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LayerId(pub(crate) u64);
 
-/// How a layer is mixed with the layers below it.
-///
-/// Only "Normal" exists so far. Later phases add more (Multiply, Screen,
-/// ...); they will only need a new arm in [`blend_over`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BlendMode {
-    /// The layer simply covers what's below, as much as its opacity says.
-    #[default]
-    Normal,
-}
-
 /// The settings of a layer that you can change and undo, all together.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayerProps {
     pub name: String,
     pub visible: bool,
     pub opacity: f32,
+    pub blend: BlendMode,
 }
 
 /// One layer.
@@ -78,18 +69,13 @@ impl Layer {
     }
 
     /// A layer rebuilt from saved settings (used when opening a file).
-    pub(crate) fn from_saved(
-        id: LayerId,
-        props: LayerProps,
-        blend: BlendMode,
-        surface: Surface,
-    ) -> Self {
+    pub(crate) fn from_saved(id: LayerId, props: LayerProps, surface: Surface) -> Self {
         Self {
             id,
             name: props.name,
             visible: props.visible,
             opacity: props.opacity.clamp(0.0, 1.0),
-            blend,
+            blend: props.blend,
             surface,
         }
     }
@@ -99,17 +85,21 @@ impl Layer {
             name: self.name.clone(),
             visible: self.visible,
             opacity: self.opacity,
+            blend: self.blend,
         }
     }
 
-    /// Changes name, visibility and opacity. If the layer now looks
-    /// different, all its tiles are marked as changed, so the screen
-    /// updates them.
+    /// Changes name, visibility, opacity and blend mode. If the layer now
+    /// looks different, all its tiles are marked as changed, so the
+    /// screen updates them.
     pub fn set_props(&mut self, props: LayerProps) {
-        let looks_different = props.visible != self.visible || props.opacity != self.opacity;
+        let looks_different = props.visible != self.visible
+            || props.opacity != self.opacity
+            || props.blend != self.blend;
         self.name = props.name;
         self.visible = props.visible;
         self.opacity = props.opacity.clamp(0.0, 1.0);
+        self.blend = props.blend;
         if looks_different {
             self.surface.mark_all_dirty();
         }
@@ -133,25 +123,7 @@ impl Layer {
 /// Lays `top` (from a layer with the given opacity and blend mode) over
 /// `below`. Both pixels are premultiplied.
 pub fn blend_over(below: Rgba8, top: Rgba8, opacity: f32, blend: BlendMode) -> Rgba8 {
-    match blend {
-        BlendMode::Normal => {
-            // "Over": the top pixel (made fainter by the layer's opacity),
-            // plus as much of the pixel below as still shows through.
-            let top_alpha = f32::from(top.a) / 255.0 * opacity;
-            let show_through = 1.0 - top_alpha;
-            let mix = |t: u8, b: u8| {
-                (f32::from(t) * opacity + f32::from(b) * show_through)
-                    .round()
-                    .min(255.0) as u8
-            };
-            Rgba8::new(
-                mix(top.r, below.r),
-                mix(top.g, below.g),
-                mix(top.b, below.b),
-                mix(top.a, below.a),
-            )
-        }
-    }
+    crate::blend::blend(below, top, opacity, blend)
 }
 
 #[cfg(test)]

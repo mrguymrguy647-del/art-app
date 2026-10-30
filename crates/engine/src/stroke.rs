@@ -258,7 +258,7 @@ impl Stroke {
 /// every point, and unlike simpler curves it doesn't overshoot or make
 /// little loops at sharp turns. It's built from repeated in-between steps
 /// ("lerps"), each one weighted by the distances between the points.
-fn curve_point(
+pub(crate) fn curve_point(
     a: StrokePoint,
     b: StrokePoint,
     c: StrokePoint,
