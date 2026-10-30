@@ -1,14 +1,7 @@
-# Build output (CMake presets put everything under build/)
-build/
-build-*/
-out/
+# Rust build output
+/target/
 
-# Personal CMake settings (e.g. your own Qt path)
-CMakeUserPresets.json
-
-# Qt Creator and IDE files
-CMakeLists.txt.user*
-*.autosave
+# Editor files
 .vs/
 .vscode/
 .idea/
