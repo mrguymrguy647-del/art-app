@@ -226,3 +226,11 @@ undo can't bring back a picture you've closed.
 
 Exporting a PNG doesn't count as saving, because a PNG has no layers: it's
 a copy of what you see, for sharing.
+
+## 26. The canvas follows the window
+The app starts maximized, because painting needs room. When the window
+changes size (maximizing it, for example), the canvas is fitted again
+as long as you haven't zoomed, moved or turned it since it was last
+fitted. Once you have, your zoom stays as it is, and the same part of the
+picture stays in the middle of the window, like in other painting apps.
+Pressing `0` fits the canvas again.

@@ -33,7 +33,10 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Art App")
+            // Painting needs room: start maximized. This is the size
+            // used when you un-maximize the window.
             .with_inner_size([1280.0, 800.0])
+            .with_maximized(true)
             .with_min_inner_size([640.0, 400.0])
             .with_icon(icon),
         // Lets pen_input see Windows' pen messages (does nothing elsewhere).

@@ -72,6 +72,12 @@ pub struct CanvasView {
     textures: HashMap<TileCoord, TileTexture>,
     /// Fit the canvas into the window on the first frame.
     needs_fit: bool,
+    /// The view right after the last automatic fit. While the view is
+    /// still exactly this (you haven't zoomed, moved or turned it), the
+    /// canvas is fitted again whenever the window changes size.
+    fitted_view: Option<View>,
+    /// Where the canvas area was last frame, to notice the window resizing.
+    last_rect: Option<Rect>,
     drag: Option<Drag>,
     /// The canvas pixel under the mouse, for the status bar.
     pointer_on_canvas: Option<Point>,
@@ -86,6 +92,8 @@ impl Default for CanvasView {
             view: View::default(),
             textures: HashMap::new(),
             needs_fit: true,
+            fitted_view: None,
+            last_rect: None,
             drag: None,
             pointer_on_canvas: None,
             tools: PaintTool::default(),
@@ -134,6 +142,7 @@ impl CanvasView {
     pub fn reset(&mut self) {
         self.textures.clear();
         self.needs_fit = true;
+        self.fitted_view = None;
         self.drag = None;
         self.pointer_on_canvas = None;
         self.layers = LayersPanel::default();
@@ -154,10 +163,7 @@ impl CanvasView {
         let rect = ui.max_rect();
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
-        if self.needs_fit {
-            self.fit(document, rect);
-            self.needs_fit = false;
-        }
+        self.follow_window_size(document, rect);
         let navigating = self.handle_input(ui, &response, rect, document);
         let placement = CanvasPlacement {
             rect,
@@ -356,6 +362,7 @@ impl CanvasView {
         space || self.drag.is_some()
     }
 
+    /// Fits the whole canvas into `rect`.
     fn fit(&mut self, document: &Document, rect: Rect) {
         self.view.fit(
             document.width() as f32,
@@ -363,6 +370,31 @@ impl CanvasView {
             to_point(rect.center()),
             Point::new(rect.width(), rect.height()),
         );
+        self.fitted_view = Some(self.view);
+    }
+
+    /// Keeps the canvas well placed when the window changes size (for
+    /// example when you maximize it). If you haven't zoomed or moved since
+    /// the canvas was fitted, it's fitted again, so it fills the new space.
+    /// Otherwise the same part of the picture stays in the middle, at the
+    /// same zoom.
+    fn follow_window_size(&mut self, document: &Document, rect: Rect) {
+        if rect.width() < 1.0 || rect.height() < 1.0 {
+            return; // minimized: wait until there's room again
+        }
+        if self.needs_fit {
+            self.fit(document, rect);
+            self.needs_fit = false;
+        } else if let Some(old) = self.last_rect
+            && old != rect
+        {
+            if self.fitted_view == Some(self.view) {
+                self.fit(document, rect);
+            } else {
+                self.view.pan(vec_to_point(rect.center() - old.center()));
+            }
+        }
+        self.last_rect = Some(rect);
     }
 
     // ---- Textures ---------------------------------------------------------
