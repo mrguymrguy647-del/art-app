@@ -1,7 +1,7 @@
 //! Art App: program entry point.
 //!
-//! Opens the window, sets up pen input, and shows the current screen:
-//! the canvas, or the pen test.
+//! Opens the window, sets up pen input, and shows the top bar (File menu,
+//! screens, undo/redo) and the current screen: the canvas, or the pen test.
 
 // In release builds on Windows, don't open a black console window next to the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -9,6 +9,7 @@
 mod brush_panel;
 mod canvas_view;
 mod color_panel;
+mod files;
 mod layers_panel;
 mod paint_tool;
 mod pen_input;
@@ -19,6 +20,7 @@ use art_engine::history::History;
 use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};
 
 use canvas_view::CanvasView;
+use files::{DEFAULT_SIZE, Files};
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
 
@@ -30,7 +32,7 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("Art App {}", art_engine::VERSION))
+            .with_title("Art App")
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0])
             .with_icon(icon),
@@ -66,6 +68,8 @@ struct ArtApp {
     document: Document,
     /// Undo and redo.
     history: History,
+    /// New, open, save, export, and the window title.
+    files: Files,
     canvas: CanvasView,
     pen_test: PenTestScreen,
     screen: Screen,
@@ -73,11 +77,19 @@ struct ArtApp {
 
 impl ArtApp {
     fn new(pen_input: PenInput) -> Self {
+        // `ArtApp.exe picture.artapp` opens that picture. That's also how
+        // Windows starts us for "Open with". Otherwise (or if it can't be
+        // opened) start with a blank picture of the standard size.
+        let mut files = Files::default();
+        let document = std::env::args_os()
+            .nth(1)
+            .and_then(|path| files.open_path(path.into()))
+            .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
         Self {
             pen_input,
-            // A blank 4000 x 3000 canvas. "New document" comes with saving (Step 8).
-            document: Document::new(4000, 3000),
+            document,
             history: History::default(),
+            files,
             canvas: CanvasView::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
@@ -104,15 +116,22 @@ impl ArtApp {
 }
 
 impl eframe::App for ArtApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
 
-        let (mut undo, mut redo) = self.undo_redo_shortcuts(ui.ctx());
+        // While a small window like "Save changes?" is open, shortcuts
+        // would act on the picture behind it, so they're ignored.
+        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() {
+            (false, false, None)
+        } else {
+            let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
+            (undo, redo, self.files.shortcuts(ui.ctx()))
+        };
 
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("Art App");
+                file_action = file_action.or(self.files.menu(ui));
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
@@ -140,17 +159,35 @@ impl eframe::App for ArtApp {
                     .on_hover_text(redo_tip)
                     .on_disabled_hover_text("Nothing to redo")
                     .clicked();
+                ui.separator();
+                self.files.notice_ui(ui);
             });
         });
 
         // Not in the middle of a stroke: wait until it's finished.
-        if !self.canvas.is_painting() {
+        if self.canvas.is_painting() {
+            file_action = None;
+        } else {
             if undo {
                 self.history.undo(&mut self.document);
             }
             if redo {
                 self.history.redo(&mut self.document);
             }
+        }
+
+        // New, open, save, export; asks "Save changes?" when needed.
+        let new_document = self.files.update(
+            ui.ctx(),
+            frame,
+            file_action,
+            &self.document,
+            &mut self.history,
+        );
+        if let Some(document) = new_document {
+            self.document = document;
+            self.history = History::default();
+            self.canvas.reset();
         }
 
         match self.screen {

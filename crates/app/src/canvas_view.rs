@@ -129,6 +129,16 @@ impl CanvasView {
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
     }
 
+    /// Forgets the previous picture's textures and view, for when a new
+    /// picture is started or opened. Tools and colours stay as they are.
+    pub fn reset(&mut self) {
+        self.textures.clear();
+        self.needs_fit = true;
+        self.drag = None;
+        self.pointer_on_canvas = None;
+        self.layers = LayersPanel::default();
+    }
+
     /// True while a stroke is being painted.
     pub fn is_painting(&self) -> bool {
         self.tools.is_painting()
@@ -202,6 +212,11 @@ impl CanvasView {
         document: &Document,
     ) -> bool {
         let ctx = ui.ctx();
+        // A small window (like "New picture") is open on top of the canvas:
+        // the wheel and keys belong to it.
+        if !ctx.memory(|m| m.allows_interaction(ui.layer_id())) {
+            return false;
+        }
         let centre = to_point(rect.center());
         let line = ctx.options(|o| o.input_options.line_scroll_speed);
         let (space, shift, wheel_notches, zoom_delta, touch, hover) = ui.input(|i| {

@@ -5,5 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-# The engine has no dependencies yet: plain Rust only.
 [dependencies]
+# For saving and opening pictures (see file.rs):
+# a .artapp file is a zip archive holding a JSON description and PNG tiles.
+zip = { version = "9", default-features = false, features = ["deflate"] }
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

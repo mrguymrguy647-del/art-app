@@ -13,6 +13,11 @@ use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
 
+/// The widest and tallest a canvas may be, in pixels. Pictures are sparse,
+/// so size alone costs little memory, but a limit keeps a damaged file
+/// from claiming an absurd size.
+pub const MAX_CANVAS_SIDE: u32 = 50_000;
+
 /// One picture: its size, paper colour and layers.
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -43,6 +48,34 @@ impl Document {
             next_layer_number: 2,
             removed_tiles: HashSet::new(),
         }
+    }
+
+    /// Rebuilds a document from saved parts (used when opening a file).
+    /// `layers` is bottom first and must not be empty.
+    pub(crate) fn from_parts(
+        width: u32,
+        height: u32,
+        paper: Rgba8,
+        layers: Vec<Layer>,
+        active_index: usize,
+        next_layer_number: u64,
+    ) -> Self {
+        let active = layers[active_index.min(layers.len() - 1)].id();
+        Self {
+            width,
+            height,
+            paper,
+            layers,
+            active,
+            next_layer_number,
+            removed_tiles: HashSet::new(),
+        }
+    }
+
+    /// The number the next new layer will get (saved in files, so layer
+    /// names keep counting up after you open a picture again).
+    pub(crate) fn next_layer_number(&self) -> u64 {
+        self.next_layer_number
     }
 
     pub fn width(&self) -> u32 {

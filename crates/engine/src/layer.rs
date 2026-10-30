@@ -77,6 +77,23 @@ impl Layer {
         self.blend
     }
 
+    /// A layer rebuilt from saved settings (used when opening a file).
+    pub(crate) fn from_saved(
+        id: LayerId,
+        props: LayerProps,
+        blend: BlendMode,
+        surface: Surface,
+    ) -> Self {
+        Self {
+            id,
+            name: props.name,
+            visible: props.visible,
+            opacity: props.opacity.clamp(0.0, 1.0),
+            blend,
+            surface,
+        }
+    }
+
     pub fn props(&self) -> LayerProps {
         LayerProps {
             name: self.name.clone(),

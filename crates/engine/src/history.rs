@@ -101,6 +101,10 @@ pub struct History {
     /// The most recently undone command is last.
     redo: Vec<Box<dyn Command>>,
     memory_limit: usize,
+    /// How many undo steps there were when the picture was last saved.
+    /// `None` if that point can't be reached any more (e.g. you undid past
+    /// it and then made a new change).
+    saved_at: Option<usize>,
 }
 
 impl Default for History {
@@ -116,12 +120,28 @@ impl History {
             undo: VecDeque::new(),
             redo: Vec::new(),
             memory_limit,
+            saved_at: Some(0),
         }
+    }
+
+    /// Remembers that the picture was just saved (or freshly opened).
+    pub fn mark_saved(&mut self) {
+        self.saved_at = Some(self.undo.len());
+    }
+
+    /// True if the picture has changed since it was last saved. Undoing
+    /// back to exactly the saved state counts as unchanged again.
+    pub fn is_modified(&self) -> bool {
+        self.saved_at != Some(self.undo.len())
     }
 
     /// Records a change that has just been made to the document.
     pub fn push(&mut self, command: Box<dyn Command>) {
         // After a new change, the undone changes can't be redone any more.
+        // If the saved state was among them, it can never come back.
+        if self.saved_at.is_some_and(|saved| saved > self.undo.len()) {
+            self.saved_at = None;
+        }
         self.redo.clear();
         self.undo.push_back(command);
 
@@ -129,6 +149,8 @@ impl History {
         // newest one, however big it is.
         while self.memory_used() > self.memory_limit && self.undo.len() > 1 {
             self.undo.pop_front();
+            // Everything shifted down by one step.
+            self.saved_at = self.saved_at.and_then(|saved| saved.checked_sub(1));
         }
     }
 
@@ -258,6 +280,73 @@ mod tests {
         assert_eq!(picture(&document), first);
         assert!(history.redo(&mut document));
         assert_eq!(picture(&document), second);
+    }
+
+    #[test]
+    fn unsaved_changes_are_tracked_through_undo_and_redo() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        assert!(!history.is_modified(), "a new picture has nothing to save");
+
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            100.0,
+        );
+        assert!(history.is_modified());
+        history.mark_saved();
+        assert!(!history.is_modified());
+
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            200.0,
+        );
+        assert!(history.is_modified());
+        history.undo(&mut document);
+        assert!(!history.is_modified(), "back to exactly what was saved");
+        history.undo(&mut document);
+        assert!(history.is_modified(), "now it's older than what was saved");
+        history.redo(&mut document);
+        assert!(!history.is_modified());
+    }
+
+    #[test]
+    fn a_new_change_after_undoing_past_the_save_stays_modified() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            100.0,
+        );
+        history.mark_saved();
+        history.undo(&mut document);
+        // A different change in place of the saved one: the saved state is gone.
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            500.0,
+        );
+        assert!(history.is_modified());
+        history.undo(&mut document);
+        assert!(history.is_modified());
     }
 
     #[test]

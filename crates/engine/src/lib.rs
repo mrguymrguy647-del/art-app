@@ -7,6 +7,7 @@
 pub mod brush;
 pub mod color;
 pub mod document;
+pub mod file;
 pub mod history;
 pub mod layer;
 pub mod layer_commands;

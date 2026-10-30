@@ -188,3 +188,41 @@ undo brings it back exactly. Dragging the opacity slider changes the
 layer live, but the whole drag is recorded as one undo step when you
 let go. Choosing which layer is active isn't undoable, as in other
 painting apps.
+
+## 23. Our own file format: a zip of PNG tiles
+A picture is saved as an `.artapp` file. Inside it is an ordinary zip
+archive (the same idea as Krita's `.kra` and the OpenRaster `.ora`
+format), holding:
+- `document.json`: the canvas size, paper colour and every layer's name,
+  visibility, opacity and blend mode, as readable text;
+- one small PNG image per painted tile of each layer.
+
+Why this way:
+- **Only painted tiles are stored**, so saving is quick and an almost
+  empty picture makes a tiny file, however big the canvas is.
+- **Nothing is lost.** Tiles are stored exactly as the app keeps them in
+  memory, so opening a file gives back exactly the same pixels.
+- **Well-known pieces.** Zip, JSON and PNG are standard and well tested,
+  and you can even unzip a file to look inside. It also makes OpenRaster
+  import/export (a later phase) easy, because `.ora` is built the same way.
+- **It can grow.** The file says which format version it is. A newer app
+  (for example with 16-bit colour) can still open old files, and an old
+  app politely says "made by a newer version" instead of breaking.
+
+## 24. Saving can't destroy your previous file
+Saving first writes a temporary file next to the real one and only
+replaces the real file once everything has been written. If saving fails
+halfway (disk full, USB stick pulled out), the previous version is still
+there. Opening checks everything it reads, so a damaged file gives a
+clear message instead of a crash.
+
+## 25. "Save changes?" and the `*` in the title
+The undo history remembers *where* you last saved. If you undo back to
+exactly that point, there is nothing unsaved again. When there are
+unsaved changes, the window title shows a `*`, and starting a new
+picture, opening another one, or closing the window first asks
+"Save changes?". Opening or starting a picture clears the undo history:
+undo can't bring back a picture you've closed.
+
+Exporting a PNG doesn't count as saving, because a PNG has no layers: it's
+a copy of what you see, for sharing.

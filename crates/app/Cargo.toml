@@ -14,6 +14,8 @@ path = "src/main.rs"
 art_engine.workspace = true
 # egui is the interface library; eframe opens the window and runs egui in it.
 eframe = "0.37"
+# The standard Windows "Open" and "Save As" windows.
+rfd = "0.17"
 
 # Windows-only: lets us read pen pressure, tilt and rotation from Windows Ink.
 [target.'cfg(windows)'.dependencies]

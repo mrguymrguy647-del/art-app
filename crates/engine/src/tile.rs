@@ -84,6 +84,14 @@ impl<P: Pixel> Tile<P> {
         }
     }
 
+    /// A tile made from a list of pixels, row by row. `None` if there
+    /// aren't exactly `TILE_PIXELS` of them.
+    pub fn from_pixels(pixels: Vec<P>) -> Option<Self> {
+        (pixels.len() == TILE_PIXELS).then(|| Self {
+            pixels: pixels.into_boxed_slice(),
+        })
+    }
+
     /// The pixel at (x, y) inside this tile. Both must be below `TILE_SIZE`.
     pub fn pixel(&self, x: usize, y: usize) -> P {
         self.pixels[y * TILE_SIZE + x]
