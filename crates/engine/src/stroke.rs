@@ -11,10 +11,13 @@
 //! the brush colour laid over the pixel *as it was before the stroke*, as
 //! strong as its coverage. That's why going over the same spot again
 //! doesn't make it darker than the brush opacity.
+//!
+//! The eraser works the same way, except that instead of laying colour
+//! over the original pixels it makes them more transparent.
 
 use std::collections::HashMap;
 
-use crate::brush::{BrushSettings, dab_coverage};
+use crate::brush::{BrushMode, BrushSettings, dab_coverage};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_PIXELS, TILE_SIZE, Tile};
 
@@ -114,6 +117,14 @@ impl Stroke {
             let (from, to) = (self.recent[n - 2], self.recent[n - 1]);
             self.draw_curve(layer, before, from, to, to);
         }
+
+        // Erasing can leave tiles completely empty: remove them to free
+        // their memory. (`before` still has them, for undo.)
+        for &coord in self.before.keys() {
+            if layer.tile(coord).is_some_and(|tile| tile.is_transparent()) {
+                layer.remove_tile(coord);
+            }
+        }
         self.before
     }
 
@@ -185,6 +196,9 @@ impl Stroke {
             if !circle_touches(&area, at, reach) {
                 continue; // a corner of the dab's box that the round dab misses
             }
+            if self.brush.mode == BrushMode::Erase && layer.tile(coord).is_none() {
+                continue; // nothing painted here, so nothing to erase
+            }
 
             // 1. Raise this stroke's coverage where the dab is stronger.
             let coverage = self
@@ -218,18 +232,19 @@ impl Stroke {
                 .or_insert_with(|| layer.tile(coord).cloned())
                 .as_ref();
 
-            // 3. Lay the colour over the original pixels, as strong as the coverage.
+            // 3. Change the original pixels, as strongly as the coverage says:
+            //    lay the colour over them, or erase them.
             let tile = layer.tile_mut(coord);
             for y in area.top..area.bottom {
                 for x in area.left..area.right {
                     let (tile_x, tile_y) = ((x - left) as usize, (y - top) as usize);
                     let original = before.map_or(Rgba8::TRANSPARENT, |t| t.pixel(tile_x, tile_y));
                     let strength = coverage[tile_index(x - left, y - top)];
-                    tile.set_pixel(
-                        tile_x,
-                        tile_y,
-                        paint_over(original, self.brush.color, strength),
-                    );
+                    let pixel = match self.brush.mode {
+                        BrushMode::Paint => paint_over(original, self.brush.color, strength),
+                        BrushMode::Erase => erase(original, strength),
+                    };
+                    tile.set_pixel(tile_x, tile_y, pixel);
                 }
             }
         }
@@ -301,11 +316,37 @@ fn paint_over(under: Rgba8, color: [u8; 3], strength: f32) -> Rgba8 {
     )
 }
 
+/// `pixel` with the given strength (0..1) of it rubbed out.
+///
+/// The pixel is premultiplied, so making it more transparent simply
+/// scales all four values down.
+fn erase(pixel: Rgba8, strength: f32) -> Rgba8 {
+    let keep = 1.0 - strength;
+    let scale = |value: u8| (f32::from(value) * keep).round() as u8;
+    Rgba8::new(
+        scale(pixel.r),
+        scale(pixel.g),
+        scale(pixel.b),
+        scale(pixel.a),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const BLACK: [u8; 3] = [0, 0, 0];
+
+    fn point(x: f32, y: f32) -> StrokePoint {
+        StrokePoint::new(x, y, 1.0)
+    }
+
+    fn eraser(size: f32) -> BrushSettings {
+        BrushSettings {
+            mode: BrushMode::Erase,
+            ..hard_brush(size)
+        }
+    }
 
     fn hard_brush(size: f32) -> BrushSettings {
         BrushSettings {
@@ -476,6 +517,71 @@ mod tests {
         let chord = radius * 22.5_f32.to_radians().cos();
         let on_chord = (cx + chord * angle.cos(), cy + chord * angle.sin());
         assert_eq!(layer.pixel(on_chord.0 as i32, on_chord.1 as i32).a, 0);
+    }
+
+    #[test]
+    fn the_eraser_removes_paint() {
+        let mut layer = Surface::new();
+        paint(
+            hard_brush(20.0),
+            &mut layer,
+            &[point(100.0, 100.0), point(140.0, 100.0)],
+        );
+        assert_eq!(layer.pixel(120, 100).a, 255);
+
+        // Erase straight across the middle of the line.
+        paint(
+            eraser(10.0),
+            &mut layer,
+            &[point(120.0, 80.0), point(120.0, 120.0)],
+        );
+        assert_eq!(layer.pixel(120, 100), Rgba8::TRANSPARENT);
+        assert_eq!(layer.pixel(105, 100).a, 255, "the rest of the line stays");
+    }
+
+    #[test]
+    fn a_half_strength_eraser_makes_paint_half_transparent() {
+        let mut layer = Surface::new();
+        layer.set_pixel(50, 50, Rgba8::new(200, 100, 0, 255));
+        let half_eraser = BrushSettings {
+            opacity: 0.5,
+            ..eraser(10.0)
+        };
+        paint(half_eraser, &mut layer, &[point(50.0, 50.0)]);
+        // Premultiplied: colour and opacity are all halved.
+        assert_eq!(layer.pixel(50, 50), Rgba8::new(100, 50, 0, 128));
+    }
+
+    #[test]
+    fn erasing_where_nothing_is_painted_creates_no_tiles() {
+        let mut layer = Surface::new();
+        let before = paint(
+            eraser(50.0),
+            &mut layer,
+            &[point(100.0, 100.0), point(600.0, 100.0)],
+        );
+        assert_eq!(layer.tile_count(), 0);
+        assert!(before.is_empty());
+    }
+
+    #[test]
+    fn tiles_erased_completely_are_removed() {
+        let mut layer = Surface::new();
+        paint(
+            hard_brush(10.0),
+            &mut layer,
+            &[point(300.0, 50.0), point(400.0, 50.0)],
+        );
+        assert_eq!(layer.tile_count(), 1);
+
+        let before = paint(
+            eraser(60.0),
+            &mut layer,
+            &[point(290.0, 50.0), point(410.0, 50.0)],
+        );
+        assert_eq!(layer.tile_count(), 0, "the empty tile should be freed");
+        // The tile as it was before erasing is kept, ready for undo.
+        assert!(before[&TileCoord::new(1, 0)].is_some());
     }
 
     #[test]

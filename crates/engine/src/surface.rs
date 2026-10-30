@@ -176,6 +176,13 @@ impl<P: Pixel> Surface<P> {
             .or_insert_with(|| Box::new(Tile::new()))
     }
 
+    /// Removes one tile (its area becomes transparent) and returns it.
+    pub fn remove_tile(&mut self, coord: TileCoord) -> Option<Tile<P>> {
+        let tile = self.tiles.remove(&coord)?;
+        self.dirty.insert(coord);
+        Some(*tile)
+    }
+
     /// Removes every tile: the whole surface becomes transparent again.
     pub fn clear(&mut self) {
         // The removed tiles count as changed, so the screen updates.
@@ -264,6 +271,21 @@ mod tests {
         surface.tile_mut(TileCoord::new(2, 3)).set_pixel(0, 0, RED);
         assert_eq!(surface.pixel(512, 768), RED);
         assert_eq!(surface.take_dirty_tiles(), vec![TileCoord::new(2, 3)]);
+    }
+
+    #[test]
+    fn removing_a_tile_frees_it_and_marks_it_changed() {
+        let mut surface: Surface = Surface::new();
+        surface.set_pixel(300, 0, RED);
+        surface.take_dirty_tiles();
+
+        let removed = surface
+            .remove_tile(TileCoord::new(1, 0))
+            .expect("tile existed");
+        assert_eq!(removed.pixel(44, 0), RED);
+        assert_eq!(surface.tile_count(), 0);
+        assert_eq!(surface.take_dirty_tiles(), vec![TileCoord::new(1, 0)]);
+        assert!(surface.remove_tile(TileCoord::new(1, 0)).is_none());
     }
 
     #[test]

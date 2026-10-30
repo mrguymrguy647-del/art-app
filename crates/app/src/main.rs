@@ -7,8 +7,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod brush_panel;
-mod brush_tool;
 mod canvas_view;
+mod paint_tool;
 mod pen_input;
 mod pen_test;
 

@@ -112,3 +112,12 @@ all of them instead of only the latest.
 ## 16. Fingers navigate, they don't paint
 On a touchscreen, two fingers zoom, pan and rotate. Fingers don't paint,
 so resting your hand on the screen won't leave marks.
+
+## 17. The eraser is the brush in reverse
+The eraser uses the same strokes as the brush (dabs, pressure, smoothing,
+curves, soft edges), but makes pixels more transparent instead of laying
+colour on them. It erases back to the paper. It keeps its own settings, so
+switching between brush and eraser doesn't lose your brush size. Turning
+the pen round to its eraser end switches to the eraser automatically, and
+turning it back returns to the tool you had. When a stroke leaves a tile
+completely empty, the tile is removed to free its memory.

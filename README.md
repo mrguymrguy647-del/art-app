@@ -2,8 +2,8 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1, Step 3: paint with a round brush (pen pressure changes size and opacity),
-on a canvas you can zoom, pan and rotate. The pen test is under **Pen test** in the top bar.
+**Status:** Phase 1, Step 4: paint and erase with a round brush (pen pressure changes size and
+opacity), on a canvas you can zoom, pan and rotate. The pen test is under **Pen test** in the top bar.
 
 ## Run it on Windows (no terminal needed)
 
@@ -36,7 +36,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Action | Mouse / keyboard | Touchscreen / touchpad |
 |---|---|---|
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
-| Brush size | `[` smaller, `]` bigger, or the Size slider | |
+| Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
+| Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
 | Pan (move) | Hold **Space** and drag, or drag with the middle mouse button | Two-finger drag (touchscreen) |
 | Rotate | Hold **Shift + Space** and drag, or `4` / `6` (15° steps) | Two-finger twist (touchscreen) |
@@ -63,7 +64,7 @@ art-app/
     │       ├── document.rs   canvas size, paper, layer
     │       ├── view.rs       zoom / pan / rotate maths
     │       ├── brush.rs      brush settings, dab shape
-    │       ├── stroke.rs     paints a stroke: dabs, no gaps, opacity
+    │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
     │       ├── smoothing.rs  steadier lines
     │       └── pen.rs        pen samples + tilt maths
     └── app/              the program: window and interface (egui)
@@ -72,8 +73,8 @@ art-app/
         └── src/
             ├── main.rs        starts the app, switches screens
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
-            ├── brush_tool.rs  turns pen/mouse input into strokes
-            ├── brush_panel.rs the brush settings panel
+            ├── paint_tool.rs  brush and eraser: pen/mouse input into strokes
+            ├── brush_panel.rs the brush / eraser settings panel
             ├── pen_input.rs   reads pressure/tilt from Windows Ink
             └── pen_test.rs    the pen test screen
 ```

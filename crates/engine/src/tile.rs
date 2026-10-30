@@ -98,6 +98,11 @@ impl<P: Pixel> Tile<P> {
         &self.pixels
     }
 
+    /// True if every pixel is fully transparent (nothing painted).
+    pub fn is_transparent(&self) -> bool {
+        self.pixels.iter().all(|&pixel| pixel == P::TRANSPARENT)
+    }
+
     /// The tile as 8-bit premultiplied RGBA bytes for the screen, shrunk by
     /// half `level` times (0 = full size, 1 = 128x128, 2 = 64x64, ...).
     ///
@@ -152,6 +157,14 @@ mod tests {
         let tile: Tile = Tile::new();
         assert_eq!(tile.pixels().len(), TILE_PIXELS);
         assert!(tile.pixels().iter().all(|&p| p == Rgba8::TRANSPARENT));
+    }
+
+    #[test]
+    fn a_tile_is_transparent_until_something_is_painted() {
+        let mut tile: Tile = Tile::new();
+        assert!(tile.is_transparent());
+        tile.set_pixel(255, 255, Rgba8::new(0, 0, 0, 1));
+        assert!(!tile.is_transparent());
     }
 
     #[test]

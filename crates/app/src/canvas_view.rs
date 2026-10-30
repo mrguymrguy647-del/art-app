@@ -8,7 +8,7 @@
 //! When zoomed out, tiles are sent as smaller previews (see
 //! `Tile::display_bytes`): it looks smoother and uses less memory.
 //!
-//! Painting itself is handled by the brush tool (`brush_tool.rs`).
+//! Painting itself is handled by the painting tools (`paint_tool.rs`).
 
 use std::collections::HashMap;
 
@@ -24,7 +24,7 @@ use eframe::egui::{
 };
 
 use crate::brush_panel::brush_panel;
-use crate::brush_tool::BrushTool;
+use crate::paint_tool::{PaintTool, Tool};
 use crate::pen_input::InkEvent;
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
@@ -72,7 +72,7 @@ pub struct CanvasView {
     drag: Option<Drag>,
     /// The canvas pixel under the mouse, for the status bar.
     pointer_on_canvas: Option<Point>,
-    tool: BrushTool,
+    tools: PaintTool,
 }
 
 impl Default for CanvasView {
@@ -83,7 +83,7 @@ impl Default for CanvasView {
             needs_fit: true,
             drag: None,
             pointer_on_canvas: None,
-            tool: BrushTool::default(),
+            tools: PaintTool::default(),
         }
     }
 }
@@ -96,7 +96,7 @@ impl CanvasView {
         egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
-                let actions = brush_panel(ui, &mut self.tool.brush, &mut self.tool.smoothing);
+                let actions = brush_panel(ui, &mut self.tools);
                 if actions.clear_canvas {
                     document.clear();
                 }
@@ -118,7 +118,7 @@ impl CanvasView {
             self.needs_fit = false;
         }
         let navigating = self.handle_input(ui, &response, rect, document);
-        self.tool
+        self.tools
             .handle_input(ui, rect, &self.view, document, ink_events, navigating);
 
         let visible = self.visible_tiles(document, rect);
@@ -127,8 +127,8 @@ impl CanvasView {
         self.paint(&painter, document, rect, &visible);
 
         // The brush outline replaces the mouse pointer over the canvas.
-        if let Some(position) = self.tool.outline_position(ui, rect) {
-            let radius = self.tool.brush.size / 2.0 * self.view.zoom();
+        if let Some(position) = self.tools.outline_position(ui, rect) {
+            let radius = self.tools.settings().size / 2.0 * self.view.zoom();
             draw_brush_outline(&painter, position, radius);
             if !navigating {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
@@ -268,8 +268,15 @@ impl CanvasView {
             }
             let size_steps = presses(Key::CloseBracket) - presses(Key::OpenBracket);
             if size_steps != 0 {
-                let size = self.tool.brush.size * BRUSH_SIZE_STEP.powi(size_steps);
-                self.tool.brush.size = size.clamp(MIN_SIZE, MAX_SIZE);
+                let settings = self.tools.settings_mut();
+                settings.size =
+                    (settings.size * BRUSH_SIZE_STEP.powi(size_steps)).clamp(MIN_SIZE, MAX_SIZE);
+            }
+            if presses(Key::B) > 0 {
+                self.tools.tool = Tool::Brush;
+            }
+            if presses(Key::E) > 0 {
+                self.tools.tool = Tool::Eraser;
             }
         }
 

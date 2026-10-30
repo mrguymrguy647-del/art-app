@@ -8,9 +8,19 @@
 pub const MIN_SIZE: f32 = 1.0;
 pub const MAX_SIZE: f32 = 1000.0;
 
+/// Whether a brush adds paint or takes it away.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BrushMode {
+    #[default]
+    Paint,
+    /// Removes paint, making the layer transparent again (the eraser).
+    Erase,
+}
+
 /// Everything about how the brush paints.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
+    pub mode: BrushMode,
     /// Diameter in canvas pixels, at full pressure.
     pub size: f32,
     /// The most opaque a stroke can get, 0..1. Going over the same spot
@@ -30,12 +40,14 @@ pub struct BrushSettings {
     pub pressure_opacity: bool,
     pub pressure_flow: bool,
     /// Paint colour: red, green, blue (normal, not premultiplied).
+    /// The eraser ignores it.
     pub color: [u8; 3],
 }
 
 impl Default for BrushSettings {
     fn default() -> Self {
         Self {
+            mode: BrushMode::Paint,
             size: 24.0,
             opacity: 1.0,
             flow: 1.0,
@@ -45,6 +57,20 @@ impl Default for BrushSettings {
             pressure_opacity: true,
             pressure_flow: false,
             color: [20, 20, 20],
+        }
+    }
+}
+
+impl BrushSettings {
+    /// The eraser's starting settings: bigger and a bit softer than the
+    /// brush, and always at full strength (pressure only changes its size).
+    pub fn eraser() -> Self {
+        Self {
+            mode: BrushMode::Erase,
+            size: 40.0,
+            hardness: 0.6,
+            pressure_opacity: false,
+            ..Self::default()
         }
     }
 }
@@ -135,6 +161,14 @@ mod tests {
         assert_eq!(dab.radius, 10.0); // half the size
         assert_eq!(dab.opacity, 1.0); // unchanged
         assert_eq!(dab.flow, 0.5); // half the flow
+    }
+
+    #[test]
+    fn the_eraser_erases_at_full_strength_whatever_the_pressure() {
+        let eraser = BrushSettings::eraser();
+        assert_eq!(eraser.mode, BrushMode::Erase);
+        assert_eq!(eraser.dab(0.2).opacity, 1.0);
+        assert!(eraser.dab(0.2).radius < eraser.dab(1.0).radius);
     }
 
     #[test]

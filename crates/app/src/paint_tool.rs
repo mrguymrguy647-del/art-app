@@ -1,8 +1,12 @@
-//! The brush tool: turns pen and mouse input into brush strokes.
+//! The painting tools (brush and eraser): turn pen and mouse input into
+//! strokes.
 //!
 //! The pen comes from Windows Ink (`pen_input.rs`), with pressure. The
 //! mouse comes from egui and always paints at full pressure. Fingers on a
 //! touchscreen don't paint; they zoom and pan the canvas instead.
+//!
+//! Turning the pen round to its eraser end switches to the eraser, and
+//! turning it back switches back to the tool you had before.
 
 use std::time::{Duration, Instant};
 
@@ -23,6 +27,13 @@ const INK_TAKES_PRIORITY_FOR: Duration = Duration::from_millis(300);
 /// At 100% smoothing the line is pulled on a string this long, in screen
 /// points. It's measured on screen so smoothing feels the same at any zoom.
 const LONGEST_SMOOTHING_STRING: f32 = 60.0;
+
+/// The tools you can paint with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tool {
+    Brush,
+    Eraser,
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -58,21 +69,31 @@ impl ActiveStroke {
     }
 }
 
-pub struct BrushTool {
+pub struct PaintTool {
+    /// The selected tool.
+    pub tool: Tool,
+    /// Each tool remembers its own settings (size, softness, ...).
     pub brush: BrushSettings,
+    pub eraser: BrushSettings,
     /// How much lines are steadied: 0 = not at all, 1 = the most.
     pub smoothing: f32,
+    /// While the pen is turned round to its eraser end: the tool that was
+    /// selected before, to go back to when it's turned back.
+    tool_before_pen_flip: Option<Tool>,
     stroke: Option<ActiveStroke>,
     last_ink_event: Option<Instant>,
     /// Where the pen hovers, in screen points, while it is near the tablet.
     pen_position: Option<Pos2>,
 }
 
-impl Default for BrushTool {
+impl Default for PaintTool {
     fn default() -> Self {
         Self {
+            tool: Tool::Brush,
             brush: BrushSettings::default(),
+            eraser: BrushSettings::eraser(),
             smoothing: 0.25,
+            tool_before_pen_flip: None,
             stroke: None,
             last_ink_event: None,
             pen_position: None,
@@ -80,7 +101,22 @@ impl Default for BrushTool {
     }
 }
 
-impl BrushTool {
+impl PaintTool {
+    /// The selected tool's settings.
+    pub fn settings(&self) -> &BrushSettings {
+        match self.tool {
+            Tool::Brush => &self.brush,
+            Tool::Eraser => &self.eraser,
+        }
+    }
+
+    pub fn settings_mut(&mut self) -> &mut BrushSettings {
+        match self.tool {
+            Tool::Brush => &mut self.brush,
+            Tool::Eraser => &mut self.eraser,
+        }
+    }
+
     /// Reads this frame's pen and mouse input and paints.
     ///
     /// `rect` is the canvas area on screen. `navigating` means the user is
@@ -109,8 +145,11 @@ impl BrushTool {
         // 1. The pen.
         for event in ink_events {
             self.last_ink_event = Some(now);
-            if event.sample.kind == InputKind::Touch {
-                continue; // fingers zoom and pan, they don't paint
+            match event.sample.kind {
+                InputKind::Touch => continue, // fingers zoom and pan, they don't paint
+                InputKind::PenEraser => self.pen_turned_to_eraser(),
+                InputKind::Pen => self.pen_turned_to_tip(),
+                InputKind::Mouse => {}
             }
             let pos = pos2(
                 event.sample.x * points_per_pixel,
@@ -127,11 +166,7 @@ impl BrushTool {
                         self.finish_stroke(document); // the pen was lifted
                     }
                 }
-                None if event.in_contact
-                    && event.sample.kind == InputKind::Pen // the eraser end comes in Step 4
-                    && !navigating
-                    && on_canvas(pos) =>
-                {
+                None if event.in_contact && !navigating && on_canvas(pos) => {
                     self.start_stroke(Source::Pen, view, document, point);
                 }
                 _ => {}
@@ -180,6 +215,21 @@ impl BrushTool {
         }
     }
 
+    /// The pen's eraser end is in use: switch to the eraser (once).
+    fn pen_turned_to_eraser(&mut self) {
+        if self.tool_before_pen_flip.is_none() {
+            self.tool_before_pen_flip = Some(self.tool);
+            self.tool = Tool::Eraser;
+        }
+    }
+
+    /// The pen's tip is in use again: go back to the tool from before.
+    fn pen_turned_to_tip(&mut self) {
+        if let Some(tool) = self.tool_before_pen_flip.take() {
+            self.tool = tool;
+        }
+    }
+
     /// Where to draw the brush outline (screen points), if anywhere.
     pub fn outline_position(&self, ui: &egui::Ui, rect: Rect) -> Option<Pos2> {
         // A hovering pen may not move the mouse pointer, so prefer the pen.
@@ -198,7 +248,7 @@ impl BrushTool {
     ) {
         let string_length = self.smoothing * LONGEST_SMOOTHING_STRING / view.zoom();
         let mut active = ActiveStroke {
-            stroke: Stroke::new(self.brush, document.bounds()),
+            stroke: Stroke::new(*self.settings(), document.bounds()),
             smoother: Smoother::new(string_length),
             source,
             last_point: point,
