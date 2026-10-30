@@ -379,3 +379,16 @@ strokes are what was painted *on top* of that file. Scripts played with
 Play strokes are included too, with their colour names written out; their
 random patterns (jitter, scatter, hatch) can come out differently in the
 export, because those depend on the script's seed and command numbers.
+
+## 37. A guide for AI painters, and documentation that's tested
+`docs/AI_GUIDE.md` is written for an AI assistant painting with scripts:
+how to build and run `art-cli`, the whole format on one page, a
+workflow (plan, block in back to front, snapshot, check, light and
+shadow, detail, inspect close-ups), techniques taken from the two
+example pictures, rules of thumb for light and colour, how to check its
+own work, and common mistakes (like y going down, or a misspelt layer
+name quietly making a new layer).
+
+Wrong examples in a manual teach wrong habits, so the tests read both
+documents and check every example command in them, and `art-cli check`
+runs on every script in `examples/`.

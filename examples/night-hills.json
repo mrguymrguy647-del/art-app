@@ -1,0 +1,82 @@
+{
+  "format": "artapp-script",
+  "version": 1,
+  "title": "Moonlit hills",
+  "notes": "A second demo, showing the techniques in docs/AI_GUIDE.md: stars, a glowing moon, hills that fade with distance, trees with shadows, rim light and grass.",
+  "seed": 4,
+  "palette": {
+    "sky_top":   "#0B1026",
+    "sky_low":   "#2A3B6B",
+    "moon":      "#F4F1DE",
+    "moon_glow": "#9FB4E8",
+    "far_hill":  "#3A4A78",
+    "mid_hill":  "#25305A",
+    "near_hill": "#141A33",
+    "tree":      "#0C1022",
+    "trunk":     "#090B17",
+    "shadow":    "#05060F",
+    "rim":       "#B8C8F0",
+    "grass":     "#1C2546",
+    "grass_lit": "#5468A0"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 1600, "height": 1000, "paper": "#000000" },
+
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 700], "colors": ["sky_top", "sky_low"] },
+
+    { "cmd": "layer", "name": "Stars" },
+    { "cmd": "scatter", "note": "many faint stars", "area": { "rect": [0, 0, 1600, 560] },
+      "count": 500, "size": [1, 2.5], "color": "#FFFFFF", "opacity": [0.2, 0.7], "hardness": 0.5, "seed": 1 },
+    { "cmd": "scatter", "note": "a few bright ones", "area": { "rect": [0, 0, 1600, 450] },
+      "count": 30, "size": [3, 5], "colors": ["#FFFFFF", "#FFF2CC", "#CCE0FF"], "opacity": [0.7, 1], "hardness": 0.3, "seed": 2 },
+
+    { "cmd": "layer", "name": "Moon glow", "blend": "screen" },
+    { "cmd": "gradient", "kind": "radial", "from": [1180, 230], "to": [1180, -170],
+      "stops": [[0, "#9FB4E8A0"], [0.3, "#5A70B040"], [1, "transparent"]] },
+    { "cmd": "layer", "name": "Moon" },
+    { "cmd": "ellipse", "center": [1180, 230], "radius": 70,
+      "fill": { "gradient": "radial", "from": [1160, 210], "to": [1180, 300], "colors": ["#FFFFFF", "moon", "#D8D2B8"] } },
+    { "cmd": "snapshot", "name": "sky" },
+
+    { "cmd": "layer", "name": "Far hills" },
+    { "cmd": "path", "closed": true, "line": false, "fill": "far_hill", "jitter": 4,
+      "points": [[-50, 620], [200, 520], [420, 560], [700, 470], [980, 540], [1250, 490], [1650, 570], [1650, 1000], [-50, 1000]] },
+    { "cmd": "layer", "name": "Middle hills" },
+    { "cmd": "path", "closed": true, "line": false, "fill": "mid_hill", "jitter": 5,
+      "points": [[-50, 700], [260, 630], [560, 690], [900, 610], [1200, 680], [1650, 640], [1650, 1000], [-50, 1000]] },
+    { "cmd": "layer", "name": "Mist", "blend": "screen", "opacity": 0.5 },
+    { "cmd": "gradient", "from": [0, 600], "to": [0, 760], "colors": ["transparent", "#3A4A80", "transparent"] },
+    { "cmd": "layer", "name": "Near hill" },
+    { "cmd": "path", "closed": true, "line": false, "fill": "near_hill", "jitter": 3,
+      "points": [[-50, 820], [400, 760], [800, 800], [1200, 770], [1650, 830], [1650, 1000], [-50, 1000]] },
+    { "cmd": "snapshot", "name": "hills blocked in" },
+
+    { "cmd": "layer", "name": "Trees" },
+    { "cmd": "rect", "x": 352, "y": 640, "width": 16, "height": 150, "fill": "trunk" },
+    { "cmd": "ellipse", "center": [360, 600], "radius": [70, 95], "fill": "tree", "jitter": 6 },
+    { "cmd": "ellipse", "center": [325, 650], "radius": [55, 60], "fill": "tree", "jitter": 5 },
+    { "cmd": "ellipse", "center": [400, 645], "radius": [55, 62], "fill": "tree", "jitter": 5 },
+    { "cmd": "rect", "x": 494, "y": 700, "width": 12, "height": 100, "fill": "trunk" },
+    { "cmd": "ellipse", "center": [500, 670], "radius": [45, 60], "fill": "tree", "jitter": 4 },
+
+    { "cmd": "layer", "name": "Rim light", "blend": "screen" },
+    { "cmd": "brush", "hardness": 0.3, "flow": 0.6 },
+    { "cmd": "path", "points": [[372, 510], [410, 528], [430, 560], [440, 600]], "size": 7, "color": "rim", "opacity": 0.6, "taper": 0.4, "jitter": 2 },
+    { "cmd": "path", "points": [[515, 612], [535, 630], [543, 660]], "size": 5, "color": "rim", "opacity": 0.5, "taper": 0.4 },
+    { "cmd": "path", "points": [[800, 801], [1000, 785], [1200, 771], [1400, 790]], "size": 4, "color": "rim", "opacity": 0.35, "taper": 0.3 },
+    { "cmd": "brush", "hardness": 0.8, "flow": 1 },
+
+    { "cmd": "layer", "name": "Shadows", "blend": "multiply", "opacity": 0.8 },
+    { "cmd": "ellipse", "center": [300, 800], "radius": [110, 14], "fill": "shadow", "opacity": 0.6, "jitter": 3 },
+    { "cmd": "hatch", "area": { "polygon": [[-50, 840], [400, 790], [700, 830], [700, 1000], [-50, 1000]] },
+      "angle": -8, "spacing": 9, "size": 2, "color": "shadow", "opacity": 0.35, "jitter": 3 },
+
+    { "cmd": "layer", "name": "Grass" },
+    { "cmd": "scatter", "area": { "rect": [0, 840, 1600, 170] }, "count": 900, "kind": "stroke",
+      "length": [12, 34], "angle": [-100, -80], "size": [1.5, 3], "colors": ["grass", "near_hill"], "opacity": [0.6, 1], "seed": 3 },
+    { "cmd": "scatter", "area": { "rect": [700, 800, 900, 120] }, "count": 250, "kind": "stroke",
+      "length": [8, 22], "angle": [-100, -80], "size": [1, 2], "color": "grass_lit", "opacity": [0.3, 0.6], "seed": 4 },
+    { "cmd": "snapshot", "name": "finished" }
+  ]
+}

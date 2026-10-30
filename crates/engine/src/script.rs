@@ -829,4 +829,62 @@ mod tests {
         );
         assert_eq!(parse(&text).unwrap(), script);
     }
+
+    /// Every example command in the documentation must be valid, so a
+    /// typo there can't teach anyone (or any AI) the wrong thing.
+    #[test]
+    fn the_examples_in_the_documentation_are_valid() {
+        let docs = [
+            include_str!("../../../docs/script-format.md"),
+            include_str!("../../../docs/AI_GUIDE.md"),
+        ];
+        let mut checked = 0;
+        for doc in docs {
+            for block in doc.split("```json\n").skip(1) {
+                let block = block.split("```").next().unwrap_or("").trim();
+                if block.contains('…') || block.contains("...") {
+                    continue; // has placeholders, like [x, y] ...
+                }
+                if block.starts_with("{\n") && block.contains("\"commands\"") {
+                    parse(block).unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
+                    checked += 1;
+                    continue;
+                }
+                if block.starts_with('"') {
+                    // One field, like "fill": {...}: check it inside a rectangle.
+                    let script = format!(
+                        r#"{{ "commands": [ {{ "cmd": "canvas", "width": 10, "height": 10 }},
+                            {{ "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, {block} }} ] }}"#
+                    );
+                    let options = PlayOptions {
+                        dry_run: true,
+                        ..PlayOptions::default()
+                    };
+                    let mut player = Player::new(parse(&script).unwrap(), options).unwrap();
+                    let mut document = player.create_document().unwrap();
+                    player
+                        .run(&mut document, |_, _| {})
+                        .unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
+                    checked += 1;
+                    continue;
+                }
+                // One or more commands, one after another (with or without commas).
+                let list = format!("[{}]", block.trim_end_matches(',').replace("}\n{", "},\n{"));
+                let Ok(values) = serde_json::from_str::<Vec<Value>>(&list) else {
+                    panic!("not valid JSON:\n{block}");
+                };
+                for value in values {
+                    if value.get("cmd").is_none() {
+                        continue; // an area or a fill, not a whole command
+                    }
+                    let script = format!(
+                        r#"{{ "commands": [ {{ "cmd": "canvas", "width": 10, "height": 10 }}, {value} ] }}"#
+                    );
+                    parse(&script).unwrap_or_else(|e| panic!("{e}\nin:\n{value}"));
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 30, "only {checked} examples found");
+    }
 }

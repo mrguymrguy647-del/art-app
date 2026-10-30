@@ -73,8 +73,13 @@ Huion, …) has a "Use Windows Ink" option, keep it switched on.
 
 A painting script is a JSON file describing a picture step by step: layers, gradients, shapes,
 strokes, hatching and more. The format, with examples, is in
-[docs/script-format.md](docs/script-format.md); [examples/sunset.json](examples/sunset.json) is a
-full example.
+[docs/script-format.md](docs/script-format.md). Full examples: [examples/sunset.json](examples/sunset.json)
+and [examples/night-hills.json](examples/night-hills.json).
+
+**Painting with an AI assistant:** [docs/AI_GUIDE.md](docs/AI_GUIDE.md) is a practical manual for an
+AI (like Claude) painting with these scripts on a machine without a screen: how to build `art-cli`,
+the format on one page, a step-by-step workflow (block in, snapshot, check, refine), techniques that
+work, and common mistakes.
 
 `art-cli` renders scripts without a window or graphics card (it works on a server too):
 
@@ -96,9 +101,10 @@ Build it with `cargo build --release -p art_cli`; the program is `target/release
 art-app/
 ├── Cargo.toml            workspace: lists the two crates below
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
-├── examples/sunset.json  an example painting script
+├── examples/             example painting scripts (sunset, night hills)
 ├── docs/decisions.md     why we chose things, in plain words
 ├── docs/script-format.md painting scripts: every command, with examples
+├── docs/AI_GUIDE.md      how an AI assistant paints with scripts and art-cli
 └── crates/
     ├── engine/           painting engine: plain Rust, no window/UI code
     │   └── src/

@@ -150,3 +150,23 @@ fn wrong_usage_gets_help() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("art-cli help"));
 }
+
+#[test]
+fn every_example_script_is_free_of_mistakes() {
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut count = 0;
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "json") {
+            let output = art_cli().arg("check").arg(&path).output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}: {}",
+                path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            count += 1;
+        }
+    }
+    assert!(count >= 2);
+}
