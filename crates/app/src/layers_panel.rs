@@ -2,14 +2,16 @@
 //! them, a show/hide switch for each, and the selected layer's opacity
 //! and blend mode.
 //!
-//! Every change here goes into the undo history. The layer you click is
-//! the one you paint on (choosing a layer isn't undoable, like in other
-//! painting apps).
+//! Every change here goes into the undo history (with what it did as
+//! script commands, for "Export strokes"). The layer you click is the one
+//! you paint on (choosing a layer isn't undoable, like in other painting
+//! apps).
 
 use art_engine::document::Document;
 use art_engine::history::History;
 use art_engine::layer::{BlendMode, LayerId, LayerProps};
 use art_engine::layer_commands::{LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand};
+use art_engine::script::record;
 use eframe::egui::{self, Button, Key, TextEdit, vec2};
 
 use crate::brush_panel::percent_slider;
@@ -47,6 +49,7 @@ impl LayersPanel {
     fn buttons(&mut self, ui: &mut egui::Ui, document: &mut Document, history: &mut History) {
         let count = document.layers().len();
         let index = document.layer_index(document.active_id()).unwrap_or(0);
+        let name = document.active_layer().name().to_owned();
         let size = vec2(44.0, 28.0);
 
         ui.horizontal_wrapped(|ui| {
@@ -55,7 +58,9 @@ impl LayersPanel {
                 .on_hover_text("New layer above the selected one")
                 .clicked()
             {
-                history.push(Box::new(LayerPresenceCommand::add_layer(document)));
+                let command = LayerPresenceCommand::add_layer(document);
+                let script = record::add_layer(document.active_layer().name(), Some(&name));
+                history.push_recorded(Box::new(command), script);
             }
             if ui
                 .add_enabled(count > 1, Button::new("Delete").min_size(size))
@@ -64,7 +69,7 @@ impl LayersPanel {
                 .clicked()
                 && let Some(command) = LayerPresenceCommand::delete_active_layer(document)
             {
-                history.push(Box::new(command));
+                history.push_recorded(Box::new(command), record::delete_layer(&name));
             }
             if ui
                 .add_enabled(index + 1 < count, Button::new("Up").min_size(size))
@@ -72,7 +77,7 @@ impl LayersPanel {
                 .clicked()
                 && let Some(command) = MoveLayerCommand::move_active_layer(document, true)
             {
-                history.push(Box::new(command));
+                history.push_recorded(Box::new(command), record::move_layer(&name, index + 1));
             }
             if ui
                 .add_enabled(index > 0, Button::new("Down").min_size(size))
@@ -80,7 +85,7 @@ impl LayersPanel {
                 .clicked()
                 && let Some(command) = MoveLayerCommand::move_active_layer(document, false)
             {
-                history.push(Box::new(command));
+                history.push_recorded(Box::new(command), record::move_layer(&name, index - 1));
             }
         });
     }
@@ -116,9 +121,12 @@ impl LayersPanel {
         if !still_editing
             && let Some((edited, start)) = self.opacity_edit.take()
             && let Some(layer) = document.layer(edited)
-            && let Some(command) = LayerPropsCommand::already_applied(edited, start, layer.props())
         {
-            history.push(Box::new(command));
+            let after = layer.props();
+            let script = record::layer_changes(&start, &after);
+            if let Some(command) = LayerPropsCommand::already_applied(edited, start, after) {
+                history.push_recorded(Box::new(command), script);
+            }
         }
     }
 
@@ -148,12 +156,14 @@ impl LayersPanel {
                     if ui.checkbox(&mut shown, "").on_hover_text(tip).changed()
                         && let Some(layer) = document.layer(id)
                     {
+                        let before = layer.props();
                         let after = LayerProps {
                             visible: shown,
-                            ..layer.props()
+                            ..before.clone()
                         };
+                        let script = record::layer_changes(&before, &after);
                         if let Some(command) = LayerPropsCommand::apply(document, id, after) {
-                            history.push(Box::new(command));
+                            history.push_recorded(Box::new(command), script);
                         }
                     }
 
@@ -204,12 +214,14 @@ impl LayersPanel {
                 && !new_name.is_empty()
                 && let Some(layer) = document.layer(id)
             {
+                let before = layer.props();
                 let after = LayerProps {
                     name: new_name,
-                    ..layer.props()
+                    ..before.clone()
                 };
+                let script = record::layer_changes(&before, &after);
                 if let Some(command) = LayerPropsCommand::apply(document, id, after) {
-                    history.push(Box::new(command));
+                    history.push_recorded(Box::new(command), script);
                 }
             }
         }
@@ -232,9 +244,13 @@ fn blend_mode_menu(ui: &mut egui::Ui, document: &mut Document, history: &mut His
             }
         });
     if blend != before.blend {
-        let after = LayerProps { blend, ..before };
+        let after = LayerProps {
+            blend,
+            ..before.clone()
+        };
+        let script = record::layer_changes(&before, &after);
         if let Some(command) = LayerPropsCommand::apply(document, id, after) {
-            history.push(Box::new(command));
+            history.push_recorded(Box::new(command), script);
         }
     }
 }

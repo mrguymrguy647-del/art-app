@@ -352,3 +352,11 @@ Command numbers count from 1, in the order of the `commands` list.
 - Shadows: a layer with `"blend": "multiply"` painted in a cool, dark colour. Light and glow:
   `"blend": "screen"` or `"add"`.
 - `jitter` of 1–4 pixels makes shapes look hand-made instead of computer-perfect.
+
+## Scripts from the app
+
+**File → Export strokes…** in Art App writes everything painted since the picture was started or
+opened as a script. It uses only `canvas`, `layer`, `brush`, `stroke`, `erase`, `fill`, `gradient`,
+`clear_layer`, `delete_layer`, `move_layer` and `rename_layer` (plus the commands of any script that
+was played), with every stroke point exactly where the pen went: `[x, y, pressure]`. It's an easy
+way to see how hand-drawn strokes are written, and to continue a drawing with a script.

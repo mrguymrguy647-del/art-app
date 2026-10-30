@@ -23,6 +23,7 @@ use art_engine::fill::{self, FloodFill, Gradient, GradientShape, Paint, SampleFr
 use art_engine::history::{History, TileCommand};
 use art_engine::layer::LayerId;
 use art_engine::pen::InputKind;
+use art_engine::script::record;
 use art_engine::smoothing::Smoother;
 use art_engine::stroke::{Stroke, StrokePoint};
 use art_engine::view::{Point, View};
@@ -135,7 +136,12 @@ struct ActiveStroke {
     name: &'static str,
     /// The layer being painted on.
     layer: LayerId,
+    /// The brush it's painted with.
+    settings: BrushSettings,
     stroke: Stroke,
+    /// Every point that went into the stroke (after smoothing), so it can
+    /// be written down for "Export strokes".
+    fed: Vec<StrokePoint>,
     smoother: Smoother,
     source: Source,
     /// The latest point from the pen or mouse (before smoothing).
@@ -150,6 +156,7 @@ impl ActiveStroke {
         };
         if let Some(smoothed) = self.smoother.add(point) {
             self.stroke.add_point(&mut layer.surface, smoothed);
+            self.fed.push(smoothed);
         }
     }
 
@@ -160,16 +167,17 @@ impl ActiveStroke {
         // Draw the last bit, so the line ends where the pen was lifted.
         if let Some(last) = self.smoother.finish(self.last_point) {
             self.stroke.add_point(&mut layer.surface, last);
+            self.fed.push(last);
         }
         // Record the change so it can be undone (unless nothing changed,
         // e.g. erasing an empty area).
+        let name = layer.name().to_owned();
         let tiles_before = self.stroke.finish(&mut layer.surface);
         if !tiles_before.is_empty() {
-            history.push(Box::new(TileCommand::new(
-                self.name,
-                self.layer,
-                tiles_before,
-            )));
+            history.push_recorded(
+                Box::new(TileCommand::new(self.name, self.layer, tiles_before)),
+                record::stroke(&name, &self.settings, &self.fed),
+            );
         }
     }
 }
@@ -475,15 +483,15 @@ impl PaintTool {
         };
         let [r, g, b] = self.brush.color;
         let layer = document.active_id();
-        let tiles_before = flood_fill(
-            document,
-            layer,
-            &fill,
-            &Paint::Color([r, g, b, 255]),
-            settings.opacity,
-        );
+        let name = document.active_layer().name().to_owned();
+        let opacity = settings.opacity;
+        let paint = Paint::Color([r, g, b, 255]);
+        let tiles_before = flood_fill(document, layer, &fill, &paint, opacity);
         if !tiles_before.is_empty() {
-            history.push(Box::new(TileCommand::new("Fill", layer, tiles_before)));
+            history.push_recorded(
+                Box::new(TileCommand::new("Fill", layer, tiles_before)),
+                record::bucket(&name, &fill, [r, g, b, 255], opacity),
+            );
             self.remember_color(self.brush.color);
         }
     }
@@ -531,6 +539,8 @@ impl PaintTool {
             &[[r, g, b, 255], end],
         );
         let layer = document.active_id();
+        let name = document.active_layer().name().to_owned();
+        let script = record::gradient(&name, &gradient, settings.opacity);
         let tiles_before = fill::fill_layer(
             document,
             layer,
@@ -538,7 +548,10 @@ impl PaintTool {
             settings.opacity,
         );
         if !tiles_before.is_empty() {
-            history.push(Box::new(TileCommand::new("Gradient", layer, tiles_before)));
+            history.push_recorded(
+                Box::new(TileCommand::new("Gradient", layer, tiles_before)),
+                script,
+            );
             self.remember_color(self.brush.color);
         }
     }
@@ -600,7 +613,9 @@ impl PaintTool {
                 BrushMode::Erase => "Eraser stroke",
             },
             layer: document.active_id(),
+            settings,
             stroke: Stroke::new(settings, document.bounds()),
+            fed: Vec::new(),
             smoother: Smoother::new(string_length),
             source,
             last_point: point,

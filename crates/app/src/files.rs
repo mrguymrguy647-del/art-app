@@ -1,4 +1,5 @@
-//! The File menu: new, open, save, save as and export PNG.
+//! The File menu: new, open, save, save as, export PNG, and painting
+//! scripts: play one on the canvas, or export what you painted as one.
 //!
 //! It also keeps your work safe: before starting a new picture, opening
 //! another one or closing the window, it asks "Save changes?" if there is
@@ -16,6 +17,7 @@ use std::time::{Duration, Instant};
 use art_engine::document::{Document, MAX_CANVAS_SIDE};
 use art_engine::file::{self, Background, FILE_EXTENSION, FileError};
 use art_engine::history::History;
+use art_engine::script::{PlayOptions, Player, Script, record};
 use eframe::egui::{
     self, Button, DragValue, Id, Key, KeyboardShortcut, Modal, Modifiers, ViewportCommand, vec2,
 };
@@ -53,6 +55,27 @@ pub enum FileAction {
     Save,
     SaveAs,
     Export(Background),
+    PlayStrokes,
+    ExportStrokes,
+}
+
+/// A script to start playing, handed over to the app.
+pub struct PlayRequest {
+    /// Ready to play, except that `start_on` must be called first unless
+    /// `fresh` (then it was played onto a new picture made from its canvas).
+    pub player: Player,
+    pub script: Script,
+    /// The script file's name.
+    pub name: String,
+    pub fresh: bool,
+}
+
+/// A script waiting for an answer: its canvas size isn't the picture's.
+struct PendingPlay {
+    player: Player,
+    script: Script,
+    name: String,
+    size: (u32, u32),
 }
 
 /// Something that throws the current picture away, so it first asks
@@ -62,6 +85,8 @@ enum Discard {
     New,
     Open,
     CloseWindow,
+    /// Play a script on a new picture of the script's canvas size.
+    PlayNew,
 }
 
 /// An error message shown in a small window until you click OK.
@@ -88,39 +113,58 @@ pub struct Files {
     closing: bool,
     /// The window title we set last, so we only send it when it changes.
     title: String,
+    /// The name of the file the picture was opened from (for the notes
+    /// in exported strokes). `None` for a new picture.
+    opened_from: Option<String>,
+    /// A script waiting for "Play it on a new picture or this one?".
+    pending_play: Option<PendingPlay>,
+    asking_play_size: bool,
+    /// A script ready to start playing.
+    ready_play: Option<PlayRequest>,
 }
 
 impl Files {
-    /// The File button in the top bar, with its menu.
+    /// The File button in the top bar, with its menu. While `busy` (a
+    /// script is playing), the entries are greyed out.
     /// Returns what was chosen, if anything.
-    pub fn menu(&self, ui: &mut egui::Ui) -> Option<FileAction> {
+    pub fn menu(&self, ui: &mut egui::Ui, busy: bool) -> Option<FileAction> {
         let mut chosen = None;
         let entries = [
-            ("New…", NEW, FileAction::New),
-            ("Open…", OPEN, FileAction::Open),
-            ("Save", SAVE, FileAction::Save),
-            ("Save as…", SAVE_AS, FileAction::SaveAs),
-            ("Export PNG…", EXPORT, FileAction::Export(Background::Paper)),
+            ("New…", Some(NEW), FileAction::New),
+            ("Open…", Some(OPEN), FileAction::Open),
+            ("Save", Some(SAVE), FileAction::Save),
+            ("Save as…", Some(SAVE_AS), FileAction::SaveAs),
+            (
+                "Export PNG…",
+                Some(EXPORT),
+                FileAction::Export(Background::Paper),
+            ),
             (
                 "Export PNG, transparent…",
-                EXPORT_TRANSPARENT,
+                Some(EXPORT_TRANSPARENT),
                 FileAction::Export(Background::Transparent),
             ),
+            ("Play strokes…", None, FileAction::PlayStrokes),
+            ("Export strokes…", None, FileAction::ExportStrokes),
         ];
         let button = Button::new("File").min_size(vec2(56.0, 26.0));
         egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
             ui.set_min_width(260.0);
             for (label, shortcut, action) in entries {
                 // The menu closes by itself after a click.
-                let shortcut_text = ui.ctx().format_shortcut(&shortcut);
+                let shortcut_text =
+                    shortcut.map_or_else(String::new, |s| ui.ctx().format_shortcut(&s));
                 let entry = Button::new(label)
                     .shortcut_text(shortcut_text)
                     .min_size(vec2(0.0, 28.0)); // easy to tap
-                if ui.add(entry).clicked() {
+                if ui.add_enabled(!busy, entry).clicked() {
                     chosen = Some(action);
                 }
-                // A line between saving and exporting.
-                if action == FileAction::SaveAs {
+                // Lines between saving, exporting and scripts.
+                if matches!(
+                    action,
+                    FileAction::SaveAs | FileAction::Export(Background::Transparent)
+                ) {
                     ui.separator();
                 }
             }
@@ -157,7 +201,10 @@ impl Files {
     /// True while one of our small windows ("Save changes?", New, an
     /// error) is open. The rest of the app should then ignore shortcuts.
     pub fn dialog_open(&self) -> bool {
-        self.asking.is_some() || self.new_size.is_some() || self.error.is_some()
+        self.asking.is_some()
+            || self.new_size.is_some()
+            || self.error.is_some()
+            || self.asking_play_size
     }
 
     /// The short "Saved ..." message, shown in the top bar for a few seconds.
@@ -211,7 +258,12 @@ impl Files {
                     self.save(frame, document, history, true);
                 }
                 FileAction::Export(background) => self.export(frame, document, background),
+                FileAction::PlayStrokes => self.play_strokes(frame, document),
+                FileAction::ExportStrokes => self.export_strokes(frame, document, history),
             }
+        }
+        if self.asking_play_size {
+            replacement = replacement.or(self.play_size_dialog(ctx, frame, document, history));
         }
 
         if let Some(next) = self.asking {
@@ -267,6 +319,206 @@ impl Files {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
                 None
             }
+            Discard::PlayNew => {
+                let PendingPlay {
+                    mut player,
+                    script,
+                    name,
+                    ..
+                } = self.pending_play.take()?;
+                match player.create_document() {
+                    Ok(document) => {
+                        self.path = None;
+                        self.opened_from = None;
+                        self.ready_play = Some(PlayRequest {
+                            player,
+                            script,
+                            name,
+                            fresh: true,
+                        });
+                        Some(document)
+                    }
+                    Err(error) => {
+                        self.show_message("Couldn't play the script", error.to_string());
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    /// The script picked with "Play strokes…", once it's ready to start.
+    pub fn take_play_request(&mut self) -> Option<PlayRequest> {
+        self.ready_play.take()
+    }
+
+    /// Asks for a painting script and gets it ready to play. If it was
+    /// made for a different canvas size, asks what to do first.
+    fn play_strokes(&mut self, frame: &eframe::Frame, document: &Document) {
+        let Some(path) = self
+            .file_window(frame)
+            .set_title("Play strokes")
+            .add_filter("Painting script", &["json"])
+            .pick_file()
+        else {
+            return;
+        };
+        let Some((player, script)) = self.script_from_file(&path) else {
+            return;
+        };
+        let name = file_name(&path);
+        match player.canvas_size() {
+            Some(size) if size != (document.width(), document.height()) => {
+                self.pending_play = Some(PendingPlay {
+                    player,
+                    script,
+                    name,
+                    size,
+                });
+                self.asking_play_size = true;
+            }
+            _ => {
+                self.ready_play = Some(PlayRequest {
+                    player,
+                    script,
+                    name,
+                    fresh: false,
+                })
+            }
+        }
+    }
+
+    /// Reads a painting script and gets a player ready for it (recording
+    /// undo steps). Problems are shown in a message, and give `None`.
+    pub fn script_from_file(&mut self, path: &Path) -> Option<(Player, Script)> {
+        let problem = |error: &dyn std::fmt::Display| format!("{}\n\n{error}", path.display());
+        let title = "Couldn't play the script";
+        let script = match std::fs::read_to_string(path) {
+            Ok(text) => match Script::parse(&text) {
+                Ok(script) => script,
+                Err(error) => {
+                    self.show_message(title, problem(&error));
+                    return None;
+                }
+            },
+            Err(error) => {
+                self.show_message(title, problem(&error));
+                return None;
+            }
+        };
+        let options = PlayOptions {
+            folder: path.parent().map(Path::to_path_buf),
+            record_undo: true,
+            ..PlayOptions::default()
+        };
+        match Player::new(script.clone(), options) {
+            Ok(player) => Some((player, script)),
+            Err(error) => {
+                self.show_message(title, problem(&error));
+                None
+            }
+        }
+    }
+
+    /// "This script was made for another canvas size": play it on a new
+    /// picture of that size, or on this picture anyway?
+    fn play_size_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        document: &Document,
+        history: &History,
+    ) -> Option<Document> {
+        let (width, height) = self.pending_play.as_ref()?.size;
+        let new_label = format!("New {width} × {height} picture");
+        let modal = Modal::new(Id::unique("play_size")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Play strokes");
+            ui.add_space(6.0);
+            ui.label(format!(
+                "This script was made for a {width} × {height} canvas, but this picture is {} × {}.",
+                document.width(),
+                document.height()
+            ));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let size = vec2(0.0, 30.0);
+                let new = ui.add(Button::new(new_label.as_str()).min_size(size)).clicked();
+                let here = ui.add(Button::new("Play here anyway").min_size(size)).clicked();
+                let cancel = ui.add(Button::new("Cancel").min_size(size)).clicked();
+                (new, here, cancel)
+            })
+            .inner
+        });
+        let (new, here, cancel) = modal.inner;
+        if cancel || modal.should_close() {
+            self.asking_play_size = false;
+            self.pending_play = None;
+            None
+        } else if here {
+            self.asking_play_size = false;
+            let pending = self.pending_play.take()?;
+            self.ready_play = Some(PlayRequest {
+                player: pending.player,
+                script: pending.script,
+                name: pending.name,
+                fresh: false,
+            });
+            None
+        } else if new {
+            self.asking_play_size = false;
+            self.discard(Discard::PlayNew, ctx, frame, history)
+        } else {
+            None
+        }
+    }
+
+    /// Everything painted since the picture was started or opened (and
+    /// not undone), as a painting script. `None` if nothing was.
+    fn strokes_script(&self, document: &Document, history: &History) -> Option<Script> {
+        let recorded = history.recorded_script();
+        if recorded.is_empty() {
+            return None;
+        }
+        let notes = self
+            .opened_from
+            .as_ref()
+            .map(|name| format!("Painted on top of {name}, as it was when it was opened."));
+        Some(record::script(
+            document.width(),
+            document.height(),
+            document.paper(),
+            recorded,
+            Some(format!("Strokes from {}", self.name())),
+            notes,
+        ))
+    }
+
+    /// Saves everything painted since the picture was started or opened
+    /// (and not undone) as a painting script.
+    fn export_strokes(&mut self, frame: &eframe::Frame, document: &Document, history: &History) {
+        let Some(script) = self.strokes_script(document, history) else {
+            return self.show_message(
+                "Nothing to export",
+                "Nothing has been painted since this picture was started or opened.".into(),
+            );
+        };
+        let Some(chosen) = self
+            .file_window(frame)
+            .set_title("Export strokes")
+            .set_file_name(format!("{}-strokes.json", self.stem()))
+            .add_filter("Painting script", &["json"])
+            .save_file()
+        else {
+            return;
+        };
+        let path = with_extension(chosen, "json");
+        match std::fs::write(&path, script.to_json()) {
+            Ok(()) => self.show_notice(format!("Exported strokes to {}", file_name(&path))),
+            Err(error) => self.show_message(
+                "Couldn't export the strokes",
+                format!("{}\n\n{error}", path.display()),
+            ),
         }
     }
 
@@ -290,6 +542,7 @@ impl Files {
             Discard::New => "before starting a new picture?",
             Discard::Open => "before opening another picture?",
             Discard::CloseWindow => "before closing?",
+            Discard::PlayNew => "before playing the script on a new picture?",
         };
         let name = self.name();
         let modal = Modal::new(Id::unique("save_changes")).show(ctx, |ui| {
@@ -334,7 +587,10 @@ impl Files {
                 }
             }
             Answer::DontSave => self.carry_out(next, ctx, frame),
-            Answer::Cancel => None,
+            Answer::Cancel => {
+                self.pending_play = None;
+                None
+            }
         }
     }
 
@@ -396,6 +652,7 @@ impl Files {
         self.new_size = None;
         self.last_new_size = Some([width, height]);
         self.path = None; // not saved yet
+        self.opened_from = None;
         Some(Document::new(width, height))
     }
 
@@ -433,6 +690,7 @@ impl Files {
     pub fn open_path(&mut self, path: PathBuf) -> Option<Document> {
         match file::open(&path) {
             Ok(document) => {
+                self.opened_from = Some(file_name(&path));
                 self.path = Some(path);
                 Some(document)
             }
@@ -517,10 +775,12 @@ impl Files {
     }
 
     fn show_error(&mut self, title: &'static str, path: &Path, error: &FileError) {
-        self.error = Some(ErrorMessage {
-            title,
-            text: format!("{}\n\n{error}", path.display()),
-        });
+        self.show_message(title, format!("{}\n\n{error}", path.display()));
+    }
+
+    /// Shows a message in a small window until OK is clicked.
+    pub fn show_message(&mut self, title: &'static str, text: String) {
+        self.error = Some(ErrorMessage { title, text });
     }
 
     fn show_notice(&mut self, text: String) {
@@ -610,5 +870,36 @@ mod tests {
         files.path = Some(PathBuf::from("pictures").join("cat.artapp"));
         assert_eq!(files.name(), "cat.artapp");
         assert_eq!(files.stem(), "cat");
+    }
+
+    #[test]
+    fn exported_strokes_say_where_they_were_painted() {
+        use art_engine::history::TileCommand;
+        use art_engine::stroke::TilesBefore;
+
+        let mut files = Files::default();
+        let document = Document::new(300, 200);
+        let mut history = History::default();
+        assert!(
+            files.strokes_script(&document, &history).is_none(),
+            "nothing painted yet"
+        );
+
+        let layer = document.active_id();
+        history.push_recorded(
+            Box::new(TileCommand::new("Clear layer", layer, TilesBefore::new())),
+            record::clear_layer("Layer 1"),
+        );
+        files.path = Some(PathBuf::from("cat.artapp"));
+        files.opened_from = Some("cat.artapp".into());
+        let script = files.strokes_script(&document, &history).unwrap();
+        assert_eq!(script.title.as_deref(), Some("Strokes from cat.artapp"));
+        let text = script.to_json();
+        assert!(text.contains("Painted on top of cat.artapp"), "{text}");
+        assert!(
+            text.contains("{\"cmd\":\"canvas\",\"width\":300,\"height\":200"),
+            "{text}"
+        );
+        assert_eq!(Script::parse(&text).unwrap(), script);
     }
 }

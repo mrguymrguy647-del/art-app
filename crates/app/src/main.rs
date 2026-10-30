@@ -14,6 +14,7 @@ mod layers_panel;
 mod paint_tool;
 mod pen_input;
 mod pen_test;
+mod playback;
 
 use art_engine::document::Document;
 use art_engine::history::History;
@@ -23,6 +24,7 @@ use canvas_view::CanvasView;
 use files::{DEFAULT_SIZE, Files};
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
+use playback::{BarAction, Playback};
 
 fn main() -> eframe::Result {
     let pen_input = PenInput::default();
@@ -76,18 +78,48 @@ struct ArtApp {
     canvas: CanvasView,
     pen_test: PenTestScreen,
     screen: Screen,
+    /// A painting script being played on the canvas ("Play strokes").
+    playback: Option<Playback>,
 }
 
 impl ArtApp {
     fn new(pen_input: PenInput) -> Self {
-        // `ArtApp.exe picture.artapp` opens that picture. That's also how
-        // Windows starts us for "Open with". Otherwise (or if it can't be
-        // opened) start with a blank picture of the standard size.
+        // `ArtApp.exe picture.artapp` opens that picture, and
+        // `ArtApp.exe script.json` plays that painting script on a new
+        // picture. That's also how Windows starts us for "Open with".
+        // Otherwise (or if it can't be opened) start with a blank picture
+        // of the standard size.
         let mut files = Files::default();
-        let document = std::env::args_os()
-            .nth(1)
-            .and_then(|path| files.open_path(path.into()))
-            .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
+        let mut playback = None;
+        let argument = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+        let document = match argument {
+            Some(path)
+                if path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("json")) =>
+            {
+                match files.script_from_file(&path) {
+                    Some((mut player, script)) => match player.create_document() {
+                        Ok(document) => {
+                            let name = path
+                                .file_name()
+                                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                            let active = document.active_layer().name().to_owned();
+                            playback = Some(Playback::new(player, &script, name, true, &active));
+                            Some(document)
+                        }
+                        Err(error) => {
+                            files.show_message("Couldn't play the script", error.to_string());
+                            None
+                        }
+                    },
+                    None => None,
+                }
+            }
+            Some(path) => files.open_path(path),
+            None => None,
+        }
+        .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
         Self {
             pen_input,
             document,
@@ -96,6 +128,40 @@ impl ArtApp {
             canvas: CanvasView::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
+            playback,
+        }
+    }
+
+    /// Stops playing a script: everything it painted becomes one undo
+    /// step. `problem` is shown if it stopped because of a mistake.
+    fn finish_playback(&mut self, problem: Option<String>) {
+        let Some(playback) = self.playback.take() else {
+            return;
+        };
+        let (group, script) = playback.finish(&mut self.document);
+        if let Some(group) = group {
+            self.history.push_recorded(Box::new(group), script);
+        }
+        if let Some(problem) = problem {
+            self.files.show_message("The script stopped", problem);
+        }
+    }
+
+    /// Plays the script a little further, and shows its bar.
+    fn update_playback(&mut self, ui: &mut egui::Ui) {
+        let Some(playback) = &mut self.playback else {
+            return;
+        };
+        let action = egui::Panel::bottom("playback")
+            .show(ui, |ui| playback.bar(ui))
+            .inner;
+        let ended = match action {
+            BarAction::Stop => Some(Ok(())),
+            BarAction::SkipToEnd => Some(playback.skip_to_end(&mut self.document)),
+            BarAction::None => playback.update(ui.ctx(), &mut self.document),
+        };
+        if let Some(result) = ended {
+            self.finish_playback(result.err());
         }
     }
 
@@ -123,9 +189,16 @@ impl eframe::App for ArtApp {
         // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
 
-        // While a small window like "Save changes?" is open, shortcuts
-        // would act on the picture behind it, so they're ignored.
-        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() {
+        // Closing the window while a script plays: keep what it painted
+        // (as an undo step), so "Save changes?" knows about it.
+        if ui.input(|i| i.viewport().close_requested()) {
+            self.finish_playback(None);
+        }
+        let playing = self.playback.is_some();
+
+        // While a small window like "Save changes?" is open, or a script
+        // is playing, shortcuts would act on the picture, so they're ignored.
+        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() || playing {
             (false, false, None)
         } else {
             let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
@@ -134,7 +207,7 @@ impl eframe::App for ArtApp {
 
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                file_action = file_action.or(self.files.menu(ui));
+                file_action = file_action.or(self.files.menu(ui, playing));
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
@@ -150,8 +223,8 @@ impl eframe::App for ArtApp {
                     Some(name) => format!("Redo {name} (Ctrl+Y)"),
                     None => "Nothing to redo".to_owned(),
                 };
-                let can_undo = self.history.undo_name().is_some();
-                let can_redo = self.history.redo_name().is_some();
+                let can_undo = self.history.undo_name().is_some() && !playing;
+                let can_redo = self.history.redo_name().is_some() && !playing;
                 undo |= ui
                     .add_enabled(can_undo, Button::new("Undo").min_size(size))
                     .on_hover_text(undo_tip)
@@ -192,6 +265,34 @@ impl eframe::App for ArtApp {
             self.history = History::default();
             self.canvas.reset();
         }
+
+        // "Play strokes": start playing a script that's ready.
+        if let Some(request) = self.files.take_play_request() {
+            let mut player = request.player;
+            let started = if request.fresh {
+                Ok(())
+            } else {
+                player.start_on(&mut self.document)
+            };
+            match started {
+                Ok(()) => {
+                    let active = self.document.active_layer().name().to_owned();
+                    self.playback = Some(Playback::new(
+                        player,
+                        &request.script,
+                        request.name,
+                        request.fresh,
+                        &active,
+                    ));
+                    self.screen = Screen::Canvas;
+                }
+                Err(error) => self
+                    .files
+                    .show_message("Couldn't play the script", error.to_string()),
+            }
+        }
+        self.update_playback(ui);
+        self.canvas.locked = self.playback.is_some();
 
         match self.screen {
             Screen::Canvas => self

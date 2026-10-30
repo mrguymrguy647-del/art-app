@@ -42,6 +42,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | New picture | **File → New…** or `Ctrl+N`: choose a size (or a common size) | Tap **File** |
 | Open / save | **File → Open…** (`Ctrl+O`), **Save** (`Ctrl+S`), **Save as…** (`Ctrl+Shift+S`). Pictures are saved as `.artapp` files, with all layers | Tap **File** |
 | Export a PNG image | **File → Export PNG…** (`Ctrl+E`) on the paper colour, or **Export PNG, transparent…** (`Ctrl+Shift+E`) with no paper | Tap **File** |
+| Watch a painting script being painted | **File → Play strokes…** and pick a `.json` script. A bar at the bottom has **Pause**, **Skip to end**, **Stop** and a **Speed** slider. Everything it paints is **one** undo step. While it plays you can zoom and move around, but not paint | Tap **File** |
+| Save what you painted as a script | **File → Export strokes…**: everything painted since the picture was started or opened (not what you undid), as a `.json` painting script that can be played again or read and continued (for example by Claude) | Tap **File** |
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
 | Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
 | Choose a colour | Colour wheel (ring = hue, square = how vivid / bright), type a hex code like `#FF8800`, or click a recent colour | Same, by tapping |
@@ -56,7 +58,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Rotate | Hold **Shift + Space** and drag, or `4` / `6` (15° steps) | Two-finger twist (touchscreen) |
 | Reset | `0` fits the whole canvas, `5` removes rotation | |
 
-**Opening pictures from File Explorer:** right-click an `.artapp` file → **Open with** →
+**Opening pictures and scripts from File Explorer:** right-click an `.artapp` file (or a `.json`
+painting script, which then plays on a new picture) → **Open with** →
 **Choose another app** → **Choose an app on your PC**, and pick
 `C:\dev\art-app\target\release\ArtApp.exe`. Tick "Always use this app" to open them with a
 double-click from then on.
@@ -115,7 +118,8 @@ art-app/
     │       ├── script.rs     painting scripts: the format, reading, errors
     │       ├── script/
     │       │   ├── player.rs   plays a script: commands into strokes and fills
-    │       │   └── geometry.rs shapes, smooth curves, hatching, wobble
+    │       │   ├── geometry.rs shapes, smooth curves, hatching, wobble
+    │       │   └── record.rs   writes down what was painted, as script commands
     │       ├── smoothing.rs  steadier lines
     │       ├── history.rs    undo / redo
     │       ├── file.rs       saving and opening .artapp files, PNG export
@@ -131,7 +135,8 @@ art-app/
         ├── assets/       icon files
         └── src/
             ├── main.rs        starts the app, top bar, switches screens
-            ├── files.rs       File menu: new, open, save, export, "Save changes?"
+            ├── files.rs       File menu: new, open, save, export, scripts, "Save changes?"
+            ├── playback.rs    Play strokes: a script painted bit by bit, with its bar
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
             ├── paint_tool.rs  the tools: pen/mouse input into strokes, fills, gradients
             ├── brush_panel.rs the tool panel (tools, colour, settings)

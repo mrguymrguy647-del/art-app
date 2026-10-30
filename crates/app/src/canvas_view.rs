@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::document::{Background, Document};
 use art_engine::history::{History, TileCommand};
+use art_engine::script::record;
 use art_engine::surface::{PixelRect, TileCoord};
 use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
 use art_engine::view::{Point, View};
@@ -68,6 +69,9 @@ enum Drag {
 }
 
 pub struct CanvasView {
+    /// While a script is playing: no painting, and the panels are greyed
+    /// out (zooming and moving around still work).
+    pub locked: bool,
     view: View,
     textures: HashMap<TileCoord, TileTexture>,
     /// Fit the canvas into the window on the first frame.
@@ -89,6 +93,7 @@ pub struct CanvasView {
 impl Default for CanvasView {
     fn default() -> Self {
         Self {
+            locked: false,
             view: View::default(),
             textures: HashMap::new(),
             needs_fit: true,
@@ -117,22 +122,28 @@ impl CanvasView {
         egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
-                let actions = brush_panel(ui, &mut self.tools, &mut self.colors);
+                let actions = ui
+                    .add_enabled_ui(!self.locked, |ui| {
+                        brush_panel(ui, &mut self.tools, &mut self.colors)
+                    })
+                    .inner;
                 if actions.clear_layer {
                     let layer = document.active_id();
+                    let name = document.active_layer().name().to_owned();
                     let tiles_before = document.clear_active_layer();
                     if !tiles_before.is_empty() {
-                        history.push(Box::new(TileCommand::new(
-                            "Clear layer",
-                            layer,
-                            tiles_before,
-                        )));
+                        history.push_recorded(
+                            Box::new(TileCommand::new("Clear layer", layer, tiles_before)),
+                            record::clear_layer(&name),
+                        );
                     }
                 }
             });
         egui::Panel::left("layers_panel")
             .exact_size(210.0)
-            .show(ui, |ui| self.layers.ui(ui, document, history));
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!self.locked, |ui| self.layers.ui(ui, document, history));
+            });
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
     }
@@ -170,8 +181,10 @@ impl CanvasView {
             view: &self.view,
             navigating,
         };
-        self.tools
-            .handle_input(ui, placement, document, history, ink_events);
+        if !self.locked {
+            self.tools
+                .handle_input(ui, placement, document, history, ink_events);
+        }
 
         let visible = self.visible_tiles(document, rect);
         self.update_textures(ui.ctx(), document, &visible);

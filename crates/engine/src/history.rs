@@ -8,11 +8,16 @@
 //! Painting, erasing and clearing all change tiles, so they share one
 //! command type, [`TileCommand`], which only keeps the tiles that changed.
 //! Later steps add more command types (e.g. adding or deleting a layer).
+//!
+//! Each step can also carry what it did written as painting-script
+//! commands. The steps still in the picture (not undone) then add up to a
+//! script of everything painted: that's "Export strokes".
 
 use std::collections::VecDeque;
 
 use crate::document::Document;
 use crate::layer::LayerId;
+use crate::script::Command as ScriptCommand;
 use crate::stroke::TilesBefore;
 use crate::surface::TileCoord;
 use crate::tile::{TILE_PIXELS, Tile};
@@ -139,12 +144,21 @@ impl Command for CommandGroup {
     }
 }
 
+/// One step in the history: the change, and what it did as script commands.
+struct Step {
+    command: Box<dyn Command>,
+    script: Vec<ScriptCommand>,
+}
+
 /// The undo and redo lists.
 pub struct History {
     /// Oldest first, newest last.
-    undo: VecDeque<Box<dyn Command>>,
-    /// The most recently undone command is last.
-    redo: Vec<Box<dyn Command>>,
+    undo: VecDeque<Step>,
+    /// The most recently undone step is last.
+    redo: Vec<Step>,
+    /// The script of steps that were forgotten to save memory: they can't
+    /// be undone any more, but they're still part of the picture.
+    settled: Vec<ScriptCommand>,
     memory_limit: usize,
     /// How many undo steps there were when the picture was last saved.
     /// `None` if that point can't be reached any more (e.g. you undid past
@@ -164,6 +178,7 @@ impl History {
         Self {
             undo: VecDeque::new(),
             redo: Vec::new(),
+            settled: Vec::new(),
             memory_limit,
             saved_at: Some(0),
         }
@@ -182,18 +197,26 @@ impl History {
 
     /// Records a change that has just been made to the document.
     pub fn push(&mut self, command: Box<dyn Command>) {
+        self.push_recorded(command, Vec::new());
+    }
+
+    /// Records a change that has just been made, together with what it
+    /// did written as painting-script commands (for "Export strokes").
+    pub fn push_recorded(&mut self, command: Box<dyn Command>, script: Vec<ScriptCommand>) {
         // After a new change, the undone changes can't be redone any more.
         // If the saved state was among them, it can never come back.
         if self.saved_at.is_some_and(|saved| saved > self.undo.len()) {
             self.saved_at = None;
         }
         self.redo.clear();
-        self.undo.push_back(command);
+        self.undo.push_back(Step { command, script });
 
         // Too much memory? Forget the oldest changes, but always keep the
         // newest one, however big it is.
         while self.memory_used() > self.memory_limit && self.undo.len() > 1 {
-            self.undo.pop_front();
+            if let Some(oldest) = self.undo.pop_front() {
+                self.settled.extend(oldest.script);
+            }
             // Everything shifted down by one step.
             self.saved_at = self.saved_at.and_then(|saved| saved.checked_sub(1));
         }
@@ -201,33 +224,33 @@ impl History {
 
     /// Undoes the newest change. Returns false if there was nothing to undo.
     pub fn undo(&mut self, document: &mut Document) -> bool {
-        let Some(mut command) = self.undo.pop_back() else {
+        let Some(mut step) = self.undo.pop_back() else {
             return false;
         };
-        command.undo(document);
-        self.redo.push(command);
+        step.command.undo(document);
+        self.redo.push(step);
         true
     }
 
     /// Redoes the most recently undone change. Returns false if there was
     /// nothing to redo.
     pub fn redo(&mut self, document: &mut Document) -> bool {
-        let Some(mut command) = self.redo.pop() else {
+        let Some(mut step) = self.redo.pop() else {
             return false;
         };
-        command.redo(document);
-        self.undo.push_back(command);
+        step.command.redo(document);
+        self.undo.push_back(step);
         true
     }
 
     /// The name of what Undo would undo, if anything.
     pub fn undo_name(&self) -> Option<&str> {
-        self.undo.back().map(|command| command.name())
+        self.undo.back().map(|step| step.command.name())
     }
 
     /// The name of what Redo would redo, if anything.
     pub fn redo_name(&self) -> Option<&str> {
-        self.redo.last().map(|command| command.name())
+        self.redo.last().map(|step| step.command.name())
     }
 
     /// How many changes can be undone.
@@ -239,9 +262,20 @@ impl History {
     pub fn memory_used(&self) -> usize {
         self.undo
             .iter()
-            .map(|command| command.memory_size())
-            .chain(self.redo.iter().map(|command| command.memory_size()))
+            .chain(&self.redo)
+            .map(|step| step.command.memory_size())
             .sum()
+    }
+
+    /// Everything still in the picture, as painting-script commands,
+    /// oldest first: what was recorded with each step that hasn't been
+    /// undone.
+    pub fn recorded_script(&self) -> Vec<ScriptCommand> {
+        self.settled
+            .iter()
+            .chain(self.undo.iter().flat_map(|step| &step.script))
+            .cloned()
+            .collect()
     }
 }
 

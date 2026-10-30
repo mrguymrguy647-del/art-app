@@ -344,3 +344,38 @@ Tests that render whole pictures were slow (about 25 seconds) because
 debug builds don't optimise our own code. The engine now gets the same
 optimisation as the libraries in debug and test builds: tests take a few
 seconds, and it only recompiles a little slower.
+
+## 35. Play strokes: watch a script being painted
+**File → Play strokes…** plays a painting script on the canvas a little
+each frame, so you see it being painted, like a time-lapse. The player
+does a "budget" of work per frame (about as many pixels of brush travel
+as the speed slider says), so a long stroke draws gradually while a
+shape fill appears at once. Snapshots are ignored here.
+
+While it plays, painting and the side panels are locked: a stroke of
+yours in the middle would get mixed into the script's changes. Zooming
+and moving around still work. When it finishes (or you press Stop),
+everything it did becomes **one** undo step, built from all its smaller
+steps (a "command group"), so one Ctrl+Z takes it all back.
+
+If the script was made for another canvas size, the app asks whether
+to play it on a new picture of that size or on this one anyway. Opening
+a `.json` script with Art App (or `ArtApp.exe script.json`) plays it on
+a new picture straight away.
+
+## 36. Export strokes: your painting, written down as a script
+Each undo step also carries what it did, written as script commands: a
+stroke is "this layer, this brush, through these points" (the points
+exactly as they went into the stroke, after smoothing, so replaying
+draws the same line). Exporting collects the steps that are still in the
+picture, in order: whatever you undid is left out, and steps forgotten
+to save memory are kept. A tidy-up then removes repeats, so the script
+only says "change layer" or "change brush" when something changes.
+
+Positions are rounded to 0.01 of a pixel to keep the file readable; that
+difference can't be seen. The script starts with a canvas the size of the
+picture. If the picture was opened from a file, its "notes" say so: the
+strokes are what was painted *on top* of that file. Scripts played with
+Play strokes are included too, with their colour names written out; their
+random patterns (jitter, scatter, hatch) can come out differently in the
+export, because those depend on the script's seed and command numbers.

@@ -19,6 +19,7 @@
 
 mod geometry;
 mod player;
+pub mod record;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -38,6 +39,8 @@ pub const FORMAT_VERSION: u32 = 1;
 pub struct Script {
     /// A title for people; not used when playing.
     pub title: Option<String>,
+    /// Anything for people (text, a list, ...); not used when playing.
+    pub notes: Option<Value>,
     /// Where randomness starts (see `random.rs`). Default 1.
     pub seed: u64,
     /// Colour names defined once and used by name in commands.
@@ -572,9 +575,8 @@ struct RawScript {
     version: Option<u32>,
     #[serde(default)]
     title: Option<String>,
-    /// Comments for people, ignored.
+    /// Comments for people, ignored when playing.
     #[serde(default)]
-    #[allow(dead_code)]
     notes: Option<Value>,
     #[serde(default)]
     seed: Option<u64>,
@@ -645,6 +647,7 @@ impl Script {
 
         Ok(Script {
             title: raw.title,
+            notes: raw.notes,
             seed: raw.seed.unwrap_or(1),
             palette: raw.palette,
             commands,
@@ -658,6 +661,9 @@ impl Script {
         out += &format!("  \"version\": {FORMAT_VERSION},\n");
         if let Some(title) = &self.title {
             out += &format!("  \"title\": {},\n", json(title));
+        }
+        if let Some(notes) = &self.notes {
+            out += &format!("  \"notes\": {},\n", json(notes));
         }
         out += &format!("  \"seed\": {},\n", self.seed);
         out += &format!("  \"palette\": {},\n", json(&self.palette));
