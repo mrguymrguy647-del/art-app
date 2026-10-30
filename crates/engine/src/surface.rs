@@ -167,6 +167,22 @@ impl<P: Pixel> Surface<P> {
         self.tiles.get(&coord).map(|tile| &**tile)
     }
 
+    /// The tile at `coord` for changing, created (transparent) if it doesn't
+    /// exist yet. It is marked dirty, since the caller is about to change it.
+    pub fn tile_mut(&mut self, coord: TileCoord) -> &mut Tile<P> {
+        self.dirty.insert(coord);
+        self.tiles
+            .entry(coord)
+            .or_insert_with(|| Box::new(Tile::new()))
+    }
+
+    /// Removes every tile: the whole surface becomes transparent again.
+    pub fn clear(&mut self) {
+        // The removed tiles count as changed, so the screen updates.
+        self.dirty.extend(self.tiles.keys().copied());
+        self.tiles.clear();
+    }
+
     /// How many tiles exist (are using memory).
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
@@ -240,6 +256,27 @@ mod tests {
         assert_eq!(surface.pixel(250, 250), RED);
         assert_eq!(surface.pixel(259, 259), RED);
         assert_eq!(surface.pixel(260, 260), Rgba8::TRANSPARENT);
+    }
+
+    #[test]
+    fn tile_mut_creates_the_tile_and_marks_it_dirty() {
+        let mut surface: Surface = Surface::new();
+        surface.tile_mut(TileCoord::new(2, 3)).set_pixel(0, 0, RED);
+        assert_eq!(surface.pixel(512, 768), RED);
+        assert_eq!(surface.take_dirty_tiles(), vec![TileCoord::new(2, 3)]);
+    }
+
+    #[test]
+    fn clear_removes_all_tiles_and_reports_them_as_changed() {
+        let mut surface: Surface = Surface::new();
+        surface.set_pixel(0, 0, RED);
+        surface.set_pixel(1000, 0, RED);
+        surface.take_dirty_tiles();
+
+        surface.clear();
+        assert_eq!(surface.tile_count(), 0);
+        assert_eq!(surface.pixel(0, 0), Rgba8::TRANSPARENT);
+        assert_eq!(surface.take_dirty_tiles().len(), 2);
     }
 
     #[test]

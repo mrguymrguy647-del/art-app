@@ -65,7 +65,7 @@ impl PenTestScreen {
         let points_per_pixel = 1.0 / ctx.pixels_per_point();
         for event in ink_events {
             self.last_ink_event = Some(now);
-            self.rate.add(event.reading_count);
+            self.rate.add(1);
             self.reading = Some(Reading::from_ink(event, points_per_pixel));
         }
 

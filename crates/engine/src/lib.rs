@@ -4,8 +4,11 @@
 //! It has no window or UI code, so it can be tested on its own with
 //! `cargo test`, and it doesn't care which interface sits on top.
 
+pub mod brush;
 pub mod document;
 pub mod pen;
+pub mod smoothing;
+pub mod stroke;
 pub mod surface;
 pub mod tile;
 pub mod view;

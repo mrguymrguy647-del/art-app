@@ -7,9 +7,12 @@
 //!
 //! When zoomed out, tiles are sent as smaller previews (see
 //! `Tile::display_bytes`): it looks smoother and uses less memory.
+//!
+//! Painting itself is handled by the brush tool (`brush_tool.rs`).
 
 use std::collections::HashMap;
 
+use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::document::Document;
 use art_engine::surface::{PixelRect, TileCoord};
 use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
@@ -17,13 +20,19 @@ use art_engine::view::{Point, View};
 use eframe::egui::epaint::Vertex;
 use eframe::egui::{
     self, Color32, ColorImage, CursorIcon, Key, Mesh, MouseWheelUnit, PointerButton, Pos2, Rect,
-    Sense, Shape, Stroke, TextureFilter, TextureHandle, TextureOptions, Vec2, pos2,
+    Sense, Shape, Stroke, TextureFilter, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
+
+use crate::brush_panel::brush_panel;
+use crate::brush_tool::BrushTool;
+use crate::pen_input::InkEvent;
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
 const ZOOM_STEP: f32 = 1.25;
 /// The 4 and 6 keys rotate by this much.
 const ROTATE_STEP_DEGREES: f32 = 15.0;
+/// The [ and ] keys change the brush size by this factor.
+const BRUSH_SIZE_STEP: f32 = 1.2;
 /// From this zoom up, show canvas pixels as sharp squares instead of
 /// smoothing them, so you can see exactly what you painted.
 const SHARP_PIXELS_FROM_ZOOM: f32 = 2.0;
@@ -63,6 +72,7 @@ pub struct CanvasView {
     drag: Option<Drag>,
     /// The canvas pixel under the mouse, for the status bar.
     pointer_on_canvas: Option<Point>,
+    tool: BrushTool,
 }
 
 impl Default for CanvasView {
@@ -73,17 +83,33 @@ impl Default for CanvasView {
             needs_fit: true,
             drag: None,
             pointer_on_canvas: None,
+            tool: BrushTool::default(),
         }
     }
 }
 
 impl CanvasView {
-    pub fn ui(&mut self, ui: &mut egui::Ui, document: &mut Document) {
+    /// Shows the canvas with its panels. `ink_events` are the pen/touch
+    /// events since the last frame.
+    pub fn ui(&mut self, ui: &mut egui::Ui, document: &mut Document, ink_events: Vec<InkEvent>) {
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui, document));
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas_area(ui, document));
+        egui::Panel::right("brush_panel")
+            .exact_size(250.0)
+            .show(ui, |ui| {
+                let actions = brush_panel(ui, &mut self.tool.brush, &mut self.tool.smoothing);
+                if actions.clear_canvas {
+                    document.clear();
+                }
+            });
+        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas_area(ui, document, ink_events));
     }
 
-    fn canvas_area(&mut self, ui: &mut egui::Ui, document: &mut Document) {
+    fn canvas_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &mut Document,
+        ink_events: Vec<InkEvent>,
+    ) {
         let rect = ui.max_rect();
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
 
@@ -91,22 +117,36 @@ impl CanvasView {
             self.fit(document, rect);
             self.needs_fit = false;
         }
-        self.handle_input(ui, &response, rect, document);
+        let navigating = self.handle_input(ui, &response, rect, document);
+        self.tool
+            .handle_input(ui, rect, &self.view, document, ink_events, navigating);
 
         let visible = self.visible_tiles(document, rect);
         self.update_textures(ui.ctx(), document, &visible);
-        self.paint(&ui.painter_at(rect), document, rect, &visible);
+        let painter = ui.painter_at(rect);
+        self.paint(&painter, document, rect, &visible);
+
+        // The brush outline replaces the mouse pointer over the canvas.
+        if let Some(position) = self.tool.outline_position(ui, rect) {
+            let radius = self.tool.brush.size / 2.0 * self.view.zoom();
+            draw_brush_outline(&painter, position, radius);
+            if !navigating {
+                ui.ctx().set_cursor_icon(CursorIcon::None);
+            }
+        }
     }
 
     // ---- Input ------------------------------------------------------------
 
+    /// Zoom, pan, rotate and keyboard shortcuts. Returns true while the
+    /// user is panning or rotating (or holding Space to start doing so).
     fn handle_input(
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
         rect: Rect,
         document: &Document,
-    ) {
+    ) -> bool {
         let ctx = ui.ctx();
         let centre = to_point(rect.center());
         let line = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -226,9 +266,15 @@ impl CanvasView {
             if presses(Key::Num0) > 0 {
                 self.fit(document, rect);
             }
+            let size_steps = presses(Key::CloseBracket) - presses(Key::OpenBracket);
+            if size_steps != 0 {
+                let size = self.tool.brush.size * BRUSH_SIZE_STEP.powi(size_steps);
+                self.tool.brush.size = size.clamp(MIN_SIZE, MAX_SIZE);
+            }
         }
 
         self.pointer_on_canvas = hover.map(|pos| self.view.screen_to_canvas(to_point(pos)));
+        space || self.drag.is_some()
     }
 
     fn fit(&mut self, document: &Document, rect: Rect) {
@@ -433,9 +479,25 @@ impl CanvasView {
             ui.label(format!("Tiles in memory: {}", document.layer.tile_count()));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak("Wheel: zoom · Space+drag: pan · Shift+Space+drag: rotate · 0: fit · 4/6: rotate · 5: unrotate");
+                ui.weak("Wheel: zoom · Space+drag: pan · Shift+Space+drag: rotate · [ ]: brush size · 0: fit");
             });
         });
+    }
+}
+
+/// Draws the brush outline: a circle the size of the brush, in black and
+/// white so it shows up on any colour. Tiny brushes get a small cross.
+fn draw_brush_outline(painter: &egui::Painter, centre: Pos2, radius: f32) {
+    let dark = Stroke::new(3.0, Color32::from_black_alpha(140));
+    let light = Stroke::new(1.0, Color32::from_white_alpha(230));
+    if radius >= 3.0 {
+        painter.circle_stroke(centre, radius, dark);
+        painter.circle_stroke(centre, radius, light);
+    } else {
+        for stroke in [dark, light] {
+            painter.line_segment([centre - vec2(6.0, 0.0), centre + vec2(6.0, 0.0)], stroke);
+            painter.line_segment([centre - vec2(0.0, 6.0), centre + vec2(0.0, 6.0)], stroke);
+        }
     }
 }
 

@@ -71,3 +71,44 @@ Windows display scaling (e.g. 150%) makes interface units bigger than
 screen pixels. The zoom shown in the status bar counts real pixels, so at
 100% one canvas pixel is exactly one screen pixel, like other painting
 apps.
+
+## 12. A stroke is many round "dabs"
+A brush stroke is made of round stamps placed close together along the
+pen's path: by default a new dab every 10% of the brush width. The pen
+only reports its position every few milliseconds, so between two readings
+we place dabs along a smooth curve through them (a "Catmull-Rom spline"),
+with the pressure blending from one reading to the next. That's why fast
+strokes have no gaps, and fast curves come out round instead of angular.
+The curve's shape near a reading depends on the next one, so the line is
+drawn one reading behind the pen (a few milliseconds).
+
+## 13. Opacity is a ceiling for the whole stroke
+While you paint, the stroke keeps a "coverage" value for each pixel (how
+strongly the stroke covers it). Each pixel shows the brush colour laid over
+the pixel *as it was before the stroke*, as strong as its coverage. So
+going over the same spot again in one stroke never makes it darker than
+the opacity you set, the way it works in other painting apps. Flow below
+100% makes coverage build up gradually where dabs overlap, like an
+airbrush.
+
+The stroke also saves each tile it touches as it was before. Undo (Step 5)
+will use those saved tiles.
+
+## 14. Smoothing works like a string
+With smoothing on, the line follows the pen as if pulled on a string: it
+only moves once the string is tight, so small shakes never reach the
+line. When you lift the pen, the line catches up to where the pen ended.
+It depends on distance, not time, so it feels the same with a mouse or
+a pen. The string length is measured on screen, so it feels the same at
+any zoom.
+
+## 15. Exact pen positions, and every reading
+Windows gives the pen's position in whole pixels, but the tablet measures
+much more finely. We use the fine position (with a safety check against
+the whole-pixel one), so slow, careful lines come out smooth. When the app
+is busy, Windows bundles several pen readings into one message; we use
+all of them instead of only the latest.
+
+## 16. Fingers navigate, they don't paint
+On a touchscreen, two fingers zoom, pan and rotate. Fingers don't paint,
+so resting your hand on the screen won't leave marks.

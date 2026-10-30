@@ -6,6 +6,8 @@
 // In release builds on Windows, don't open a black console window next to the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod brush_panel;
+mod brush_tool;
 mod canvas_view;
 mod pen_input;
 mod pen_test;
@@ -66,13 +68,10 @@ struct ArtApp {
 
 impl ArtApp {
     fn new(pen_input: PenInput) -> Self {
-        // A 4000 x 3000 canvas with a test picture, until we have a brush.
-        let mut document = Document::new(4000, 3000);
-        document.draw_test_pattern();
-
         Self {
             pen_input,
-            document,
+            // A blank 4000 x 3000 canvas. "New document" comes with saving (Step 8).
+            document: Document::new(4000, 3000),
             canvas: CanvasView::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
@@ -82,8 +81,7 @@ impl ArtApp {
 
 impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Pen and touch events since the last frame. Only the pen test uses
-        // them for now; the brush (Step 3) will too.
+        // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
 
         egui::Panel::top("top_bar").show(ui, |ui| {
@@ -96,7 +94,7 @@ impl eframe::App for ArtApp {
         });
 
         match self.screen {
-            Screen::Canvas => self.canvas.ui(ui, &mut self.document),
+            Screen::Canvas => self.canvas.ui(ui, &mut self.document, ink_events),
             Screen::PenTest => self.pen_test.ui(ui, ink_events),
         }
     }

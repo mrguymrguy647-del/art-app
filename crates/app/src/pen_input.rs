@@ -30,9 +30,6 @@ pub struct InkEvent {
     /// Which values the device actually measures.
     pub has_pressure: bool,
     pub has_tilt: bool,
-    /// How many hardware readings this event stands for. When the app is
-    /// busy, Windows bundles several readings into one message.
-    pub reading_count: u32,
     /// The tablet's name, for example "Wacom One".
     pub device_name: String,
 }
@@ -103,12 +100,13 @@ mod windows_ink {
     use std::collections::HashMap;
 
     use art_engine::pen::{InputKind, PenSample};
-    use windows::Win32::Foundation::{HANDLE, POINT};
-    use windows::Win32::Graphics::Gdi::ScreenToClient;
+    use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
     use windows::Win32::UI::Controls::POINTER_DEVICE_INFO;
     use windows::Win32::UI::Input::Pointer::{
-        GetPointerDevice, GetPointerInfo, GetPointerPenInfo, GetPointerType,
-        POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_INFO, POINTER_PEN_INFO,
+        GetPointerDevice, GetPointerDeviceRects, GetPointerInfo, GetPointerPenInfo,
+        GetPointerPenInfoHistory, GetPointerType, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
+        POINTER_INFO, POINTER_PEN_INFO,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         MSG, PEN_FLAG_BARREL, PEN_FLAG_ERASER, PEN_FLAG_INVERTED, PEN_MASK_PRESSURE,
@@ -122,6 +120,11 @@ mod windows_ink {
     /// Windows reports pen pressure from 0 to 1024.
     const MAX_PRESSURE: f32 = 1024.0;
 
+    /// If the precise position and Windows' whole-pixel position disagree
+    /// by more than this many pixels, something is set up unusually and we
+    /// trust the whole-pixel one.
+    const MAX_PRECISE_OFFSET: f32 = 2.0;
+
     pub fn event_loop_hook(pen_input: PenInput) -> eframe::EventLoopBuilderHook {
         Box::new(move |builder| {
             // Tablet names, looked up once per device and then remembered.
@@ -131,7 +134,7 @@ mod windows_ink {
                 // SAFETY: winit gives us a pointer to the MSG it just received
                 // from Windows, valid for the duration of this call.
                 let msg = unsafe { &*(msg as *const MSG) };
-                if let Some(event) = read_message(msg, &mut device_names) {
+                for event in read_message(msg, &mut device_names) {
                     pen_input.push(event);
                 }
                 // false = we only looked. winit still handles the message.
@@ -140,14 +143,14 @@ mod windows_ink {
         })
     }
 
-    /// Turns a pen or touch message into an `InkEvent`. Returns `None` for
-    /// every other kind of message.
-    fn read_message(msg: &MSG, device_names: &mut HashMap<usize, String>) -> Option<InkEvent> {
+    /// Turns a pen or touch message into `InkEvent`s, oldest first. Every
+    /// other kind of message gives none.
+    fn read_message(msg: &MSG, device_names: &mut HashMap<usize, String>) -> Vec<InkEvent> {
         if !matches!(
             msg.message,
             WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP | WM_POINTERLEAVE
         ) {
-            return None;
+            return Vec::new();
         }
 
         // The pointer's ID is in the low 16 bits of wParam.
@@ -155,45 +158,71 @@ mod windows_ink {
 
         let mut kind = POINTER_INPUT_TYPE::default();
         // SAFETY: `kind` is a valid place for Windows to write the result.
-        unsafe { GetPointerType(pointer_id, &mut kind) }.ok()?;
-
-        let (info, mut event) = if kind == PT_PEN {
-            read_pen(pointer_id)?
+        if unsafe { GetPointerType(pointer_id, &mut kind) }.is_err() {
+            return Vec::new();
+        }
+        let readings = if kind == PT_PEN {
+            read_pen(pointer_id)
         } else if kind == PT_TOUCH {
-            read_touch(pointer_id)?
+            read_touch(pointer_id).into_iter().collect()
         } else {
-            return None;
+            Vec::new()
         };
 
-        // Windows gives the position in screen pixels; we want it relative
-        // to the inside of our window.
-        // (The brush will later need sub-pixel precision; this is enough for now.)
-        let mut point: POINT = info.ptPixelLocation;
-        // SAFETY: `point` is a valid POINT for Windows to update.
-        if !unsafe { ScreenToClient(msg.hwnd, &mut point) }.as_bool() {
-            return None;
-        }
-        event.sample.x = point.x as f32;
-        event.sample.y = point.y as f32;
-        event.sample.time_ms = u64::from(info.dwTime);
-
-        event.in_contact = info.pointerFlags.contains(POINTER_FLAG_INCONTACT);
-        event.in_range =
-            msg.message != WM_POINTERLEAVE && info.pointerFlags.contains(POINTER_FLAG_INRANGE);
-        event.reading_count = info.historyCount.max(1);
-        event.device_name = device_names
-            .entry(info.sourceDevice.0 as usize)
-            .or_insert_with(|| device_name(info.sourceDevice))
-            .clone();
-
-        Some(event)
+        readings
+            .into_iter()
+            .filter_map(|(info, mut event)| {
+                let (x, y) = window_position(msg.hwnd, &info)?;
+                event.sample.x = x;
+                event.sample.y = y;
+                event.sample.time_ms = u64::from(info.dwTime);
+                event.in_contact = info.pointerFlags.contains(POINTER_FLAG_INCONTACT);
+                event.in_range = msg.message != WM_POINTERLEAVE
+                    && info.pointerFlags.contains(POINTER_FLAG_INRANGE);
+                event.device_name = device_names
+                    .entry(info.sourceDevice.0 as usize)
+                    .or_insert_with(|| device_name(info.sourceDevice))
+                    .clone();
+                Some(event)
+            })
+            .collect()
     }
 
-    fn read_pen(pointer_id: u32) -> Option<(POINTER_INFO, InkEvent)> {
-        let mut pen = POINTER_PEN_INFO::default();
-        // SAFETY: `pen` is a valid place for Windows to write the result.
-        unsafe { GetPointerPenInfo(pointer_id, &mut pen) }.ok()?;
+    /// All pen readings in this message, oldest first.
+    ///
+    /// When the app is busy, Windows bundles several pen readings into one
+    /// message (its "history"). Using them all keeps fast strokes smooth.
+    fn read_pen(pointer_id: u32) -> Vec<(POINTER_INFO, InkEvent)> {
+        let mut latest = POINTER_PEN_INFO::default();
+        // SAFETY: `latest` is a valid place for Windows to write the result.
+        if unsafe { GetPointerPenInfo(pointer_id, &mut latest) }.is_err() {
+            return Vec::new();
+        }
 
+        let mut readings = vec![latest];
+        let mut count = latest.pointerInfo.historyCount;
+        if count > 1 {
+            let mut history = vec![POINTER_PEN_INFO::default(); count as usize];
+            // SAFETY: `history` has room for `count` readings, and Windows
+            // writes back how many it actually filled in.
+            let filled = unsafe {
+                GetPointerPenInfoHistory(pointer_id, &mut count, Some(history.as_mut_ptr()))
+            };
+            if filled.is_ok() {
+                history.truncate(count as usize);
+                readings = history;
+            }
+        }
+
+        // Windows lists the newest reading first; we want the oldest first.
+        readings
+            .iter()
+            .rev()
+            .map(|pen| (pen.pointerInfo, pen_event(pen)))
+            .collect()
+    }
+
+    fn pen_event(pen: &POINTER_PEN_INFO) -> InkEvent {
         // penMask says which values this pen really measures.
         let measures = |mask: u32| pen.penMask & mask != 0;
         let in_contact = pen
@@ -236,14 +265,13 @@ mod windows_ink {
             ..PenSample::default()
         };
 
-        let event = InkEvent {
+        InkEvent {
             sample,
             barrel_button: pen.penFlags & PEN_FLAG_BARREL != 0,
             has_pressure: measures(PEN_MASK_PRESSURE),
             has_tilt: measures(PEN_MASK_TILT_X) || measures(PEN_MASK_TILT_Y),
             ..InkEvent::default()
-        };
-        Some((pen.pointerInfo, event))
+        }
     }
 
     fn read_touch(pointer_id: u32) -> Option<(POINTER_INFO, InkEvent)> {
@@ -266,6 +294,54 @@ mod windows_ink {
                 ..InkEvent::default()
             },
         ))
+    }
+
+    /// Where the pointer is inside our window, in physical pixels, with
+    /// sub-pixel precision when Windows can tell us.
+    fn window_position(window: HWND, info: &POINTER_INFO) -> Option<(f32, f32)> {
+        // Windows' whole-pixel position, moved into window coordinates.
+        let mut pixel = info.ptPixelLocation;
+        // SAFETY: `pixel` is a valid POINT for Windows to update.
+        if !unsafe { ScreenToClient(window, &mut pixel) }.as_bool() {
+            return None;
+        }
+        let whole = (pixel.x as f32, pixel.y as f32);
+
+        // A finer position: the device measures in 1/100 mm ("himetric").
+        // Scale that onto the part of the screen the device covers.
+        let mut device = RECT::default();
+        let mut display = RECT::default();
+        // SAFETY: both rectangles are valid places for Windows to write to.
+        if unsafe { GetPointerDeviceRects(info.sourceDevice, &mut device, &mut display) }.is_err() {
+            return Some(whole);
+        }
+        let device_width = (device.right - device.left) as f32;
+        let device_height = (device.bottom - device.top) as f32;
+        if device_width <= 0.0 || device_height <= 0.0 {
+            return Some(whole);
+        }
+        let screen_x = display.left as f32
+            + (info.ptHimetricLocation.x - device.left) as f32
+                * (display.right - display.left) as f32
+                / device_width;
+        let screen_y = display.top as f32
+            + (info.ptHimetricLocation.y - device.top) as f32
+                * (display.bottom - display.top) as f32
+                / device_height;
+
+        // Where the inside of our window starts on screen.
+        let mut origin = POINT { x: 0, y: 0 };
+        // SAFETY: `origin` is a valid POINT for Windows to update.
+        if !unsafe { ClientToScreen(window, &mut origin) }.as_bool() {
+            return Some(whole);
+        }
+        let precise = (screen_x - origin.x as f32, screen_y - origin.y as f32);
+
+        // Safety net: only trust the precise position if it agrees with
+        // the whole-pixel one.
+        let agrees = (precise.0 - whole.0).abs() <= MAX_PRECISE_OFFSET
+            && (precise.1 - whole.1).abs() <= MAX_PRECISE_OFFSET;
+        Some(if agrees { precise } else { whole })
     }
 
     /// Asks Windows for a device's product name, e.g. "Wacom Intuos S".
