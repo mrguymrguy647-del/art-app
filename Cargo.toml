@@ -1,0 +1,25 @@
+# The Cargo "workspace": one project made of several crates (Rust libraries
+# and programs) that are built together.
+#
+#   crates/engine - the painting engine (plain Rust, no window or UI code)
+#   crates/app    - the program you run: window, interface, pen input
+#
+# The app uses the engine, but the engine never uses the app.
+
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/app"]
+
+# Settings shared by every crate in the workspace.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[workspace.dependencies]
+art_engine = { path = "crates/engine" }
+
+# While developing ("debug" builds), still optimise the libraries we use.
+# Our own code stays quick to recompile, but egui and friends run at full speed.
+[profile.dev.package."*"]
+opt-level = 2

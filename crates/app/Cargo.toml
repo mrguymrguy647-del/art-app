@@ -1,0 +1,32 @@
+[package]
+name = "art_app"
+description = "Art App: a digital painting program"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# The program file is called ArtApp.exe.
+[[bin]]
+name = "ArtApp"
+path = "src/main.rs"
+
+[dependencies]
+art_engine.workspace = true
+# egui is the interface library; eframe opens the window and runs egui in it.
+eframe = "0.37"
+
+# Windows-only: lets us read pen pressure, tilt and rotation from Windows Ink.
+[target.'cfg(windows)'.dependencies]
+# The window library eframe uses. We need it directly to add our pen hook.
+winit = "0.30"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Used by build.rs to put the icon and version info into ArtApp.exe.
+[build-dependencies]
+winresource = "0.1"

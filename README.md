@@ -2,4 +2,63 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** starting over in Rust. The earlier C++/Qt version is still in the git history.
+**Status:** Phase 1, Step 1: project setup, a pen test screen and the app icon.
+
+## Run it on Windows (no terminal needed)
+
+### One-time setup
+
+1. **Install Rust.** Go to <https://rustup.rs> and download and run `rustup-init.exe`.
+   - If it asks about the *Visual Studio C++ prerequisites*, type **1** (Quick install) and press
+     Enter. A Visual Studio installer window opens and installs what Rust needs; let it finish.
+   - When it asks how to install Rust, just press **Enter** (standard installation).
+   - Restart your PC afterwards.
+2. **Get the code** with [GitHub Desktop](https://desktop.github.com):
+   **File → Clone repository → art-app**, local path `C:\dev\art-app`, then set
+   **Current branch** to `claude/stoic-cannon-vyu6qr`.
+
+### Every day
+
+Open the `C:\dev\art-app` folder in File Explorer and double-click:
+
+| File | What it does |
+|---|---|
+| `run.bat` | Builds the app (only what changed) and starts it. The very first time takes a few minutes. |
+| `create-shortcut.bat` | Puts an **Art App** icon on your desktop. Do this once, after `run.bat` has worked. |
+| `test.bat` | Runs the painting engine's tests. |
+
+**Getting new versions:** in GitHub Desktop click **Fetch origin**, then **Pull origin**, then
+double-click `run.bat` once. Your desktop shortcut then opens the new version.
+
+### Pen tablet tip
+
+Art App reads pressure and tilt through **Windows Ink**. If your tablet's driver (Wacom, XP-Pen,
+Huion, …) has a "Use Windows Ink" option, keep it switched on.
+
+## Project layout
+
+```
+art-app/
+├── Cargo.toml            workspace: lists the two crates below
+├── run.bat / test.bat / create-shortcut.bat
+├── docs/decisions.md     why we chose things, in plain words
+└── crates/
+    ├── engine/           painting engine: plain Rust, no window/UI code
+    │   └── src/
+    │       ├── lib.rs
+    │       └── pen.rs    pen samples + tilt maths (tests at the bottom)
+    └── app/              the program: window and interface (egui)
+        ├── build.rs      puts the icon into ArtApp.exe
+        ├── assets/       icon files
+        └── src/
+            ├── main.rs        starts the app
+            ├── pen_input.rs   reads pressure/tilt from Windows Ink
+            └── pen_test.rs    the pen test screen
+```
+
+## Terminal commands (optional)
+
+```
+cargo run -p art_app          # build and start (debug build)
+cargo test --workspace        # run all tests
+```

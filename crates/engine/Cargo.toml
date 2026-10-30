@@ -1,0 +1,9 @@
+[package]
+name = "art_engine"
+description = "Painting engine for Art App: pixels, brushes, layers and undo. No UI code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# The engine has no dependencies yet: plain Rust only.
+[dependencies]
