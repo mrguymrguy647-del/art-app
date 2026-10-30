@@ -26,6 +26,7 @@ use eframe::egui::{
 
 use crate::brush_panel::brush_panel;
 use crate::color_panel::ColorPicker;
+use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
 
@@ -76,6 +77,7 @@ pub struct CanvasView {
     pointer_on_canvas: Option<Point>,
     tools: PaintTool,
     colors: ColorPicker,
+    layers: LayersPanel,
 }
 
 impl Default for CanvasView {
@@ -88,6 +90,7 @@ impl Default for CanvasView {
             pointer_on_canvas: None,
             tools: PaintTool::default(),
             colors: ColorPicker::default(),
+            layers: LayersPanel::default(),
         }
     }
 }
@@ -107,13 +110,21 @@ impl CanvasView {
             .exact_size(250.0)
             .show(ui, |ui| {
                 let actions = brush_panel(ui, &mut self.tools, &mut self.colors);
-                if actions.clear_canvas {
-                    let tiles_before = document.clear();
+                if actions.clear_layer {
+                    let layer = document.active_id();
+                    let tiles_before = document.clear_active_layer();
                     if !tiles_before.is_empty() {
-                        history.push(Box::new(TileCommand::new("Clear canvas", tiles_before)));
+                        history.push(Box::new(TileCommand::new(
+                            "Clear layer",
+                            layer,
+                            tiles_before,
+                        )));
                     }
                 }
             });
+        egui::Panel::left("layers_panel")
+            .exact_size(210.0)
+            .show(ui, |ui| self.layers.ui(ui, document, history));
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
     }
@@ -165,6 +176,17 @@ impl CanvasView {
             if !navigating {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
             }
+        }
+
+        if self.tools.show_hidden_layer_notice() {
+            draw_notice(
+                &painter,
+                rect,
+                "This layer is hidden. Show it in the Layers panel to paint on it.",
+            );
+            // Redraw soon, so the notice goes away on time.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 
@@ -374,9 +396,9 @@ impl CanvasView {
         let level = preview_level(real_zoom);
         let sharp = real_zoom >= SHARP_PIXELS_FROM_ZOOM;
 
-        // Tiles whose pixels changed: their textures are out of date.
-        for coord in document.layer.take_dirty_tiles() {
-            if document.layer.tile(coord).is_none() {
+        // Tiles whose combined picture changed: their textures are out of date.
+        for coord in document.take_dirty_tiles() {
+            if !document.has_visible_tile(coord) {
                 self.textures.remove(&coord);
             } else if let Some(texture) = self.textures.get_mut(&coord) {
                 texture.outdated = true;
@@ -385,9 +407,9 @@ impl CanvasView {
 
         let mut preview_updates_left = PREVIEW_UPDATES_PER_FRAME;
         for &coord in visible {
-            let Some(tile) = document.layer.tile(coord) else {
+            if !document.has_visible_tile(coord) {
                 continue;
-            };
+            }
             let send = match self.textures.get(&coord) {
                 // Never sent, or the pixels changed: send now.
                 None => true,
@@ -405,6 +427,11 @@ impl CanvasView {
                 continue;
             }
 
+            // All visible layers combined into one tile.
+            let Some(tile) = document.composite_tile(coord) else {
+                self.textures.remove(&coord);
+                continue;
+            };
             let size = TILE_SIZE >> level;
             let image =
                 ColorImage::from_rgba_premultiplied([size, size], &tile.display_bytes(level));
@@ -518,7 +545,7 @@ impl CanvasView {
             ui.separator();
             ui.label(format!("Canvas {} × {}", document.width(), document.height()));
             ui.separator();
-            ui.label(format!("Tiles in memory: {}", document.layer.tile_count()));
+            ui.label(format!("Tiles in memory: {}", document.tile_count()));
             ui.separator();
             let megabytes = history.memory_used() as f64 / (1024.0 * 1024.0);
             ui.label(format!("Undo steps: {} ({megabytes:.0} MB)", history.undo_steps()));
@@ -532,6 +559,25 @@ impl CanvasView {
 
 /// Draws the brush outline: a circle the size of the brush, in black and
 /// white so it shows up on any colour. Tiny brushes get a small cross.
+/// A short message in a red box at the top of the canvas.
+fn draw_notice(painter: &egui::Painter, canvas: Rect, text: &str) {
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(15.0),
+        Color32::WHITE,
+    );
+    let padding = vec2(14.0, 8.0);
+    let size = galley.size() + 2.0 * padding;
+    let top_left = pos2(canvas.center().x - size.x / 2.0, canvas.top() + 16.0);
+    let box_rect = Rect::from_min_size(top_left, size);
+    painter.rect_filled(
+        box_rect,
+        6.0,
+        Color32::from_rgba_unmultiplied(170, 45, 45, 235),
+    );
+    painter.galley(top_left + padding, galley, Color32::WHITE);
+}
+
 /// Draws the eyedropper: a thick ring showing the colour under the
 /// pointer (grey off the canvas), with a small cross in the middle.
 fn draw_eyedropper(painter: &egui::Painter, centre: Pos2, colour: Option<[u8; 3]>) {

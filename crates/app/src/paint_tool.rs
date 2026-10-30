@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use art_engine::brush::{BrushMode, BrushSettings};
 use art_engine::document::Document;
 use art_engine::history::{History, TileCommand};
+use art_engine::layer::LayerId;
 use art_engine::pen::InputKind;
 use art_engine::smoothing::Smoother;
 use art_engine::stroke::{Stroke, StrokePoint};
@@ -29,6 +30,9 @@ use crate::pen_input::InkEvent;
 /// After the pen or a finger was used, ignore the mouse for this long.
 /// (Windows also moves the mouse pointer when you use the pen or a finger.)
 const INK_TAKES_PRIORITY_FOR: Duration = Duration::from_millis(300);
+
+/// How long the "this layer is hidden" notice stays up.
+const NOTICE_SHOWS_FOR: Duration = Duration::from_secs(3);
 
 /// At 100% smoothing the line is pulled on a string this long, in screen
 /// points. It's measured on screen so smoothing feels the same at any zoom.
@@ -63,6 +67,8 @@ pub struct CanvasPlacement<'a> {
 struct ActiveStroke {
     /// What undo calls this stroke, e.g. "Brush stroke".
     name: &'static str,
+    /// The layer being painted on.
+    layer: LayerId,
     stroke: Stroke,
     smoother: Smoother,
     source: Source,
@@ -73,21 +79,31 @@ struct ActiveStroke {
 impl ActiveStroke {
     fn add(&mut self, document: &mut Document, point: StrokePoint) {
         self.last_point = point;
+        let Some(layer) = document.layer_mut(self.layer) else {
+            return;
+        };
         if let Some(smoothed) = self.smoother.add(point) {
-            self.stroke.add_point(&mut document.layer, smoothed);
+            self.stroke.add_point(&mut layer.surface, smoothed);
         }
     }
 
     fn finish(mut self, document: &mut Document, history: &mut History) {
+        let Some(layer) = document.layer_mut(self.layer) else {
+            return;
+        };
         // Draw the last bit, so the line ends where the pen was lifted.
         if let Some(last) = self.smoother.finish(self.last_point) {
-            self.stroke.add_point(&mut document.layer, last);
+            self.stroke.add_point(&mut layer.surface, last);
         }
         // Record the change so it can be undone (unless nothing changed,
         // e.g. erasing an empty area).
-        let tiles_before = self.stroke.finish(&mut document.layer);
+        let tiles_before = self.stroke.finish(&mut layer.surface);
         if !tiles_before.is_empty() {
-            history.push(Box::new(TileCommand::new(self.name, tiles_before)));
+            history.push(Box::new(TileCommand::new(
+                self.name,
+                self.layer,
+                tiles_before,
+            )));
         }
     }
 }
@@ -113,6 +129,8 @@ pub struct PaintTool {
     pen_position: Option<Pos2>,
     /// The pen's side button is held.
     pen_side_button: bool,
+    /// When the user last tried to paint on a hidden layer.
+    hidden_layer_attempt: Option<Instant>,
 }
 
 impl Default for PaintTool {
@@ -129,6 +147,7 @@ impl Default for PaintTool {
             last_ink_event: None,
             pen_position: None,
             pen_side_button: false,
+            hidden_layer_attempt: None,
         }
     }
 }
@@ -336,6 +355,11 @@ impl PaintTool {
         document: &mut Document,
         point: StrokePoint,
     ) {
+        // You can't see what you paint on a hidden layer, so don't.
+        if !document.active_layer().visible() {
+            self.hidden_layer_attempt = Some(Instant::now());
+            return;
+        }
         let string_length = self.smoothing * LONGEST_SMOOTHING_STRING / view.zoom();
         let settings = *self.settings();
         if settings.mode == BrushMode::Paint {
@@ -346,6 +370,7 @@ impl PaintTool {
                 BrushMode::Paint => "Brush stroke",
                 BrushMode::Erase => "Eraser stroke",
             },
+            layer: document.active_id(),
             stroke: Stroke::new(settings, document.bounds()),
             smoother: Smoother::new(string_length),
             source,
@@ -366,6 +391,13 @@ impl PaintTool {
         self.recent_colors.retain(|&c| c != color);
         self.recent_colors.insert(0, color);
         self.recent_colors.truncate(MAX_RECENT_COLORS);
+    }
+
+    /// True for a few seconds after trying to paint on a hidden layer, so
+    /// the canvas can explain why nothing happened.
+    pub fn show_hidden_layer_notice(&self) -> bool {
+        self.hidden_layer_attempt
+            .is_some_and(|time| time.elapsed() < NOTICE_SHOWS_FOR)
     }
 
     /// True while a stroke is being painted (undo waits until it's done).

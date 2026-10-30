@@ -2,9 +2,9 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1, Step 6: paint and erase with a round brush (pen pressure changes size and
-opacity), pick colours from a colour wheel or the canvas, undo and redo, on a canvas you can zoom,
-pan and rotate. The pen test is under **Pen test** in the top bar.
+**Status:** Phase 1, Step 7: paint and erase with a round brush (pen pressure changes size and
+opacity) on layers, pick colours from a colour wheel or the canvas, undo and redo, on a canvas you
+can zoom, pan and rotate. The pen test is under **Pen test** in the top bar.
 
 ## Run it on Windows (no terminal needed)
 
@@ -41,6 +41,7 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Choose a colour | Colour wheel (ring = hue, square = how vivid / bright), type a hex code like `#FF8800`, or click a recent colour | Same, by tapping |
 | Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
+| Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, double-click a name to rename | Same, by tapping |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`), or the **Undo** / **Redo** buttons | Tap the buttons |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
 | Pan (move) | Hold **Space** and drag, or drag with the middle mouse button | Two-finger drag (touchscreen) |
@@ -65,7 +66,9 @@ art-app/
     │       ├── lib.rs
     │       ├── tile.rs       256×256 blocks of pixels
     │       ├── surface.rs    a layer's pixels: only painted tiles exist
-    │       ├── document.rs   canvas size, paper, layer, colour sampling
+    │       ├── document.rs   canvas size, paper, the layer stack, combining layers
+    │       ├── layer.rs      one layer: name, visible, opacity, pixels
+    │       ├── layer_commands.rs  undoable add / delete / move / change layer
     │       ├── view.rs       zoom / pan / rotate maths
     │       ├── brush.rs      brush settings, dab shape
     │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
@@ -82,6 +85,7 @@ art-app/
             ├── paint_tool.rs  brush and eraser: pen/mouse input into strokes
             ├── brush_panel.rs the tool panel (brush, eraser, pick, settings)
             ├── color_panel.rs colour wheel, hex code, recent colours
+            ├── layers_panel.rs the Layers panel
             ├── pen_input.rs   reads pressure/tilt from Windows Ink
             └── pen_test.rs    the pen test screen
 ```

@@ -10,7 +10,7 @@ use crate::paint_tool::{PaintTool, Tool};
 /// What the user asked for in the panel this frame.
 #[derive(Default)]
 pub struct PanelActions {
-    pub clear_canvas: bool,
+    pub clear_layer: bool,
 }
 
 /// Shows the panel for the painting tools.
@@ -67,8 +67,8 @@ pub fn brush_panel(
 
         ui.separator();
         // Clearing can be undone like any other change.
-        if ui.button("Clear canvas").clicked() {
-            actions.clear_canvas = true;
+        if ui.button("Clear layer").clicked() {
+            actions.clear_layer = true;
         }
 
         ui.add_space(8.0);
@@ -79,7 +79,7 @@ pub fn brush_panel(
 }
 
 /// A slider for a 0..1 value, shown as a percentage.
-fn percent_slider<'a>(
+pub fn percent_slider<'a>(
     value: &'a mut f32,
     range: std::ops::RangeInclusive<f32>,
     name: &str,

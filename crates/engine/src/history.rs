@@ -12,6 +12,7 @@
 use std::collections::VecDeque;
 
 use crate::document::Document;
+use crate::layer::LayerId;
 use crate::stroke::TilesBefore;
 use crate::surface::TileCoord;
 use crate::tile::{TILE_PIXELS, Tile};
@@ -37,7 +38,7 @@ pub trait Command {
     fn memory_size(&self) -> usize;
 }
 
-/// A change to some of the layer's tiles: a stroke, erasing, clearing.
+/// A change to some of a layer's tiles: a stroke, erasing, clearing.
 ///
 /// It keeps the *other* version of each changed tile: right after the
 /// change that is the old version (for undo). Undoing swaps it with the
@@ -45,23 +46,31 @@ pub trait Command {
 /// on. Each changed tile is only stored once.
 pub struct TileCommand {
     name: String,
+    /// The layer whose tiles changed.
+    layer: LayerId,
     tiles: Vec<(TileCoord, Option<Tile>)>,
 }
 
 impl TileCommand {
-    /// Makes a command for a change that has just been made, from the tiles
-    /// as they were before it (e.g. from `Stroke::finish`).
-    pub fn new(name: impl Into<String>, tiles_before: TilesBefore) -> Self {
+    /// Makes a command for a change that has just been made to `layer`,
+    /// from its tiles as they were before (e.g. from `Stroke::finish`).
+    pub fn new(name: impl Into<String>, layer: LayerId, tiles_before: TilesBefore) -> Self {
         Self {
             name: name.into(),
+            layer,
             tiles: tiles_before.into_iter().collect(),
         }
     }
 
     /// Swaps the stored tiles with the ones on the canvas.
     fn swap(&mut self, document: &mut Document) {
+        // The layer always exists here: any later change that removed it
+        // has been undone first.
+        let Some(layer) = document.layer_mut(self.layer) else {
+            return;
+        };
         for (coord, stored) in &mut self.tiles {
-            *stored = document.layer.replace_tile(*coord, stored.take());
+            *stored = layer.surface.replace_tile(*coord, stored.take());
         }
     }
 }
@@ -181,7 +190,8 @@ mod tests {
     /// Everything on the layer, for comparing "before" and "after".
     fn picture(document: &Document) -> BTreeMap<TileCoord, Tile> {
         document
-            .layer
+            .active_layer()
+            .surface
             .tiles()
             .map(|(coord, tile)| (coord, tile.clone()))
             .collect()
@@ -206,10 +216,12 @@ mod tests {
             ..BrushSettings::default()
         };
         let mut stroke = Stroke::new(brush, document.bounds());
-        stroke.add_point(&mut document.layer, StrokePoint::new(x1, y, 1.0));
-        stroke.add_point(&mut document.layer, StrokePoint::new(x2, y, 1.0));
-        let before = stroke.finish(&mut document.layer);
-        history.push(Box::new(TileCommand::new("Brush stroke", before)));
+        let layer = document.active_id();
+        let surface = &mut document.active_layer_mut().surface;
+        stroke.add_point(surface, StrokePoint::new(x1, y, 1.0));
+        stroke.add_point(surface, StrokePoint::new(x2, y, 1.0));
+        let before = stroke.finish(surface);
+        history.push(Box::new(TileCommand::new("Brush stroke", layer, before)));
     }
 
     #[test]
@@ -240,7 +252,7 @@ mod tests {
         assert!(history.undo(&mut document));
         assert_eq!(picture(&document), first);
         assert!(history.undo(&mut document));
-        assert_eq!(document.layer.tile_count(), 0, "back to a blank canvas");
+        assert_eq!(document.tile_count(), 0, "back to a blank canvas");
 
         assert!(history.redo(&mut document));
         assert_eq!(picture(&document), first);
@@ -311,7 +323,7 @@ mod tests {
             450.0,
             50.0,
         );
-        assert_eq!(document.layer.tile_count(), 0);
+        assert_eq!(document.tile_count(), 0);
 
         history.undo(&mut document);
         assert_eq!(picture(&document), painted);
@@ -332,19 +344,23 @@ mod tests {
         );
         let painted = picture(&document);
 
-        let before = document.clear();
-        history.push(Box::new(TileCommand::new("Clear canvas", before)));
-        assert_eq!(document.layer.tile_count(), 0);
+        let layer = document.active_id();
+        let before = document.clear_active_layer();
+        history.push(Box::new(TileCommand::new("Clear layer", layer, before)));
+        assert_eq!(document.tile_count(), 0);
 
         history.undo(&mut document);
         assert_eq!(picture(&document), painted);
-        assert_eq!(history.redo_name(), Some("Clear canvas"));
+        assert_eq!(history.redo_name(), Some("Clear layer"));
     }
 
     #[test]
     fn each_changed_tile_is_stored_once() {
         let mut document = Document::new(2000, 1000);
-        document.layer.set_pixel(10, 10, Rgba8::BLACK); // tile (0, 0) exists
+        document
+            .active_layer_mut()
+            .surface
+            .set_pixel(10, 10, Rgba8::BLACK); // tile (0, 0) exists
         let mut history = History::default();
         // A line across tiles (0, 0) and (1, 0); only (0, 0) existed before.
         paint_line(
@@ -369,7 +385,10 @@ mod tests {
         // Room for about three tiles' worth of history.
         let mut history = History::new(3 * TILE_BYTES);
         // Each line paints over existing tiles, so each stores 1-2 tiles.
-        document.layer.set_pixel(0, 0, Rgba8::BLACK);
+        document
+            .active_layer_mut()
+            .surface
+            .set_pixel(0, 0, Rgba8::BLACK);
         for i in 0..6 {
             let y = 20.0 + i as f32 * 30.0;
             paint_line(

@@ -159,3 +159,32 @@ the paper. You can choose it as a tool (`I`), which switches back to the
 brush after one pick. Or hold `Alt`, or the pen's side button, to pick
 without changing tools. "Recent colours" lists colours you've actually
 painted with, newest first.
+
+## 21. Layers, and how they're combined
+A document is a stack of layers on paper. Each layer has its own tiles,
+a name, a show/hide switch and an opacity. You paint on the "active"
+layer: the one selected in the Layers panel. A document always has at
+least one layer, and painting on a hidden layer is refused with a short
+message, because you couldn't see what you were doing.
+
+The screen shows the layers combined. The engine combines one tile at a
+time, and only the tiles that changed: a stroke changes the tiles it
+touched, while showing, hiding, moving or changing a layer's opacity
+changes all of that layer's tiles. Each layer has a blend mode ("Normal"
+for now); blend modes like Multiply and Screen from the later phases
+only need a new case in one function (`blend_over`). The eyedropper
+picks from the combined picture.
+
+Each layer has a permanent id number, separate from its position in the
+stack, so undo always finds the right layer even after layers have been
+moved around.
+
+## 22. Every layer action can be undone
+Adding, deleting, moving, showing/hiding, renaming and changing opacity
+are all commands in the same undo history as strokes. Adding and
+deleting are one command type that "toggles" a layer in or out of the
+stack; a deleted layer is kept inside the command, paint and all, so
+undo brings it back exactly. Dragging the opacity slider changes the
+layer live, but the whole drag is recorded as one undo step when you
+let go. Choosing which layer is active isn't undoable, as in other
+painting apps.

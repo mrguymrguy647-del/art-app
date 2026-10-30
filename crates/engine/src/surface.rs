@@ -215,6 +215,12 @@ impl<P: Pixel> Surface<P> {
         self.tiles.len()
     }
 
+    /// Marks every tile as changed (e.g. when the whole layer is shown,
+    /// hidden or moved, so the screen must update all of it).
+    pub fn mark_all_dirty(&mut self) {
+        self.dirty.extend(self.tiles.keys().copied());
+    }
+
     /// The tiles that changed since the last call. Clears the list.
     pub fn take_dirty_tiles(&mut self) -> Vec<TileCoord> {
         self.dirty.drain().collect()

@@ -8,6 +8,8 @@ pub mod brush;
 pub mod color;
 pub mod document;
 pub mod history;
+pub mod layer;
+pub mod layer_commands;
 pub mod pen;
 pub mod smoothing;
 pub mod stroke;
