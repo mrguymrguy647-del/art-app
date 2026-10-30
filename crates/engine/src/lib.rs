@@ -4,7 +4,11 @@
 //! It has no window or UI code, so it can be tested on its own with
 //! `cargo test`, and it doesn't care which interface sits on top.
 
+pub mod document;
 pub mod pen;
+pub mod surface;
+pub mod tile;
+pub mod view;
 
 /// The engine's version, for example "0.1.0" (taken from Cargo.toml).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

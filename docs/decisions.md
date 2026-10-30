@@ -45,3 +45,29 @@ window next to the app.
 ## 7. Placeholder icon
 A brush stroke that gets thicker in the middle, like pressing harder with a
 pen. It's in `crates/app/assets/` and can be swapped any time.
+
+## 8. Pixels live in 256×256 tiles
+Each layer is a set of 256×256 tiles, and a tile only exists once
+something is painted on it. An empty 8000×8000 canvas uses almost no
+memory, and the screen can update one changed tile instead of the whole
+picture. Pixels are 8-bit RGBA with premultiplied alpha. The pixel type is
+a Rust trait (`Pixel`), so a 16-bit type can be added later without
+rewriting tiles and surfaces.
+
+## 9. Each tile is its own texture on the graphics card
+Zooming, panning and rotating only change where the tile textures are
+drawn, which the graphics card does very quickly. When a tile's pixels
+change, only that tile is sent again.
+
+## 10. We make our own smaller previews for zooming out
+egui's graphics backend doesn't make smaller versions of textures
+("mipmaps"). Without them, a zoomed-out canvas shimmers and looks grainy.
+So the engine makes them: below 50% zoom a tile is sent at 128×128, below
+25% at 64×64, and so on. It looks smoother and uses less memory on the
+graphics card.
+
+## 11. 100% zoom means real screen pixels
+Windows display scaling (e.g. 150%) makes interface units bigger than
+screen pixels. The zoom shown in the status bar counts real pixels, so at
+100% one canvas pixel is exactly one screen pixel, like other painting
+apps.

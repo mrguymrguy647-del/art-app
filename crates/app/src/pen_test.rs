@@ -1,14 +1,14 @@
 //! The pen test screen: shows what your pen, mouse or finger reports.
 //!
-//! Pen and touch readings come from Windows Ink (see `pen_input.rs`).
-//! The mouse comes from egui. The real canvas will read input the same way.
+//! Pen and touch readings come from Windows Ink (see `pen_input.rs`); the
+//! app passes them in each frame. The mouse comes from egui.
 
 use std::time::{Duration, Instant};
 
 use art_engine::pen::{InputKind, PenSample};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Sense, Stroke, pos2, vec2};
 
-use crate::pen_input::{InkEvent, PenInput};
+use crate::pen_input::InkEvent;
 
 /// After a pen or touch event, ignore egui's mouse pointer for this long.
 /// (Windows also moves the mouse pointer when you use the pen or a finger.)
@@ -28,24 +28,25 @@ struct Reading {
 }
 
 pub struct PenTestScreen {
-    pen_input: PenInput,
     reading: Option<Reading>,
     last_ink_event: Option<Instant>,
     rate: RateCounter,
 }
 
-impl PenTestScreen {
-    pub fn new(pen_input: PenInput) -> Self {
+impl Default for PenTestScreen {
+    fn default() -> Self {
         Self {
-            pen_input,
             reading: None,
             last_ink_event: None,
             rate: RateCounter::new(),
         }
     }
+}
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        self.read_input(ui.ctx());
+impl PenTestScreen {
+    /// Shows the screen. `ink_events` are the pen/touch events since the last frame.
+    pub fn ui(&mut self, ui: &mut egui::Ui, ink_events: Vec<InkEvent>) {
+        self.read_input(ui.ctx(), ink_events);
 
         egui::Panel::right("pen_readings")
             .exact_size(300.0)
@@ -57,12 +58,12 @@ impl PenTestScreen {
         ui.ctx().request_repaint_after(Duration::from_millis(250));
     }
 
-    fn read_input(&mut self, ctx: &egui::Context) {
+    fn read_input(&mut self, ctx: &egui::Context, ink_events: Vec<InkEvent>) {
         let now = Instant::now();
 
         // 1. Pen and touch from Windows Ink.
         let points_per_pixel = 1.0 / ctx.pixels_per_point();
-        for event in self.pen_input.take_events() {
+        for event in ink_events {
             self.last_ink_event = Some(now);
             self.rate.add(event.reading_count);
             self.reading = Some(Reading::from_ink(event, points_per_pixel));

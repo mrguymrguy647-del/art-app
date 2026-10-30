@@ -1,16 +1,19 @@
 //! Art App: program entry point.
 //!
-//! Opens the window, sets up pen input, and shows the current screen
-//! (for now: the pen test).
+//! Opens the window, sets up pen input, and shows the current screen:
+//! the canvas, or the pen test.
 
 // In release builds on Windows, don't open a black console window next to the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod canvas_view;
 mod pen_input;
 mod pen_test;
 
+use art_engine::document::Document;
 use eframe::egui;
 
+use canvas_view::CanvasView;
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
 
@@ -45,30 +48,56 @@ fn main() -> eframe::Result {
     )
 }
 
+/// The screens you can switch between in the top bar.
+#[derive(Clone, Copy, PartialEq)]
+enum Screen {
+    Canvas,
+    PenTest,
+}
+
 /// The whole app. eframe calls `ui` every time the window needs redrawing.
 struct ArtApp {
+    pen_input: PenInput,
+    document: Document,
+    canvas: CanvasView,
     pen_test: PenTestScreen,
+    screen: Screen,
 }
 
 impl ArtApp {
     fn new(pen_input: PenInput) -> Self {
+        // A 4000 x 3000 canvas with a test picture, until we have a brush.
+        let mut document = Document::new(4000, 3000);
+        document.draw_test_pattern();
+
         Self {
-            pen_test: PenTestScreen::new(pen_input),
+            pen_input,
+            document,
+            canvas: CanvasView::default(),
+            pen_test: PenTestScreen::default(),
+            screen: Screen::Canvas,
         }
     }
 }
 
 impl eframe::App for ArtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Pen and touch events since the last frame. Only the pen test uses
+        // them for now; the brush (Step 3) will too.
+        let ink_events = self.pen_input.take_events();
+
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Art App");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak("Step 1: pen test");
-                });
+                ui.separator();
+                ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
+                ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
             });
         });
 
-        self.pen_test.ui(ui);
+        match self.screen {
+            Screen::Canvas => self.canvas.ui(ui, &mut self.document),
+            Screen::PenTest => self.pen_test.ui(ui, ink_events),
+        }
     }
 }
