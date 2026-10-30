@@ -234,3 +234,34 @@ as long as you haven't zoomed, moved or turned it since it was last
 fitted. Once you have, your zoom stays as it is, and the same part of the
 picture stays in the middle of the window, like in other painting apps.
 Pressing `0` fits the canvas again.
+
+## 27. The paint bucket spreads like water
+The paint bucket starts at the pixel you click and spreads to its
+neighbours (left, right, up, down) as long as their colour is close
+enough to the starting colour. **Tolerance** says how close: 0% only
+fills exactly the same colour; 10% (the default) allows a small
+difference in red, green, blue or opacity (about 25 out of 255).
+
+- **Stop at lines on all visible layers** looks at the picture as you see
+  it. That's what you want when the outlines are on one layer and you
+  fill colours on another.
+- **Grow** fills a pixel or two further. Lines have soft edges, and
+  without growing, a thin light rim would stay between the fill and the
+  line.
+
+Filling works in two parts: first find *where* to paint (a "mask" that
+says how much of each pixel is inside), then paint that area. Shapes
+in the painting scripts (next step) reuse the second part.
+
+## 28. Gradients are smooth, and never grey
+A gradient goes from one colour to another along a straight line
+(**Straight**) or in rings around a point (**Round**). Colours are mixed
+"premultiplied", so fading a colour out to transparent keeps the colour
+instead of turning greyish halfway. A tiny regular pattern (an "ordered
+dither", always the same) breaks up the visible bands a big smooth
+gradient would otherwise show, because each colour channel only has 256
+steps. Gradients cover the whole layer, so they're best on a layer of
+their own.
+
+Fills and gradients are undone like strokes: they keep only the tiles
+they changed.

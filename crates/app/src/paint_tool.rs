@@ -1,5 +1,5 @@
-//! The painting tools (brush and eraser): turn pen and mouse input into
-//! strokes.
+//! The painting tools: turn pen and mouse input into strokes (brush and
+//! eraser), fills (paint bucket) and gradients.
 //!
 //! The pen comes from Windows Ink (`pen_input.rs`), with pressure. The
 //! mouse comes from egui and always paints at full pressure. Fingers on a
@@ -11,11 +11,15 @@
 //! The eyedropper picks a colour from the canvas instead of painting. You
 //! can choose it as a tool, or hold Alt (or the pen's side button) to pick
 //! a colour while using any tool.
+//!
+//! The paint bucket fills where you click. The gradient tool is dragged:
+//! from where the gradient starts to where it ends.
 
 use std::time::{Duration, Instant};
 
 use art_engine::brush::{BrushMode, BrushSettings};
 use art_engine::document::Document;
+use art_engine::fill::{self, FloodFill, Gradient, GradientShape, Paint, SampleFrom, flood_fill};
 use art_engine::history::{History, TileCommand};
 use art_engine::layer::LayerId;
 use art_engine::pen::InputKind;
@@ -45,7 +49,69 @@ pub enum Tool {
     Eraser,
     /// Picks a colour from the canvas, then switches back to the brush.
     Eyedropper,
+    /// The paint bucket.
+    Fill,
+    Gradient,
 }
+
+/// The paint bucket's settings.
+pub struct FillSettings {
+    /// How different a colour may be and still be filled (0..1).
+    pub tolerance: f32,
+    /// Look at all visible layers (true) or only the selected one (false)
+    /// to decide where the fill stops.
+    pub all_layers: bool,
+    /// Grow the fill by this many pixels, under the edges of lines.
+    pub grow: u32,
+    pub opacity: f32,
+}
+
+impl Default for FillSettings {
+    fn default() -> Self {
+        Self {
+            tolerance: 0.1,
+            all_layers: true,
+            grow: 1,
+            opacity: 1.0,
+        }
+    }
+}
+
+/// What a gradient fades to, from the brush colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientEnd {
+    Transparent,
+    SecondColor,
+}
+
+/// The gradient tool's settings.
+pub struct GradientSettings {
+    pub shape: GradientShape,
+    pub end: GradientEnd,
+    pub second_color: [u8; 3],
+    pub opacity: f32,
+}
+
+impl Default for GradientSettings {
+    fn default() -> Self {
+        Self {
+            shape: GradientShape::Linear,
+            end: GradientEnd::Transparent,
+            second_color: [255, 255, 255],
+            opacity: 1.0,
+        }
+    }
+}
+
+/// A gradient being dragged out: from `start` to `end`, in canvas pixels.
+struct GradientDrag {
+    source: Source,
+    start: Point,
+    end: Point,
+}
+
+/// Holding Shift while dragging a gradient keeps its angle to steps of this.
+const GRADIENT_ANGLE_STEP_DEGREES: f32 = 15.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -116,12 +182,18 @@ pub struct PaintTool {
     pub eraser: BrushSettings,
     /// How much lines are steadied: 0 = not at all, 1 = the most.
     pub smoothing: f32,
+    pub fill: FillSettings,
+    pub gradient: GradientSettings,
     /// Colours recently painted with, newest first.
     pub recent_colors: Vec<[u8; 3]>,
     /// While the pen is turned round to its eraser end: the tool that was
     /// selected before, to go back to when it's turned back.
     tool_before_pen_flip: Option<Tool>,
     stroke: Option<ActiveStroke>,
+    gradient_drag: Option<GradientDrag>,
+    /// The pen or mouse button is still down after a click that already
+    /// did its job (a fill): wait for it to be lifted.
+    waiting_for_lift: Option<Source>,
     /// Set while a colour is being picked (the pen or mouse button is down).
     picking: Option<Source>,
     last_ink_event: Option<Instant>,
@@ -140,9 +212,13 @@ impl Default for PaintTool {
             brush: BrushSettings::default(),
             eraser: BrushSettings::eraser(),
             smoothing: 0.25,
+            fill: FillSettings::default(),
+            gradient: GradientSettings::default(),
             recent_colors: Vec::new(),
             tool_before_pen_flip: None,
             stroke: None,
+            gradient_drag: None,
+            waiting_for_lift: None,
             picking: None,
             last_ink_event: None,
             pen_position: None,
@@ -153,19 +229,33 @@ impl Default for PaintTool {
 }
 
 impl PaintTool {
-    /// The selected tool's settings (the eyedropper shows the brush's).
+    /// The selected tool's brush settings (the eyedropper, paint bucket
+    /// and gradient use the brush's colour).
     pub fn settings(&self) -> &BrushSettings {
         match self.tool {
-            Tool::Brush | Tool::Eyedropper => &self.brush,
             Tool::Eraser => &self.eraser,
+            _ => &self.brush,
         }
     }
 
     pub fn settings_mut(&mut self) -> &mut BrushSettings {
         match self.tool {
-            Tool::Brush | Tool::Eyedropper => &mut self.brush,
             Tool::Eraser => &mut self.eraser,
+            _ => &mut self.brush,
         }
+    }
+
+    /// True for the tools that work at one point (paint bucket, gradient)
+    /// rather than with a round brush: they show a cross as the pointer.
+    pub fn uses_crosshair(&self) -> bool {
+        matches!(self.tool, Tool::Fill | Tool::Gradient)
+    }
+
+    /// The gradient being dragged out, in canvas pixels, to show on screen.
+    pub fn gradient_line(&self) -> Option<(Point, Point)> {
+        self.gradient_drag
+            .as_ref()
+            .map(|drag| (drag.start, drag.end))
     }
 
     /// True if pressing on the canvas now would pick a colour rather than
@@ -203,7 +293,7 @@ impl PaintTool {
             let point = view.screen_to_canvas(Point::new(pos.x, pos.y));
             StrokePoint::new(point.x, point.y, pressure)
         };
-        let alt_held = ui.input(|i| i.modifiers.alt);
+        let (alt_held, shift_held) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
 
         // 1. The pen.
         for event in ink_events {
@@ -224,7 +314,19 @@ impl PaintTool {
 
             let pen_is_painting =
                 matches!(&self.stroke, Some(active) if active.source == Source::Pen);
-            if pen_is_painting {
+            let pen_is_dragging =
+                matches!(&self.gradient_drag, Some(drag) if drag.source == Source::Pen);
+            if pen_is_dragging {
+                if event.in_contact {
+                    self.drag_gradient_to(point, shift_held);
+                } else {
+                    self.finish_gradient(document, history);
+                }
+            } else if self.waiting_for_lift == Some(Source::Pen) {
+                if !event.in_contact {
+                    self.waiting_for_lift = None;
+                }
+            } else if pen_is_painting {
                 if event.in_contact {
                     if let Some(active) = &mut self.stroke {
                         active.add(document, point);
@@ -238,18 +340,13 @@ impl PaintTool {
                 } else {
                     self.finish_picking();
                 }
-            } else if self.stroke.is_none()
-                && self.picking.is_none()
-                && event.in_contact
-                && !navigating
-                && on_canvas(pos)
-            {
+            } else if self.is_free() && event.in_contact && !navigating && on_canvas(pos) {
                 // The pen touched the canvas: pick a colour, or start painting.
                 if self.tool == Tool::Eyedropper || alt_held || event.barrel_button {
                     self.picking = Some(Source::Pen);
                     self.pick(document, point);
                 } else {
-                    self.start_stroke(Source::Pen, view, document, point);
+                    self.press(Source::Pen, view, document, history, point);
                 }
             }
         }
@@ -259,6 +356,8 @@ impl PaintTool {
             .last_ink_event
             .is_some_and(|time| now - time < INK_TAKES_PRIORITY_FOR);
         let pen_is_busy = matches!(&self.stroke, Some(active) if active.source == Source::Pen)
+            || matches!(&self.gradient_drag, Some(drag) if drag.source == Source::Pen)
+            || self.waiting_for_lift == Some(Source::Pen)
             || self.picking == Some(Source::Pen);
         if ink_is_recent || pen_is_busy {
             return;
@@ -273,19 +372,21 @@ impl PaintTool {
                     pressed: true,
                     ..
                 } => {
-                    let free = self.stroke.is_none() && self.picking.is_none();
-                    if free && !navigating && on_canvas(pos) {
+                    if self.is_free() && !navigating && on_canvas(pos) {
+                        let point = to_canvas(pos, 1.0);
                         if self.tool == Tool::Eyedropper || alt_held {
                             self.picking = Some(Source::Mouse);
-                            self.pick(document, to_canvas(pos, 1.0));
+                            self.pick(document, point);
                         } else {
-                            self.start_stroke(Source::Mouse, view, document, to_canvas(pos, 1.0));
+                            self.press(Source::Mouse, view, document, history, point);
                         }
                     }
                 }
                 egui::Event::PointerMoved(pos) => {
                     if let Some(active) = &mut self.stroke {
                         active.add(document, to_canvas(pos, 1.0));
+                    } else if self.gradient_drag.is_some() {
+                        self.drag_gradient_to(to_canvas(pos, 1.0), shift_held);
                     } else if self.picking.is_some() {
                         self.pick(document, to_canvas(pos, 1.0));
                     }
@@ -296,16 +397,149 @@ impl PaintTool {
                     ..
                 }
                 | egui::Event::PointerGone => {
-                    self.finish_stroke(document, history);
-                    self.finish_picking();
+                    self.release_mouse(document, history);
                 }
                 _ => {}
             }
         }
         // In case the button was let go outside the window.
         if !primary_down {
-            self.finish_stroke(document, history);
-            self.finish_picking();
+            self.release_mouse(document, history);
+        }
+    }
+
+    /// Nothing is going on: a new press can start something.
+    fn is_free(&self) -> bool {
+        self.stroke.is_none()
+            && self.gradient_drag.is_none()
+            && self.picking.is_none()
+            && self.waiting_for_lift.is_none()
+    }
+
+    /// The mouse button was let go: finish whatever it was doing.
+    fn release_mouse(&mut self, document: &mut Document, history: &mut History) {
+        self.finish_stroke(document, history);
+        self.finish_gradient(document, history);
+        self.finish_picking();
+        if self.waiting_for_lift == Some(Source::Mouse) {
+            self.waiting_for_lift = None;
+        }
+    }
+
+    /// The pen or mouse button went down on the canvas: start the
+    /// selected tool there.
+    fn press(
+        &mut self,
+        source: Source,
+        view: &View,
+        document: &mut Document,
+        history: &mut History,
+        point: StrokePoint,
+    ) {
+        // You can't see what you paint on a hidden layer, so don't.
+        if !document.active_layer().visible() {
+            self.hidden_layer_attempt = Some(Instant::now());
+            self.waiting_for_lift = Some(source);
+            return;
+        }
+        match self.tool {
+            Tool::Fill => {
+                self.fill_at(document, history, point);
+                self.waiting_for_lift = Some(source);
+            }
+            Tool::Gradient => {
+                let at = Point::new(point.x, point.y);
+                self.gradient_drag = Some(GradientDrag {
+                    source,
+                    start: at,
+                    end: at,
+                });
+            }
+            _ => self.start_stroke(source, view, document, point),
+        }
+    }
+
+    /// The paint bucket: fills around `point` with the brush colour.
+    fn fill_at(&mut self, document: &mut Document, history: &mut History, point: StrokePoint) {
+        let settings = &self.fill;
+        let fill = FloodFill {
+            x: point.x,
+            y: point.y,
+            tolerance: settings.tolerance,
+            sample: if settings.all_layers {
+                SampleFrom::Visible
+            } else {
+                SampleFrom::Layer
+            },
+            expand: settings.grow,
+        };
+        let [r, g, b] = self.brush.color;
+        let layer = document.active_id();
+        let tiles_before = flood_fill(
+            document,
+            layer,
+            &fill,
+            &Paint::Color([r, g, b, 255]),
+            settings.opacity,
+        );
+        if !tiles_before.is_empty() {
+            history.push(Box::new(TileCommand::new("Fill", layer, tiles_before)));
+            self.remember_color(self.brush.color);
+        }
+    }
+
+    /// Moves the end of the gradient being dragged. With Shift held, its
+    /// angle snaps to steps of 15°, for straight horizontal or vertical
+    /// gradients.
+    fn drag_gradient_to(&mut self, point: StrokePoint, snap: bool) {
+        let Some(drag) = &mut self.gradient_drag else {
+            return;
+        };
+        let mut end = Point::new(point.x, point.y);
+        if snap {
+            let offset = end - drag.start;
+            let length = offset.x.hypot(offset.y);
+            let step = GRADIENT_ANGLE_STEP_DEGREES.to_radians();
+            let angle = (offset.y.atan2(offset.x) / step).round() * step;
+            end = drag.start + Point::new(angle.cos() * length, angle.sin() * length);
+        }
+        drag.end = end;
+    }
+
+    /// The gradient was let go: paint it on the selected layer.
+    fn finish_gradient(&mut self, document: &mut Document, history: &mut History) {
+        let Some(drag) = self.gradient_drag.take() else {
+            return;
+        };
+        let offset = drag.end - drag.start;
+        if offset.x.hypot(offset.y) < 1.0 {
+            return; // a click without dragging: no direction to go in
+        }
+        let settings = &self.gradient;
+        let [r, g, b] = self.brush.color;
+        let end = match settings.end {
+            GradientEnd::Transparent => [r, g, b, 0],
+            GradientEnd::SecondColor => {
+                let [r, g, b] = settings.second_color;
+                [r, g, b, 255]
+            }
+        };
+        let gradient = Gradient::new(
+            settings.shape,
+            (drag.start.x, drag.start.y),
+            (drag.end.x, drag.end.y),
+            &[[r, g, b, 255], end],
+        );
+        let layer = document.active_id();
+        let tiles_before = fill::fill_layer(
+            document,
+            layer,
+            &Paint::Gradient(gradient),
+            settings.opacity,
+        );
+        if !tiles_before.is_empty() {
+            history.push(Box::new(TileCommand::new("Gradient", layer, tiles_before)));
+            self.remember_color(self.brush.color);
         }
     }
 
@@ -355,11 +589,6 @@ impl PaintTool {
         document: &mut Document,
         point: StrokePoint,
     ) {
-        // You can't see what you paint on a hidden layer, so don't.
-        if !document.active_layer().visible() {
-            self.hidden_layer_attempt = Some(Instant::now());
-            return;
-        }
         let string_length = self.smoothing * LONGEST_SMOOTHING_STRING / view.zoom();
         let settings = *self.settings();
         if settings.mode == BrushMode::Paint {
@@ -400,8 +629,9 @@ impl PaintTool {
             .is_some_and(|time| time.elapsed() < NOTICE_SHOWS_FOR)
     }
 
-    /// True while a stroke is being painted (undo waits until it's done).
+    /// True while a stroke is being painted or a gradient dragged (undo
+    /// waits until it's done).
     pub fn is_painting(&self) -> bool {
-        self.stroke.is_some()
+        self.stroke.is_some() || self.gradient_drag.is_some()
     }
 }

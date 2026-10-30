@@ -185,12 +185,25 @@ impl CanvasView {
                 let on_canvas = self.view.screen_to_canvas(to_point(position));
                 let colour = document.sample_color(on_canvas.x, on_canvas.y);
                 draw_eyedropper(&painter, position, colour);
+            } else if self.tools.uses_crosshair() {
+                draw_brush_outline(&painter, position, 0.0); // a small cross
             } else {
                 let radius = self.tools.settings().size / 2.0 * self.view.zoom();
                 draw_brush_outline(&painter, position, radius);
             }
             if !navigating {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
+            }
+        }
+
+        // The gradient being dragged out: a line from start to end.
+        if let Some((start, end)) = self.tools.gradient_line() {
+            let start = to_pos2(self.view.canvas_to_screen(start));
+            let end = to_pos2(self.view.canvas_to_screen(end));
+            for (width, color) in [(4.0, Color32::from_black_alpha(150)), (1.5, Color32::WHITE)] {
+                painter.line_segment([start, end], Stroke::new(width, color));
+                painter.circle_stroke(start, 5.0, Stroke::new(width, color));
+                painter.circle_stroke(end, 5.0, Stroke::new(width, color));
             }
         }
 
@@ -355,6 +368,12 @@ impl CanvasView {
             }
             if presses(Key::I) > 0 {
                 self.tools.tool = Tool::Eyedropper;
+            }
+            if presses(Key::F) > 0 {
+                self.tools.tool = Tool::Fill;
+            }
+            if presses(Key::G) > 0 {
+                self.tools.tool = Tool::Gradient;
             }
         }
 

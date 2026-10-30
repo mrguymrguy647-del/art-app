@@ -106,6 +106,11 @@ impl<P: Pixel> Tile<P> {
         &self.pixels
     }
 
+    /// All pixels, row by row, for changing many at once.
+    pub fn pixels_mut(&mut self) -> &mut [P] {
+        &mut self.pixels
+    }
+
     /// True if every pixel is fully transparent (nothing painted).
     pub fn is_transparent(&self) -> bool {
         self.pixels.iter().all(|&pixel| pixel == P::TRANSPARENT)

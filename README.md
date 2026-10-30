@@ -2,7 +2,7 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1 is complete. Paint and erase with a round brush (pen pressure changes size
+**Status:** Phase 1 is complete, plus a paint bucket and gradients. Paint and erase with a round brush (pen pressure changes size
 and opacity) on layers, pick colours from a colour wheel or the canvas, undo and redo, zoom, pan
 and rotate the canvas, and save, open and export your pictures. The pen test is under
 **Pen test** in the top bar.
@@ -43,6 +43,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
 | Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
 | Choose a colour | Colour wheel (ring = hue, square = how vivid / bright), type a hex code like `#FF8800`, or click a recent colour | Same, by tapping |
+| Fill an area (paint bucket) | `F` or the **Fill** button, then click inside the area. **Tolerance** decides how different a colour may be and still be filled; **Grow** tucks the fill under the soft edges of lines; it can stop at lines on all visible layers or only this one | Tap |
+| Gradient | `G` or the **Gradient** button, then drag from where it starts to where it ends (hold `Shift` for straight angles). **Straight** or **Round**, from the colour to transparent or to a second colour. It covers the whole layer, so use a new layer | Drag |
 | Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
 | Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, double-click a name to rename | Same, by tapping |
@@ -81,6 +83,7 @@ art-app/
     │       ├── view.rs       zoom / pan / rotate maths
     │       ├── brush.rs      brush settings, dab shape
     │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
+    │       ├── fill.rs       paint bucket, gradients, filling any area
     │       ├── smoothing.rs  steadier lines
     │       ├── history.rs    undo / redo
     │       ├── file.rs       saving and opening .artapp files, PNG export
@@ -93,8 +96,8 @@ art-app/
             ├── main.rs        starts the app, top bar, switches screens
             ├── files.rs       File menu: new, open, save, export, "Save changes?"
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
-            ├── paint_tool.rs  brush and eraser: pen/mouse input into strokes
-            ├── brush_panel.rs the tool panel (brush, eraser, pick, settings)
+            ├── paint_tool.rs  the tools: pen/mouse input into strokes, fills, gradients
+            ├── brush_panel.rs the tool panel (tools, colour, settings)
             ├── color_panel.rs colour wheel, hex code, recent colours
             ├── layers_panel.rs the Layers panel
             ├── pen_input.rs   reads pressure/tilt from Windows Ink
