@@ -183,11 +183,31 @@ impl<P: Pixel> Surface<P> {
         Some(*tile)
     }
 
+    /// Puts `tile` at `coord` (or, if `tile` is `None`, makes that area
+    /// empty), and returns the tile that was there. Used by undo and redo.
+    pub fn replace_tile(&mut self, coord: TileCoord, tile: Option<Tile<P>>) -> Option<Tile<P>> {
+        self.dirty.insert(coord);
+        let old = match tile {
+            Some(tile) => self.tiles.insert(coord, Box::new(tile)),
+            None => self.tiles.remove(&coord),
+        };
+        old.map(|tile| *tile)
+    }
+
     /// Removes every tile: the whole surface becomes transparent again.
-    pub fn clear(&mut self) {
+    /// Returns the removed tiles (so clearing can be undone).
+    pub fn clear(&mut self) -> HashMap<TileCoord, Tile<P>> {
         // The removed tiles count as changed, so the screen updates.
         self.dirty.extend(self.tiles.keys().copied());
-        self.tiles.clear();
+        self.tiles
+            .drain()
+            .map(|(coord, tile)| (coord, *tile))
+            .collect()
+    }
+
+    /// All the tiles that exist, in no particular order.
+    pub fn tiles(&self) -> impl Iterator<Item = (TileCoord, &Tile<P>)> {
+        self.tiles.iter().map(|(&coord, tile)| (coord, &**tile))
     }
 
     /// How many tiles exist (are using memory).
@@ -295,10 +315,28 @@ mod tests {
         surface.set_pixel(1000, 0, RED);
         surface.take_dirty_tiles();
 
-        surface.clear();
+        let removed = surface.clear();
+        assert_eq!(removed.len(), 2);
         assert_eq!(surface.tile_count(), 0);
         assert_eq!(surface.pixel(0, 0), Rgba8::TRANSPARENT);
         assert_eq!(surface.take_dirty_tiles().len(), 2);
+    }
+
+    #[test]
+    fn replace_tile_swaps_tiles_in_and_out() {
+        let mut surface: Surface = Surface::new();
+        let coord = TileCoord::new(0, 0);
+        let mut red_tile = Tile::new();
+        red_tile.set_pixel(0, 0, RED);
+
+        // Put a tile where there was none.
+        assert!(surface.replace_tile(coord, Some(red_tile)).is_none());
+        assert_eq!(surface.pixel(0, 0), RED);
+        // Take it out again: we get it back, and the area is empty.
+        let back = surface.replace_tile(coord, None).expect("the red tile");
+        assert_eq!(back.pixel(0, 0), RED);
+        assert_eq!(surface.tile_count(), 0);
+        assert_eq!(surface.take_dirty_tiles(), vec![coord]);
     }
 
     #[test]

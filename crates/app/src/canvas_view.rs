@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::document::Document;
+use art_engine::history::{History, TileCommand};
 use art_engine::surface::{PixelRect, TileCoord};
 use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
 use art_engine::view::{Point, View};
@@ -24,7 +25,7 @@ use eframe::egui::{
 };
 
 use crate::brush_panel::brush_panel;
-use crate::paint_tool::{PaintTool, Tool};
+use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
@@ -89,25 +90,41 @@ impl Default for CanvasView {
 }
 
 impl CanvasView {
-    /// Shows the canvas with its panels. `ink_events` are the pen/touch
-    /// events since the last frame.
-    pub fn ui(&mut self, ui: &mut egui::Ui, document: &mut Document, ink_events: Vec<InkEvent>) {
-        egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui, document));
+    /// Shows the canvas with its panels. Changes are recorded in
+    /// `history`. `ink_events` are the pen/touch events since the last frame.
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &mut Document,
+        history: &mut History,
+        ink_events: Vec<InkEvent>,
+    ) {
+        egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui, document, history));
         egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
                 let actions = brush_panel(ui, &mut self.tools);
                 if actions.clear_canvas {
-                    document.clear();
+                    let tiles_before = document.clear();
+                    if !tiles_before.is_empty() {
+                        history.push(Box::new(TileCommand::new("Clear canvas", tiles_before)));
+                    }
                 }
             });
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas_area(ui, document, ink_events));
+        egui::CentralPanel::no_frame()
+            .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
+    }
+
+    /// True while a stroke is being painted.
+    pub fn is_painting(&self) -> bool {
+        self.tools.is_painting()
     }
 
     fn canvas_area(
         &mut self,
         ui: &mut egui::Ui,
         document: &mut Document,
+        history: &mut History,
         ink_events: Vec<InkEvent>,
     ) {
         let rect = ui.max_rect();
@@ -118,8 +135,13 @@ impl CanvasView {
             self.needs_fit = false;
         }
         let navigating = self.handle_input(ui, &response, rect, document);
+        let placement = CanvasPlacement {
+            rect,
+            view: &self.view,
+            navigating,
+        };
         self.tools
-            .handle_input(ui, rect, &self.view, document, ink_events, navigating);
+            .handle_input(ui, placement, document, history, ink_events);
 
         let visible = self.visible_tiles(document, rect);
         self.update_textures(ui.ctx(), document, &visible);
@@ -467,7 +489,7 @@ impl CanvasView {
         }
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui, document: &Document) {
+    fn status_bar(&self, ui: &mut egui::Ui, document: &Document, history: &History) {
         ui.horizontal(|ui| {
             // 100% = one canvas pixel per real screen pixel.
             let percent = self.view.zoom() * ui.ctx().pixels_per_point() * 100.0;
@@ -484,6 +506,9 @@ impl CanvasView {
             ui.label(format!("Canvas {} × {}", document.width(), document.height()));
             ui.separator();
             ui.label(format!("Tiles in memory: {}", document.layer.tile_count()));
+            ui.separator();
+            let megabytes = history.memory_used() as f64 / (1024.0 * 1024.0);
+            ui.label(format!("Undo steps: {} ({megabytes:.0} MB)", history.undo_steps()));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak("Wheel: zoom · Space+drag: pan · Shift+Space+drag: rotate · [ ]: brush size · 0: fit");

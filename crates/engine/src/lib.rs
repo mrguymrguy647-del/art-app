@@ -6,6 +6,7 @@
 
 pub mod brush;
 pub mod document;
+pub mod history;
 pub mod pen;
 pub mod smoothing;
 pub mod stroke;

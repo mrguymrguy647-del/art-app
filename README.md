@@ -2,8 +2,9 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1, Step 4: paint and erase with a round brush (pen pressure changes size and
-opacity), on a canvas you can zoom, pan and rotate. The pen test is under **Pen test** in the top bar.
+**Status:** Phase 1, Step 5: paint and erase with a round brush (pen pressure changes size and
+opacity), undo and redo, on a canvas you can zoom, pan and rotate. The pen test is under **Pen test**
+in the top bar.
 
 ## Run it on Windows (no terminal needed)
 
@@ -38,6 +39,7 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
 | Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
+| Undo / redo | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`), or the **Undo** / **Redo** buttons | Tap the buttons |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
 | Pan (move) | Hold **Space** and drag, or drag with the middle mouse button | Two-finger drag (touchscreen) |
 | Rotate | Hold **Shift + Space** and drag, or `4` / `6` (15° steps) | Two-finger twist (touchscreen) |
@@ -66,6 +68,7 @@ art-app/
     │       ├── brush.rs      brush settings, dab shape
     │       ├── stroke.rs     paints or erases a stroke: dabs, no gaps, opacity
     │       ├── smoothing.rs  steadier lines
+    │       ├── history.rs    undo / redo
     │       └── pen.rs        pen samples + tilt maths
     └── app/              the program: window and interface (egui)
         ├── build.rs      puts the icon into ArtApp.exe

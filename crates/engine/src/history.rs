@@ -1,0 +1,389 @@
+//! Undo and redo.
+//!
+//! Every change to the picture is recorded as a **command**: a small object
+//! that knows how to undo itself and redo itself (the "command pattern").
+//! The history keeps two lists: commands you can undo, and commands you
+//! have undone and can redo.
+//!
+//! Painting, erasing and clearing all change tiles, so they share one
+//! command type, [`TileCommand`], which only keeps the tiles that changed.
+//! Later steps add more command types (e.g. adding or deleting a layer).
+
+use std::collections::VecDeque;
+
+use crate::document::Document;
+use crate::stroke::TilesBefore;
+use crate::surface::TileCoord;
+use crate::tile::{TILE_PIXELS, Tile};
+
+/// How much memory the history may use by default: 1 GB.
+pub const DEFAULT_MEMORY_LIMIT: usize = 1024 * 1024 * 1024;
+
+/// Memory used by one tile's pixels (4 bytes per pixel).
+const TILE_BYTES: usize = TILE_PIXELS * 4;
+
+/// A change that can be undone and redone.
+pub trait Command {
+    /// A short name for the change, e.g. "Brush stroke".
+    fn name(&self) -> &str;
+
+    /// Puts the document back to how it was before this change.
+    fn undo(&mut self, document: &mut Document);
+
+    /// Makes this change again, after it was undone.
+    fn redo(&mut self, document: &mut Document);
+
+    /// Roughly how much memory this command is keeping, in bytes.
+    fn memory_size(&self) -> usize;
+}
+
+/// A change to some of the layer's tiles: a stroke, erasing, clearing.
+///
+/// It keeps the *other* version of each changed tile: right after the
+/// change that is the old version (for undo). Undoing swaps it with the
+/// tile on the canvas, so it then holds the new version (for redo), and so
+/// on. Each changed tile is only stored once.
+pub struct TileCommand {
+    name: String,
+    tiles: Vec<(TileCoord, Option<Tile>)>,
+}
+
+impl TileCommand {
+    /// Makes a command for a change that has just been made, from the tiles
+    /// as they were before it (e.g. from `Stroke::finish`).
+    pub fn new(name: impl Into<String>, tiles_before: TilesBefore) -> Self {
+        Self {
+            name: name.into(),
+            tiles: tiles_before.into_iter().collect(),
+        }
+    }
+
+    /// Swaps the stored tiles with the ones on the canvas.
+    fn swap(&mut self, document: &mut Document) {
+        for (coord, stored) in &mut self.tiles {
+            *stored = document.layer.replace_tile(*coord, stored.take());
+        }
+    }
+}
+
+impl Command for TileCommand {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn undo(&mut self, document: &mut Document) {
+        self.swap(document);
+    }
+
+    fn redo(&mut self, document: &mut Document) {
+        self.swap(document);
+    }
+
+    fn memory_size(&self) -> usize {
+        let stored = self.tiles.iter().filter(|(_, tile)| tile.is_some()).count();
+        stored * TILE_BYTES
+    }
+}
+
+/// The undo and redo lists.
+pub struct History {
+    /// Oldest first, newest last.
+    undo: VecDeque<Box<dyn Command>>,
+    /// The most recently undone command is last.
+    redo: Vec<Box<dyn Command>>,
+    memory_limit: usize,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self::new(DEFAULT_MEMORY_LIMIT)
+    }
+}
+
+impl History {
+    /// An empty history that keeps at most `memory_limit` bytes.
+    pub fn new(memory_limit: usize) -> Self {
+        Self {
+            undo: VecDeque::new(),
+            redo: Vec::new(),
+            memory_limit,
+        }
+    }
+
+    /// Records a change that has just been made to the document.
+    pub fn push(&mut self, command: Box<dyn Command>) {
+        // After a new change, the undone changes can't be redone any more.
+        self.redo.clear();
+        self.undo.push_back(command);
+
+        // Too much memory? Forget the oldest changes, but always keep the
+        // newest one, however big it is.
+        while self.memory_used() > self.memory_limit && self.undo.len() > 1 {
+            self.undo.pop_front();
+        }
+    }
+
+    /// Undoes the newest change. Returns false if there was nothing to undo.
+    pub fn undo(&mut self, document: &mut Document) -> bool {
+        let Some(mut command) = self.undo.pop_back() else {
+            return false;
+        };
+        command.undo(document);
+        self.redo.push(command);
+        true
+    }
+
+    /// Redoes the most recently undone change. Returns false if there was
+    /// nothing to redo.
+    pub fn redo(&mut self, document: &mut Document) -> bool {
+        let Some(mut command) = self.redo.pop() else {
+            return false;
+        };
+        command.redo(document);
+        self.undo.push_back(command);
+        true
+    }
+
+    /// The name of what Undo would undo, if anything.
+    pub fn undo_name(&self) -> Option<&str> {
+        self.undo.back().map(|command| command.name())
+    }
+
+    /// The name of what Redo would redo, if anything.
+    pub fn redo_name(&self) -> Option<&str> {
+        self.redo.last().map(|command| command.name())
+    }
+
+    /// How many changes can be undone.
+    pub fn undo_steps(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Memory used by all remembered changes, in bytes.
+    pub fn memory_used(&self) -> usize {
+        self.undo
+            .iter()
+            .map(|command| command.memory_size())
+            .chain(self.redo.iter().map(|command| command.memory_size()))
+            .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::brush::{BrushMode, BrushSettings};
+    use crate::stroke::{Stroke, StrokePoint};
+    use crate::tile::Rgba8;
+
+    /// Everything on the layer, for comparing "before" and "after".
+    fn picture(document: &Document) -> BTreeMap<TileCoord, Tile> {
+        document
+            .layer
+            .tiles()
+            .map(|(coord, tile)| (coord, tile.clone()))
+            .collect()
+    }
+
+    /// Paints (or erases) a line from (x1, y) to (x2, y) with a brush of the
+    /// given size, and records it in the history.
+    fn paint_line(
+        document: &mut Document,
+        history: &mut History,
+        mode: BrushMode,
+        size: f32,
+        x1: f32,
+        x2: f32,
+        y: f32,
+    ) {
+        let brush = BrushSettings {
+            mode,
+            size,
+            pressure_size: false,
+            pressure_opacity: false,
+            ..BrushSettings::default()
+        };
+        let mut stroke = Stroke::new(brush, document.bounds());
+        stroke.add_point(&mut document.layer, StrokePoint::new(x1, y, 1.0));
+        stroke.add_point(&mut document.layer, StrokePoint::new(x2, y, 1.0));
+        let before = stroke.finish(&mut document.layer);
+        history.push(Box::new(TileCommand::new("Brush stroke", before)));
+    }
+
+    #[test]
+    fn undo_brings_back_the_exact_picture_and_redo_repeats_the_change() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            900.0,
+            100.0,
+        );
+        let first = picture(&document);
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            900.0,
+            120.0,
+        );
+        let second = picture(&document);
+
+        assert!(history.undo(&mut document));
+        assert_eq!(picture(&document), first);
+        assert!(history.undo(&mut document));
+        assert_eq!(document.layer.tile_count(), 0, "back to a blank canvas");
+
+        assert!(history.redo(&mut document));
+        assert_eq!(picture(&document), first);
+        assert!(history.redo(&mut document));
+        assert_eq!(picture(&document), second);
+    }
+
+    #[test]
+    fn nothing_to_undo_or_redo_does_nothing() {
+        let mut document = Document::new(100, 100);
+        let mut history = History::default();
+        assert!(!history.undo(&mut document));
+        assert!(!history.redo(&mut document));
+        assert_eq!(history.undo_name(), None);
+    }
+
+    #[test]
+    fn a_new_change_after_undo_clears_redo() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            100.0,
+        );
+        history.undo(&mut document);
+        assert_eq!(history.redo_name(), Some("Brush stroke"));
+
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            300.0,
+            500.0,
+        );
+        assert_eq!(history.redo_name(), None);
+        assert!(!history.redo(&mut document));
+    }
+
+    #[test]
+    fn undoing_the_eraser_brings_back_erased_tiles() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            300.0,
+            400.0,
+            50.0,
+        );
+        let painted = picture(&document);
+
+        // Erase the whole line: its tile is removed.
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Erase,
+            80.0,
+            250.0,
+            450.0,
+            50.0,
+        );
+        assert_eq!(document.layer.tile_count(), 0);
+
+        history.undo(&mut document);
+        assert_eq!(picture(&document), painted);
+    }
+
+    #[test]
+    fn clearing_the_canvas_can_be_undone() {
+        let mut document = Document::new(2000, 1000);
+        let mut history = History::default();
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            100.0,
+            1500.0,
+            300.0,
+        );
+        let painted = picture(&document);
+
+        let before = document.clear();
+        history.push(Box::new(TileCommand::new("Clear canvas", before)));
+        assert_eq!(document.layer.tile_count(), 0);
+
+        history.undo(&mut document);
+        assert_eq!(picture(&document), painted);
+        assert_eq!(history.redo_name(), Some("Clear canvas"));
+    }
+
+    #[test]
+    fn each_changed_tile_is_stored_once() {
+        let mut document = Document::new(2000, 1000);
+        document.layer.set_pixel(10, 10, Rgba8::BLACK); // tile (0, 0) exists
+        let mut history = History::default();
+        // A line across tiles (0, 0) and (1, 0); only (0, 0) existed before.
+        paint_line(
+            &mut document,
+            &mut history,
+            BrushMode::Paint,
+            20.0,
+            50.0,
+            400.0,
+            50.0,
+        );
+        assert_eq!(history.memory_used(), TILE_BYTES);
+
+        // After undo, the command holds the new versions of both tiles.
+        history.undo(&mut document);
+        assert_eq!(history.memory_used(), 2 * TILE_BYTES);
+    }
+
+    #[test]
+    fn the_oldest_changes_are_forgotten_when_memory_runs_out() {
+        let mut document = Document::new(4000, 1000);
+        // Room for about three tiles' worth of history.
+        let mut history = History::new(3 * TILE_BYTES);
+        // Each line paints over existing tiles, so each stores 1-2 tiles.
+        document.layer.set_pixel(0, 0, Rgba8::BLACK);
+        for i in 0..6 {
+            let y = 20.0 + i as f32 * 30.0;
+            paint_line(
+                &mut document,
+                &mut history,
+                BrushMode::Paint,
+                20.0,
+                10.0,
+                100.0,
+                y,
+            );
+        }
+        assert!(history.memory_used() <= 3 * TILE_BYTES);
+        assert!(history.undo_steps() < 6, "some old steps were dropped");
+        assert!(history.undo_steps() >= 1, "the newest step is always kept");
+    }
+}

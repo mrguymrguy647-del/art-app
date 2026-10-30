@@ -10,8 +10,9 @@
 
 use std::time::{Duration, Instant};
 
-use art_engine::brush::BrushSettings;
+use art_engine::brush::{BrushMode, BrushSettings};
 use art_engine::document::Document;
+use art_engine::history::{History, TileCommand};
 use art_engine::pen::InputKind;
 use art_engine::smoothing::Smoother;
 use art_engine::stroke::{Stroke, StrokePoint};
@@ -41,8 +42,20 @@ enum Source {
     Mouse,
 }
 
+/// Where the canvas is on screen, and what the user is doing with it.
+pub struct CanvasPlacement<'a> {
+    /// The canvas area on screen.
+    pub rect: Rect,
+    /// How the canvas is zoomed, panned and rotated.
+    pub view: &'a View,
+    /// The user is panning or rotating, so no new stroke should start.
+    pub navigating: bool,
+}
+
 /// A stroke in progress.
 struct ActiveStroke {
+    /// What undo calls this stroke, e.g. "Brush stroke".
+    name: &'static str,
     stroke: Stroke,
     smoother: Smoother,
     source: Source,
@@ -58,14 +71,17 @@ impl ActiveStroke {
         }
     }
 
-    fn finish(mut self, document: &mut Document) {
+    fn finish(mut self, document: &mut Document, history: &mut History) {
         // Draw the last bit, so the line ends where the pen was lifted.
         if let Some(last) = self.smoother.finish(self.last_point) {
             self.stroke.add_point(&mut document.layer, last);
         }
-        // The tiles as they were before this stroke. Undo (Step 5) will
-        // keep these; for now we let them go.
-        let _tiles_before = self.stroke.finish(&mut document.layer);
+        // Record the change so it can be undone (unless nothing changed,
+        // e.g. erasing an empty area).
+        let tiles_before = self.stroke.finish(&mut document.layer);
+        if !tiles_before.is_empty() {
+            history.push(Box::new(TileCommand::new(self.name, tiles_before)));
+        }
     }
 }
 
@@ -117,19 +133,21 @@ impl PaintTool {
         }
     }
 
-    /// Reads this frame's pen and mouse input and paints.
-    ///
-    /// `rect` is the canvas area on screen. `navigating` means the user is
-    /// panning or rotating, so no new stroke should start.
+    /// Reads this frame's pen and mouse input and paints. Finished strokes
+    /// are recorded in `history`.
     pub fn handle_input(
         &mut self,
         ui: &egui::Ui,
-        rect: Rect,
-        view: &View,
+        placement: CanvasPlacement,
         document: &mut Document,
+        history: &mut History,
         ink_events: Vec<InkEvent>,
-        navigating: bool,
     ) {
+        let CanvasPlacement {
+            rect,
+            view,
+            navigating,
+        } = placement;
         let ctx = ui.ctx();
         let now = Instant::now();
         let points_per_pixel = 1.0 / ctx.pixels_per_point();
@@ -163,7 +181,7 @@ impl PaintTool {
                     if event.in_contact {
                         active.add(document, point);
                     } else {
-                        self.finish_stroke(document); // the pen was lifted
+                        self.finish_stroke(document, history); // the pen was lifted
                     }
                 }
                 None if event.in_contact && !navigating && on_canvas(pos) => {
@@ -205,13 +223,13 @@ impl PaintTool {
                     pressed: false,
                     ..
                 }
-                | egui::Event::PointerGone => self.finish_stroke(document),
+                | egui::Event::PointerGone => self.finish_stroke(document, history),
                 _ => {}
             }
         }
         // In case the button was let go outside the window.
         if !primary_down {
-            self.finish_stroke(document);
+            self.finish_stroke(document, history);
         }
     }
 
@@ -247,8 +265,13 @@ impl PaintTool {
         point: StrokePoint,
     ) {
         let string_length = self.smoothing * LONGEST_SMOOTHING_STRING / view.zoom();
+        let settings = *self.settings();
         let mut active = ActiveStroke {
-            stroke: Stroke::new(*self.settings(), document.bounds()),
+            name: match settings.mode {
+                BrushMode::Paint => "Brush stroke",
+                BrushMode::Erase => "Eraser stroke",
+            },
+            stroke: Stroke::new(settings, document.bounds()),
             smoother: Smoother::new(string_length),
             source,
             last_point: point,
@@ -257,9 +280,14 @@ impl PaintTool {
         self.stroke = Some(active);
     }
 
-    fn finish_stroke(&mut self, document: &mut Document) {
+    fn finish_stroke(&mut self, document: &mut Document, history: &mut History) {
         if let Some(active) = self.stroke.take() {
-            active.finish(document);
+            active.finish(document, history);
         }
+    }
+
+    /// True while a stroke is being painted (undo waits until it's done).
+    pub fn is_painting(&self) -> bool {
+        self.stroke.is_some()
     }
 }

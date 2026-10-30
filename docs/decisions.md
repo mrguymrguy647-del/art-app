@@ -121,3 +121,22 @@ switching between brush and eraser doesn't lose your brush size. Turning
 the pen round to its eraser end switches to the eraser automatically, and
 turning it back returns to the tool you had. When a stroke leaves a tile
 completely empty, the tile is removed to free its memory.
+
+## 18. Undo and redo use "commands"
+Every change is recorded as a *command*: a small object that knows how to
+undo and redo itself (the "command pattern"). Painting, erasing and
+clearing all change tiles, so they share one command type that keeps
+only the tiles that changed, never the whole picture. Later steps add
+their own command types (adding or deleting a layer, for example) to the
+same history.
+
+A tile command keeps the *other* version of each changed tile. Right
+after a stroke that's the old version. Undo swaps it with the tile on the
+canvas, so the command then holds the new version, ready for redo. Each
+changed tile is stored only once, which halves the memory compared with
+keeping both versions. Painting on empty canvas costs almost nothing to
+remember, because the old version of an empty tile is just "no tile".
+
+The history keeps up to 1 GB of changes and forgets the oldest when it's
+full. The status bar shows how many steps it holds and how much memory
+they use. Undo waits until you finish the stroke you're painting.

@@ -1,5 +1,6 @@
 //! A document: one picture you are working on.
 
+use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE};
 
@@ -56,9 +57,14 @@ impl Document {
         (0..columns as i32).contains(&coord.x) && (0..rows as i32).contains(&coord.y)
     }
 
-    /// Wipes the picture (back to blank paper).
-    pub fn clear(&mut self) {
-        self.layer.clear();
+    /// Wipes the picture (back to blank paper). Returns the tiles as they
+    /// were, so clearing can be undone.
+    pub fn clear(&mut self) -> TilesBefore {
+        self.layer
+            .clear()
+            .into_iter()
+            .map(|(coord, tile)| (coord, Some(tile)))
+            .collect()
     }
 }
 
@@ -97,7 +103,8 @@ mod tests {
     fn clear_wipes_the_picture() {
         let mut doc = Document::new(100, 100);
         doc.layer.set_pixel(10, 10, Rgba8::BLACK);
-        doc.clear();
+        let before = doc.clear();
         assert_eq!(doc.layer.tile_count(), 0);
+        assert_eq!(before.len(), 1);
     }
 }

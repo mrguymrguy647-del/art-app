@@ -63,7 +63,7 @@ pub fn brush_panel(ui: &mut egui::Ui, tools: &mut PaintTool) -> PanelActions {
     ui.add(percent_slider(&mut tools.smoothing, 0.0..=1.0, "Smoothing"));
 
     ui.separator();
-    // Until undo arrives (Step 5), this is the way to start over.
+    // Clearing can be undone like any other change.
     if ui.button("Clear canvas").clicked() {
         actions.clear_canvas = true;
     }

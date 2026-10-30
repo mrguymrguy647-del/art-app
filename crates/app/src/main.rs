@@ -13,7 +13,8 @@ mod pen_input;
 mod pen_test;
 
 use art_engine::document::Document;
-use eframe::egui;
+use art_engine::history::History;
+use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};
 
 use canvas_view::CanvasView;
 use pen_input::PenInput;
@@ -61,6 +62,8 @@ enum Screen {
 struct ArtApp {
     pen_input: PenInput,
     document: Document,
+    /// Undo and redo.
+    history: History,
     canvas: CanvasView,
     pen_test: PenTestScreen,
     screen: Screen,
@@ -72,10 +75,29 @@ impl ArtApp {
             pen_input,
             // A blank 4000 x 3000 canvas. "New document" comes with saving (Step 8).
             document: Document::new(4000, 3000),
+            history: History::default(),
             canvas: CanvasView::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
         }
+    }
+
+    /// Checks the keyboard for Ctrl+Z (undo) and Ctrl+Y or Ctrl+Shift+Z
+    /// (redo). Returns (undo, redo).
+    fn undo_redo_shortcuts(&self, ctx: &egui::Context) -> (bool, bool) {
+        if ctx.egui_wants_keyboard_input() {
+            return (false, false); // typing in a text box: Ctrl+Z is for the text
+        }
+        ctx.input_mut(|i| {
+            // egui ignores an extra Shift when matching, so check
+            // Ctrl+Shift+Z first, or it would count as Ctrl+Z.
+            let redo = i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::Z,
+            )) | i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Y));
+            let undo = i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z));
+            (undo, redo)
+        })
     }
 }
 
@@ -84,17 +106,55 @@ impl eframe::App for ArtApp {
         // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
 
+        let (mut undo, mut redo) = self.undo_redo_shortcuts(ui.ctx());
+
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Art App");
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
+                ui.separator();
+
+                // Big enough to tap easily on a tablet.
+                let size = egui::vec2(72.0, 26.0);
+                let undo_tip = match self.history.undo_name() {
+                    Some(name) => format!("Undo {name} (Ctrl+Z)"),
+                    None => "Nothing to undo".to_owned(),
+                };
+                let redo_tip = match self.history.redo_name() {
+                    Some(name) => format!("Redo {name} (Ctrl+Y)"),
+                    None => "Nothing to redo".to_owned(),
+                };
+                let can_undo = self.history.undo_name().is_some();
+                let can_redo = self.history.redo_name().is_some();
+                undo |= ui
+                    .add_enabled(can_undo, Button::new("Undo").min_size(size))
+                    .on_hover_text(undo_tip)
+                    .on_disabled_hover_text("Nothing to undo")
+                    .clicked();
+                redo |= ui
+                    .add_enabled(can_redo, Button::new("Redo").min_size(size))
+                    .on_hover_text(redo_tip)
+                    .on_disabled_hover_text("Nothing to redo")
+                    .clicked();
             });
         });
 
+        // Not in the middle of a stroke: wait until it's finished.
+        if !self.canvas.is_painting() {
+            if undo {
+                self.history.undo(&mut self.document);
+            }
+            if redo {
+                self.history.redo(&mut self.document);
+            }
+        }
+
         match self.screen {
-            Screen::Canvas => self.canvas.ui(ui, &mut self.document, ink_events),
+            Screen::Canvas => self
+                .canvas
+                .ui(ui, &mut self.document, &mut self.history, ink_events),
             Screen::PenTest => self.pen_test.ui(ui, ink_events),
         }
     }
