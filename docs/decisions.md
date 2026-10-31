@@ -392,3 +392,14 @@ name quietly making a new layer).
 Wrong examples in a manual teach wrong habits, so the tests read both
 documents and check every example command in them, and `art-cli check`
 runs on every script in `examples/`.
+
+## 38. art-cli stops quietly when nobody reads its output
+When art-cli's output goes into another program that stops reading
+early (`art-cli info picture.artapp | head -1`), writing fails with a
+"broken pipe". Rust programs normally crash with an error there. art-cli
+prints through two small helpers instead: for normal output, a broken
+pipe just ends the program quietly and successfully (the work, like
+saving pictures, is already done before anything is printed, and nobody
+is listening any more), like other command-line tools. Any other
+writing problem is reported with exit code 1. Error messages never
+crash either; if they can't be written, the exit code still tells.

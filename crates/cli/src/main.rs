@@ -7,9 +7,25 @@
 //!
 //! Run `art-cli help` for how to use it.
 
+/// Prints a line, like `println!`, but never crashes: see [`write_out`].
+macro_rules! say {
+    ($($text:tt)*) => {
+        $crate::write_out(format_args!($($text)*))
+    };
+}
+
+/// Prints a line to the error output, like `eprintln!`, but never crashes.
+macro_rules! complain {
+    ($($text:tt)*) => {
+        $crate::write_err(format_args!($($text)*))
+    };
+}
+
 mod font;
 mod sheet;
 
+use std::fmt;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -65,7 +81,7 @@ fn main() -> ExitCode {
             _ => Err(Problem::Usage("info needs one .artapp file".into())),
         },
         None | Some("help" | "--help" | "-h") => {
-            println!("{HELP}");
+            say!("{HELP}");
             Ok(())
         }
         Some(other) => Err(Problem::Usage(format!("unknown command \"{other}\""))),
@@ -73,11 +89,11 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(Problem::Usage(message)) => {
-            eprintln!("error: {message}\n\nRun `art-cli help` to see how to use it.");
+            complain!("error: {message}\n\nRun `art-cli help` to see how to use it.");
             ExitCode::from(2)
         }
         Err(Problem::Failed(message)) => {
-            eprintln!("error: {message}");
+            complain!("error: {message}");
             ExitCode::from(1)
         }
     }
@@ -93,6 +109,30 @@ enum Problem {
 
 fn failed(message: impl Into<String>) -> Problem {
     Problem::Failed(message.into())
+}
+
+/// Writes one line of normal output.
+///
+/// When the output goes into another program that stops reading early
+/// (for example `art-cli info picture.artapp | head -1`), writing fails
+/// with a "broken pipe". That isn't a problem: whatever was asked for is
+/// already done (pictures are saved before anything is printed), and
+/// nobody is reading any more. So art-cli just stops, quietly and
+/// successfully, like other command-line tools do.
+fn write_out(text: fmt::Arguments) {
+    if let Err(error) = writeln!(io::stdout().lock(), "{text}") {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        write_err(format_args!("error: can't write the output: {error}"));
+        std::process::exit(1);
+    }
+}
+
+/// Writes one line of error output. If even that can't be written,
+/// there's nowhere left to say so: the exit code still tells.
+fn write_err(text: fmt::Arguments) {
+    let _ = writeln!(io::stderr().lock(), "{text}");
 }
 
 // ---- render ---------------------------------------------------------------------
@@ -372,7 +412,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         )?;
     }
 
-    println!(
+    say!(
         "Rendered {} in {:.2} s{}",
         options.script.display(),
         started.elapsed().as_secs_f32(),
@@ -382,14 +422,14 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             format!(" (at {:.0}% size)", scale * 100.0)
         }
     );
-    println!(
+    say!(
         "  canvas {} x {}, {command_count} commands, layers (bottom to top): {}",
         document.width(),
         document.height(),
         layer_names(&document)
     );
     for path in saved {
-        println!("  {}", path.display());
+        say!("  {}", path.display());
     }
     Ok(())
 }
@@ -452,15 +492,15 @@ fn check(path: &Path) -> Result<(), Problem> {
             }
         })
         .map_err(|e| failed(format!("{}: {e}", path.display())))?;
-    println!("OK: {}", path.display());
-    println!(
+    say!("OK: {}", path.display());
+    say!(
         "  canvas {} x {}, {command_count} commands",
         document.width(),
         document.height()
     );
-    println!("  layers (bottom to top): {}", layer_names(&document));
+    say!("  layers (bottom to top): {}", layer_names(&document));
     if !snapshots.is_empty() {
-        println!("  snapshots: {}", snapshots.join(", "));
+        say!("  snapshots: {}", snapshots.join(", "));
     }
     Ok(())
 }
@@ -470,13 +510,13 @@ fn check(path: &Path) -> Result<(), Problem> {
 fn info(path: &Path) -> Result<(), Problem> {
     let document = file::open(path).map_err(|e| failed(format!("{}: {e}", path.display())))?;
     let [r, g, b, _] = unpremultiply(document.paper());
-    println!("{}", path.display());
-    println!(
+    say!("{}", path.display());
+    say!(
         "  canvas {} x {}, paper #{r:02X}{g:02X}{b:02X}",
         document.width(),
         document.height()
     );
-    println!("  {} layer(s), bottom to top:", document.layers().len());
+    say!("  {} layer(s), bottom to top:", document.layers().len());
     let active = document.active_id();
     for (i, layer) in document.layers().iter().enumerate() {
         let painted = match painted_area(layer) {
@@ -486,7 +526,7 @@ fn info(path: &Path) -> Result<(), Problem> {
             ),
             None => "empty".to_owned(),
         };
-        println!(
+        say!(
             "  {:>3}. {}{}  [{}, opacity {:.0}%, {}]  {painted}",
             i + 1,
             layer.name(),

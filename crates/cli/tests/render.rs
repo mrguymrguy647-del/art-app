@@ -1,7 +1,7 @@
 //! Runs the real art-cli program, the way it's used.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn art_cli() -> Command {
     Command::new(env!("CARGO_BIN_EXE_art-cli"))
@@ -169,4 +169,32 @@ fn every_example_script_is_free_of_mistakes() {
         }
     }
     assert!(count >= 2);
+}
+
+#[test]
+fn a_reader_that_stops_early_is_not_an_error() {
+    // Like `art-cli render ... | head -1`: the reading end of the output
+    // is closed before art-cli gets to print anything.
+    let out = folder("pipe");
+    let mut child = art_cli()
+        .args(["render", example().to_str().unwrap(), "--preview", "--out"])
+        .arg(&out)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "exit {:?}: {errors}",
+        output.status.code()
+    );
+    assert!(errors.is_empty(), "nothing on the error output: {errors}");
+    assert!(
+        out.join("sunset-preview.png").exists(),
+        "the work was still done"
+    );
+    std::fs::remove_dir_all(out).ok();
 }
