@@ -1,0 +1,49 @@
+{
+  "title": "Duck walk cycle: 4 frames of 128 x 128",
+  "notes": "Render with --transparent for a sprite sheet. Frame N is x 128*(N-1) to 128*N.",
+  "palette": {
+    "yellow": "#F2C230", "wing": "#D9A21E", "ink": "#2A2420",
+    "beak": "#E8892B", "leg": "#E8892B", "leg_far": "#B8601A", "shadow": "#00000030"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 128 },
+    { "cmd": "define", "name": "leg", "commands": [
+      { "cmd": "line", "from": [0, 0], "to": [0, 17], "size": 4, "color": "leg", "taper": 0 },
+      { "cmd": "polygon", "points": [[-3, 16], [11, 19], [13, 23], [-4, 23]], "fill": "leg", "outline": "ink", "outline_size": 1.5 }
+    ] },
+    { "cmd": "define", "name": "body", "commands": [
+      { "cmd": "polygon", "points": [[-24, -30], [-42, -42], [-30, -18]], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [0, -22], "radius": [30, 20], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [22, -50], "radius": 14, "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [16, -34], "radius": [8, 10], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [-6, -22], "radius": [17, 9], "rotation": -12, "fill": "wing", "outline": "ink", "outline_size": 2 },
+      { "cmd": "polygon", "points": [[33, -54], [49, -48], [33, -43]], "fill": "beak", "outline": "ink", "outline_size": 1.5 },
+      { "cmd": "ellipse", "center": [27, -54], "radius": 2.5, "fill": "ink" }
+    ] },
+    { "cmd": "layer", "name": "Shadow" },
+    { "cmd": "repeat", "count": 4, "step": { "translate": [128, 0] }, "commands": [
+      { "cmd": "ellipse", "center": [64, 113], "radius": [28, 4], "fill": "shadow" }
+    ] },
+    { "cmd": "layer", "name": "Duck" },
+    { "cmd": "group", "name": "frame 1: contact", "translate": [64, 90], "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, -2], "rotate": 22, "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, 2] },
+      { "cmd": "use", "name": "leg", "translate": [4, -2], "rotate": -22 }
+    ] },
+    { "cmd": "group", "name": "frame 2: passing", "translate": [192, 90], "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, -4], "rotate": -12, "scale": [1, 0.75], "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, -1] },
+      { "cmd": "use", "name": "leg", "translate": [4, -4], "rotate": 6, "scale": [1, 1.15] }
+    ] },
+    { "cmd": "group", "name": "frame 3: contact", "translate": [320, 90], "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, -2], "rotate": -22, "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, 2] },
+      { "cmd": "use", "name": "leg", "translate": [4, -2], "rotate": 22 }
+    ] },
+    { "cmd": "group", "name": "frame 4: passing", "translate": [448, 90], "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, -4], "rotate": 6, "scale": [1, 1.15], "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, -1] },
+      { "cmd": "use", "name": "leg", "translate": [4, -4], "rotate": -12, "scale": [1, 0.75] }
+    ] }
+  ]
+}

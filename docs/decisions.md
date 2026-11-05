@@ -632,3 +632,45 @@ checks that:
 - every repository file it names exists;
 - it has its name and description, and stays under 150 lines.
 Planting a made-up option, field or file in it makes the test fail.
+
+## 47. Proof: a walk cycle and a character sheet
+To see whether phase 1 helped, the two jobs that were hard before were
+done again with the new commands, as examples:
+- `examples/duck-walk.json`: a 4-frame walk cycle, each frame 128 × 128
+  on a 512 × 128 canvas (render with `--transparent`). The duck is a
+  `body` symbol and a `leg` symbol (the far leg is the same leg with its
+  colour swapped darker); each frame is a named group with three `use`s.
+  **10 commands** at the top level, 32 counting those inside groups and
+  symbols. Before phase 1 the same kind of sheet took **50**.
+- `examples/duck-sheet.json`: the same duck as player 1, as player 2
+  (colours swapped with one `colors`), and facing left (`"mirror": "x"`),
+  with labels and colour swatches: 24 top-level commands, 38 in all.
+
+Each took one script and one fix: `check` showed every frame's group
+inside its 128-pixel cell before any picture was opened.
+
+What was still slow, honestly:
+- **Symbols have no parameters.** Walk frames differ only in two leg
+  angles and how high the body is, yet each frame is its own group;
+  `repeat` can't change an angle from copy to copy.
+- **Feet turn with the leg.** Keeping a foot flat needs a group turned
+  back around the ankle, and knowing where the ankle ends up.
+- **Overlapping outlines.** Where the head meets the body both
+  outlines show; an extra filled shape hides the seam.
+- **Text width isn't known before painting.** One label was wider than
+  its panel and needed a second render to fix.
+- **A repeat can't pick a colour per copy**, so the swatch row is six
+  rectangles written out.
+- Some arithmetic remains: panel centres and the labels under them.
+These are good candidates for phase 2 (keyframes and parameters would
+cover the first two). Rendering itself wasn't slow: 0.03 s for the walk
+cycle and 0.08 s for the sheet.
+
+## 48. Reference pictures on other systems
+The reference pictures were made on Linux, where every pixel must still
+match exactly. Windows works out sines and cosines with its own maths
+library, which can differ in the last digit; that can nudge a rare edge
+pixel when something is turned. So off Linux, up to 0.1% of a picture's
+pixels may differ, and `test.bat` doesn't fail for nothing. A real
+change to old pictures is still caught exactly on Linux, where the
+work is done.

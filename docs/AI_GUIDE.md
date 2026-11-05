@@ -9,8 +9,10 @@ PNGs it saves, so you can judge your own work and improve it, step by step, like
 stepping back from the easel.
 
 This guide is the practical part. Every command is described in
-[script-format.md](script-format.md). Two complete examples: [examples/sunset.json](../examples/sunset.json)
-and [examples/night-hills.json](../examples/night-hills.json).
+[script-format.md](script-format.md). Complete examples: two paintings, [examples/sunset.json](../examples/sunset.json)
+and [examples/night-hills.json](../examples/night-hills.json); for games, a 4-frame walk cycle drawn
+with symbols, [examples/duck-walk.json](../examples/duck-walk.json), and a character sheet with a
+colour swap, a mirrored pose and labels, [examples/duck-sheet.json](../examples/duck-sheet.json).
 
 ## 1. Set up (once)
 

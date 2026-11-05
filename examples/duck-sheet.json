@@ -1,0 +1,54 @@
+{
+  "title": "Duck character sheet",
+  "notes": "One duck drawn once (symbols body and leg), shown as player 1, as player 2 with its colours swapped, and facing left.",
+  "palette": {
+    "paper": "#F6F1E7", "panel": "#E9E1D2", "yellow": "#F2C230", "wing": "#D9A21E",
+    "ink": "#2A2420", "beak": "#E8892B", "leg": "#E8892B", "leg_far": "#B8601A",
+    "red": "#D9503F", "red_wing": "#A8352B", "shadow": "#00000026"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 768, "height": 432, "paper": "paper" },
+    { "cmd": "define", "name": "leg", "commands": [
+      { "cmd": "line", "from": [0, 0], "to": [0, 17], "size": 4, "color": "leg", "taper": 0 },
+      { "cmd": "polygon", "points": [[-3, 16], [11, 19], [13, 23], [-4, 23]], "fill": "leg", "outline": "ink", "outline_size": 1.5 }
+    ] },
+    { "cmd": "define", "name": "body", "commands": [
+      { "cmd": "polygon", "points": [[-24, -30], [-42, -42], [-30, -18]], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [0, -22], "radius": [30, 20], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [22, -50], "radius": 14, "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [16, -34], "radius": [8, 10], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [-6, -22], "radius": [17, 9], "rotation": -12, "fill": "wing", "outline": "ink", "outline_size": 2 },
+      { "cmd": "polygon", "points": [[33, -54], [49, -48], [33, -43]], "fill": "beak", "outline": "ink", "outline_size": 1.5 },
+      { "cmd": "ellipse", "center": [27, -54], "radius": 2.5, "fill": "ink" }
+    ] },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, -2], "rotate": 8, "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body" },
+      { "cmd": "use", "name": "leg", "translate": [4, -2], "rotate": -8 }
+    ] },
+    { "cmd": "layer", "name": "Panels" },
+    { "cmd": "repeat", "count": 3, "step": { "translate": [248, 0] }, "commands": [
+      { "cmd": "rect", "x": 16, "y": 88, "width": 240, "height": 236, "radius": 14, "fill": "panel" },
+      { "cmd": "ellipse", "center": [136, 282], "radius": [52, 7], "fill": "shadow" }
+    ] },
+    { "cmd": "layer", "name": "Ducks" },
+    { "cmd": "use", "name": "duck", "translate": [130, 246], "scale": 1.8 },
+    { "cmd": "use", "name": "duck", "translate": [378, 246], "scale": 1.8,
+      "colors": { "yellow": "red", "wing": "red_wing" } },
+    { "cmd": "use", "name": "duck", "translate": [632, 246], "scale": 1.8, "mirror": "x" },
+    { "cmd": "layer", "name": "Labels" },
+    { "cmd": "text", "text": "Duck: character sheet", "at": [384, 22], "size": 40, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "Player 1", "at": [136, 294], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "Player 2 (colours swapped)", "at": [384, 294], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "Facing left (mirrored)", "at": [632, 294], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "Colours", "at": [16, 352], "size": 18, "color": "ink" },
+    { "cmd": "rect", "x": 100, "y": 350, "width": 24, "height": 24, "fill": "yellow", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "rect", "x": 130, "y": 350, "width": 24, "height": 24, "fill": "wing", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "rect", "x": 160, "y": 350, "width": 24, "height": 24, "fill": "beak", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "rect", "x": 190, "y": 350, "width": 24, "height": 24, "fill": "leg_far", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "rect", "x": 220, "y": 350, "width": 24, "height": 24, "fill": "red", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "rect", "x": 250, "y": 350, "width": 24, "height": 24, "fill": "red_wing", "outline": "ink", "outline_size": 1.5 },
+    { "cmd": "text", "text": "body, wing, beak and legs, far leg; player 2: body, wing", "at": [290, 354], "size": 16, "color": "ink" },
+    { "cmd": "text", "text": "Drawn once as symbols: \"body\" and \"leg\" make \"duck\"; each pose is one `use`.", "at": [16, 396], "size": 16, "color": "#6A6058" }
+  ]
+}

@@ -1,9 +1,17 @@
 //! Old scripts must keep painting exactly the same pixels.
 //!
 //! The pictures in `tests/reference/` were rendered before groups,
-//! symbols and text were added (except `text.png`, made when text was
-//! added, to keep letters looking the same from then on). Each test plays
-//! a script and compares every pixel with its reference picture.
+//! symbols and text were added (except `text.png` and the `duck-*.png`
+//! pictures, made when those were added, to keep them the same from then
+//! on). Each test plays a script and compares every pixel with its
+//! reference picture.
+//!
+//! The references were made on Linux, and there every pixel must match.
+//! Other systems compute sines and cosines with their own maths library,
+//! which can differ in the last digit and so change a rare edge pixel
+//! slightly: there, up to 0.1% of the pixels may differ (`ALLOWED`), so
+//! `test.bat` on Windows doesn't fail for nothing. Real changes show up
+//! on Linux, exactly.
 //!
 //! If a change is *meant* to change pictures, make new references with
 //! `ARTAPP_UPDATE_REFERENCES=1 cargo test -p art_engine --test reference`
@@ -14,6 +22,14 @@ use std::path::{Path, PathBuf};
 use art_engine::document::Background;
 use art_engine::image::Image;
 use art_engine::script::{PlayOptions, Player, Script};
+
+/// The share of pixels allowed to differ: none where the references were
+/// made (Linux), a tiny few elsewhere (see the top of this file).
+const ALLOWED: f64 = if cfg!(target_os = "linux") {
+    0.0
+} else {
+    0.001
+};
 
 /// The repository's top folder.
 fn root() -> PathBuf {
@@ -84,7 +100,7 @@ fn compare(script: &str, reference: &str, background: Background) {
             }
         }
     }
-    if different > 0 {
+    if different as f64 > ALLOWED * f64::from(width * height) {
         let saved = std::env::temp_dir().join(reference.file_name().unwrap());
         image.save_png(&saved, with_alpha).unwrap();
         let (x, y, actual, wanted) = first.unwrap();
@@ -131,6 +147,20 @@ fn text_keeps_its_pixels() {
     compare(
         "crates/engine/tests/scripts/text.json",
         "text.png",
+        Background::Paper,
+    );
+}
+
+#[test]
+fn the_duck_examples_keep_their_pixels() {
+    compare(
+        "examples/duck-walk.json",
+        "duck-walk.png",
+        Background::Transparent,
+    );
+    compare(
+        "examples/duck-sheet.json",
+        "duck-sheet.png",
         Background::Paper,
     );
 }

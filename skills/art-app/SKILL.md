@@ -108,6 +108,8 @@ a new line; `rotate` turns it around `at`. The font is built in.
   drawn around `[0, 0]`, one `use` per frame (or a `repeat` with the frame width as `translate`).
   Change only what moves between frames (legs, arms: symbols of their own, turned with `rotate`).
 - `--grid 128` shows the frame edges; `--crop 128,0,128,128 --zoom 4` shows one frame.
+- Worked examples: `examples/duck-walk.json` (walk cycle: a body and a leg symbol, one named
+  group per frame) and `examples/duck-sheet.json` (character sheet: swap, mirror, labels).
 
 ## Seeing and checking
 

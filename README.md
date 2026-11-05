@@ -79,7 +79,9 @@ Huion, …) has a "Use Windows Ink" option, keep it switched on.
 A painting script is a JSON file describing a picture step by step: layers, gradients, shapes,
 strokes, hatching and more. The format, with examples, is in
 [docs/script-format.md](docs/script-format.md). Full examples: [examples/sunset.json](examples/sunset.json),
-[examples/night-hills.json](examples/night-hills.json) and [examples/two-ducks.json](examples/two-ducks.json).
+[examples/night-hills.json](examples/night-hills.json) and [examples/two-ducks.json](examples/two-ducks.json); for
+games, a 4-frame walk cycle [examples/duck-walk.json](examples/duck-walk.json) (render it with `--transparent`)
+and a character sheet [examples/duck-sheet.json](examples/duck-sheet.json).
 
 **Painting with an AI assistant:** [docs/AI_GUIDE.md](docs/AI_GUIDE.md) is a practical manual for an
 AI (like Claude) painting with these scripts on a machine without a screen: how to build `art-cli`,
@@ -122,7 +124,7 @@ Build it with `cargo build --release -p art_cli`; the program is `target/release
 art-app/
 ├── Cargo.toml            workspace: lists the two crates below
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
-├── examples/             example painting scripts (sunset, night hills, two ducks)
+├── examples/             example scripts (sunset, night hills, two ducks, duck walk cycle and sheet)
 ├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page
 ├── skills/art-app/       the same know-how as a skill for Claude (SKILL.md)
 ├── docs/decisions.md     why we chose things, in plain words
