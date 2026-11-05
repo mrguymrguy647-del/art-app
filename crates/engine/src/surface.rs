@@ -225,6 +225,34 @@ impl<P: Pixel> Surface<P> {
     pub fn take_dirty_tiles(&mut self) -> Vec<TileCoord> {
         self.dirty.drain().collect()
     }
+
+    /// The smallest rectangle around every pixel that isn't fully
+    /// transparent, or `None` if there are none.
+    pub fn painted_area(&self) -> Option<PixelRect> {
+        let mut area: Option<PixelRect> = None;
+        for (coord, tile) in self.tiles() {
+            let (left, top) = coord.origin();
+            for (row, pixels) in tile.pixels().chunks(TILE_SIZE).enumerate() {
+                let painted = |p: &&P| **p != P::TRANSPARENT;
+                let Some(first) = pixels.iter().position(|p| painted(&p)) else {
+                    continue;
+                };
+                let last = pixels.iter().rposition(|p| painted(&p)).unwrap_or(first);
+                let y = top + row as i32;
+                let found = PixelRect::new(left + first as i32, y, left + last as i32 + 1, y + 1);
+                area = Some(match area {
+                    None => found,
+                    Some(a) => PixelRect::new(
+                        a.left.min(found.left),
+                        a.top.min(found.top),
+                        a.right.max(found.right),
+                        a.bottom.max(found.bottom),
+                    ),
+                });
+            }
+        }
+        area
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +260,16 @@ mod tests {
     use super::*;
 
     const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
+
+    #[test]
+    fn painted_area_is_the_box_around_what_is_painted() {
+        let mut surface: Surface = Surface::new();
+        assert_eq!(surface.painted_area(), None);
+        surface.set_pixel(10, 20, RED);
+        surface.set_pixel(300, 5, RED);
+        surface.set_pixel(-3, 40, RED);
+        assert_eq!(surface.painted_area(), Some(PixelRect::new(-3, 5, 301, 41)));
+    }
 
     #[test]
     fn tile_coord_rounds_down_also_for_negative_pixels() {

@@ -22,6 +22,7 @@ macro_rules! complain {
 }
 
 mod font;
+mod grid;
 mod sheet;
 
 use std::fmt;
@@ -32,10 +33,12 @@ use std::time::Instant;
 
 use art_engine::document::{Background, Document};
 use art_engine::file::{self, FILE_EXTENSION};
-use art_engine::image::{Image, unpremultiply};
-use art_engine::script::{Event, PlayOptions, Player, Script};
+use art_engine::image::{Color, Image, unpremultiply};
+use art_engine::layer::Layer;
+use art_engine::script::{Event, PlayOptions, Player, Report, Script, parse_hex};
 use art_engine::surface::PixelRect;
 
+use grid::{View, draw_grid};
 use sheet::{Entry, THUMB_HEIGHT, THUMB_WIDTH, contact_sheet};
 
 const HELP: &str = "\
@@ -43,7 +46,8 @@ art-cli: render Art App painting scripts, without a window.
 
 USAGE
   art-cli render <script.json> [options]   paint the script, save the picture
-  art-cli check <script.json>              look for mistakes without painting
+  art-cli check <script.json>              paint without saving: where everything
+                                           went, and what looks like a mistake
   art-cli info <picture.artapp>            describe a saved picture
   art-cli help                             show this
 
@@ -57,11 +61,22 @@ RENDER OPTIONS
   --crop x,y,w,h     save only this part, at full size, to check details
   --zoom <n>         enlarge the saved picture n times (pixels become squares)
   --transparent      leave the paper out of the PNG (see-through background)
+  --layers \"A,B\"     show only these layers (the .artapp keeps them all)
+  --hide \"A,B\"       show all layers but these
+  --bg <#RRGGBB>     with --transparent: this colour behind the see-through
+                     parts of previews, crops, snapshots and sheets
+  --grid <n>         a light grid every n canvas pixels, with coordinates,
+                     on previews, crops and snapshots
+
+  Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
+  --grid; <name>.png and <name>.artapp never do. At full size, the picture
+  with them is saved as <name>-view.png.
 
 EXAMPLES
   art-cli render examples/sunset.json --preview --sheet
   art-cli render examples/sunset.json --out render --snapshots
-  art-cli render examples/sunset.json --crop 700,450,200,150 --zoom 3
+  art-cli render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
+  art-cli render examples/sunset.json --preview --layers \"Sky,Sun\"
 
 The script format is described in docs/script-format.md.";
 
@@ -147,6 +162,12 @@ struct RenderOptions {
     crop: Option<[u32; 4]>,
     zoom: u32,
     transparent: bool,
+    /// `--layers`: show only these.
+    layers: Option<Vec<String>>,
+    /// `--hide`: don't show these.
+    hide: Vec<String>,
+    bg: Option<Color>,
+    grid: Option<u32>,
 }
 
 fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
@@ -160,6 +181,10 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         crop: None,
         zoom: 1,
         transparent: false,
+        layers: None,
+        hide: Vec::new(),
+        bg: None,
+        grid: None,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -200,6 +225,34 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
                         ))
                     })?;
             }
+            "--layers" => options.layers = Some(names("--layers", &value("--layers")?)?),
+            "--hide" => options.hide = names("--hide", &value("--hide")?)?,
+            "--bg" => {
+                let text = value("--bg")?;
+                options.bg = Some(
+                    parse_hex(&text)
+                        .ok()
+                        .filter(|color| color[3] == 255)
+                        .ok_or_else(|| {
+                            Problem::Usage(format!(
+                                "--bg is a colour like \"#4080A0\" (not see-through), not {text}"
+                            ))
+                        })?,
+                );
+            }
+            "--grid" => {
+                let text = value("--grid")?;
+                options.grid = Some(
+                    text.parse::<u32>()
+                        .ok()
+                        .filter(|n| (2..=100_000).contains(n))
+                        .ok_or_else(|| {
+                            Problem::Usage(format!(
+                                "--grid is the distance between lines in canvas pixels, like 100 (not {text})"
+                            ))
+                        })?,
+                );
+            }
             "--crop" => {
                 let text = value("--crop")?;
                 let numbers: Vec<u32> = text
@@ -235,7 +288,33 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--crop always renders at full size: leave out --preview and --scale".into(),
         ));
     }
+    if options.layers.is_some() && !options.hide.is_empty() {
+        return Err(Problem::Usage("use --layers or --hide, not both".into()));
+    }
+    if options.bg.is_some() && !options.transparent {
+        return Err(Problem::Usage(
+            "--bg is the colour behind see-through parts, so it goes with --transparent \
+             (to change the paper, change the script's `paper`)"
+                .into(),
+        ));
+    }
     Ok(options)
+}
+
+/// Layer names from "Sky, Duck" (commas between them).
+fn names(option: &str, text: &str) -> Result<Vec<String>, Problem> {
+    let names: Vec<String> = text
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if names.is_empty() {
+        return Err(Problem::Usage(format!(
+            "{option} needs layer names with commas between them, like \"Sky,Duck\""
+        )));
+    }
+    Ok(names)
 }
 
 /// Reads and checks a script file.
@@ -294,12 +373,39 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         ))
     })?;
 
+    // Which layers the pictures show.
+    let shown = |layer: &Layer| match &options.layers {
+        Some(names) => names.iter().any(|name| name == layer.name()),
+        None => layer.visible() && !options.hide.iter().any(|name| name == layer.name()),
+    };
+    let background = background_for(options.transparent);
+    let picture = |document: &Document, area: PixelRect| {
+        Image::from_document_showing(document, area, background, shown)
+    };
+    // A picture for looking at: on the --bg colour, with the --grid.
+    let for_looking = |image: Image, view: View| {
+        let mut image = match options.bg {
+            Some(color) => image.on_color(color),
+            None => image,
+        };
+        if let Some(spacing) = options.grid {
+            draw_grid(&mut image, spacing, view);
+        }
+        image
+    };
+    let keeps_alpha = options.transparent && options.bg.is_none();
+    let whole = View {
+        left: 0.0,
+        top: 0.0,
+        zoom: scale,
+    };
+
     // Play, saving a picture at each event if asked.
     let mut saved: Vec<PathBuf> = Vec::new();
+    let mut snapshot_count = 0;
     let mut sheet_entries: Vec<Entry> = Vec::new();
     let mut save_error: Option<String> = None;
     let mut event_count = 0;
-    let background = background_for(options.transparent);
     player
         .run(&mut document, |event, document| {
             if !options.snapshots && !options.sheet {
@@ -310,11 +416,11 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 Event::Snapshot(name) => name.clone(),
                 Event::LayerDone(layer) => format!("after {layer}"),
             };
-            let image = Image::of_document(document, background);
+            let image = picture(document, document.bounds());
             if options.snapshots {
                 let path = snapshot_folder.join(format!("{event_count:02}-{}.png", slug(&label)));
-                match image.save_png(&path, options.transparent) {
-                    Ok(()) => saved.push(path),
+                match for_looking(image.clone(), whole).save_png(&path, keeps_alpha) {
+                    Ok(()) => snapshot_count += 1,
                     Err(e) => {
                         save_error = save_error
                             .take()
@@ -323,6 +429,10 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 }
             }
             if options.sheet {
+                let image = match options.bg {
+                    Some(color) => image.on_color(color),
+                    None => image,
+                };
                 sheet_entries.push(Entry {
                     label,
                     image: image.fit_within(THUMB_WIDTH, THUMB_HEIGHT),
@@ -333,11 +443,16 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     if let Some(error) = save_error {
         return Err(failed(format!("couldn't save a snapshot: {error}")));
     }
+    check_layer_names(options, &document)?;
 
     // The finished picture.
-    let save = |image: &Image, path: PathBuf, saved: &mut Vec<PathBuf>| -> Result<(), Problem> {
+    let save = |image: &Image,
+                path: PathBuf,
+                with_alpha: bool,
+                saved: &mut Vec<PathBuf>|
+     -> Result<(), Problem> {
         image
-            .save_png(&path, options.transparent)
+            .save_png(&path, with_alpha)
             .map_err(|e| failed(format!("couldn't save {}: {e}", path.display())))?;
         saved.push(path);
         Ok(())
@@ -349,6 +464,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             image
         }
     };
+    let zoom = options.zoom as f32;
     if let Some([x, y, w, h]) = options.crop {
         if x >= document.width() || y >= document.height() {
             return Err(failed(format!(
@@ -363,16 +479,25 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             (x + w).min(document.width()) as i32,
             (y + h).min(document.height()) as i32,
         );
-        let image = zoomed(Image::from_document(&document, area, background));
+        let view = View {
+            left: x as f32,
+            top: y as f32,
+            zoom,
+        };
+        let image = for_looking(zoomed(picture(&document, area)), view);
         let name = format!(
             "{stem}-crop-{x}-{y}-{}-{}.png",
             area.right - area.left,
             area.bottom - area.top
         );
-        save(&image, options.out.join(name), &mut saved)?;
+        save(&image, options.out.join(name), keeps_alpha, &mut saved)?;
     } else {
-        let image = Image::of_document(&document, background);
+        let image = picture(&document, document.bounds());
         if options.sheet {
+            let image = match options.bg {
+                Some(color) => image.on_color(color),
+                None => image.clone(),
+            };
             let thumbnail = image.fit_within(THUMB_WIDTH, THUMB_HEIGHT);
             // Unless the last snapshot already shows the finished picture.
             if sheet_entries
@@ -385,17 +510,30 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 });
             }
         }
-        let name = if scale == 1.0 {
-            format!("{stem}.png")
-        } else {
-            format!("{stem}-preview.png")
+        let view = View {
+            zoom: scale * zoom,
+            ..whole
         };
-        save(&zoomed(image), options.out.join(name), &mut saved)?;
         if scale == 1.0 {
+            let image = zoomed(image);
+            save(
+                &image,
+                options.out.join(format!("{stem}.png")),
+                options.transparent,
+                &mut saved,
+            )?;
             let path = options.out.join(format!("{stem}.{FILE_EXTENSION}"));
             file::save(&document, &path)
                 .map_err(|e| failed(format!("couldn't save {}: {e}", path.display())))?;
             saved.push(path);
+            if options.bg.is_some() || options.grid.is_some() {
+                let path = options.out.join(format!("{stem}-view.png"));
+                save(&for_looking(image, view), path, keeps_alpha, &mut saved)?;
+            }
+        } else {
+            let image = for_looking(zoomed(image), view);
+            let path = options.out.join(format!("{stem}-preview.png"));
+            save(&image, path, keeps_alpha, &mut saved)?;
         }
     }
     if options.sheet {
@@ -408,10 +546,13 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         save(
             &sheet,
             options.out.join(format!("{stem}-sheet.png")),
+            false,
             &mut saved,
         )?;
     }
 
+    // A short summary: what's where, and what looks wrong.
+    let canvas = canvas_size(&document, scale);
     say!(
         "Rendered {} in {:.2} s{}",
         options.script.display(),
@@ -423,15 +564,149 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         }
     );
     say!(
-        "  canvas {} x {}, {command_count} commands, layers (bottom to top): {}",
-        document.width(),
-        document.height(),
-        layer_names(&document)
+        "  canvas {} x {}, {command_count} commands",
+        canvas.0,
+        canvas.1
     );
-    for path in saved {
-        say!("  {}", path.display());
+    let layers = layer_boxes(&document, scale, shown);
+    say!("  layers, bottom to top:");
+    let entries: Vec<String> = layers
+        .iter()
+        .map(|layer| format!("{}: {}", layer.title(), describe_box(layer.area)))
+        .collect();
+    for line in packed(&entries, SUMMARY_WIDTH, SUMMARY_LAYER_LINES) {
+        say!("    {line}");
+    }
+    let warnings = warnings(&player.report(), &layers);
+    if !warnings.is_empty() {
+        say!("  warnings ({}):", warnings.len());
+        for warning in warnings.iter().take(SUMMARY_WARNINGS) {
+            say!("    {warning}");
+        }
+        if warnings.len() > SUMMARY_WARNINGS {
+            say!(
+                "    ...and {} more: `art-cli check` lists them all",
+                warnings.len() - SUMMARY_WARNINGS
+            );
+        }
+    }
+    let mut files: Vec<String> = saved.iter().map(|p| p.display().to_string()).collect();
+    if snapshot_count > 0 {
+        files.push(format!(
+            "{snapshot_count} snapshots in {}",
+            snapshot_folder.display()
+        ));
+    }
+    say!("  saved: {}", files.join(", "));
+    Ok(())
+}
+
+/// The summary after `render` shows this many warnings at most...
+const SUMMARY_WARNINGS: usize = 3;
+/// ...and its layers on this many lines, about this wide.
+const SUMMARY_LAYER_LINES: usize = 4;
+const SUMMARY_WIDTH: usize = 100;
+
+/// `--layers` and `--hide` must name layers that exist.
+fn check_layer_names(options: &RenderOptions, document: &Document) -> Result<(), Problem> {
+    let asked = options.layers.iter().flatten().chain(&options.hide);
+    for name in asked {
+        if !document.layers().iter().any(|layer| layer.name() == name) {
+            return Err(failed(format!(
+                "there's no layer called \"{name}\" (layers: {})",
+                layer_names(document)
+            )));
+        }
     }
     Ok(())
+}
+
+/// The canvas size in canvas pixels (the document is smaller in previews).
+fn canvas_size(document: &Document, scale: f32) -> (u32, u32) {
+    (
+        (document.width() as f32 / scale).round() as u32,
+        (document.height() as f32 / scale).round() as u32,
+    )
+}
+
+/// One layer, for summaries: its name, whether it's shown, and the box
+/// around what's painted on it (in canvas pixels).
+struct LayerBox {
+    name: String,
+    shown: bool,
+    area: Option<PixelRect>,
+}
+
+impl LayerBox {
+    fn title(&self) -> String {
+        if self.shown {
+            self.name.clone()
+        } else {
+            format!("{} (hidden)", self.name)
+        }
+    }
+}
+
+fn layer_boxes(document: &Document, scale: f32, shown: impl Fn(&Layer) -> bool) -> Vec<LayerBox> {
+    let (width, height) = canvas_size(document, scale);
+    document
+        .layers()
+        .iter()
+        .map(|layer| LayerBox {
+            name: layer.name().to_owned(),
+            shown: shown(layer),
+            area: layer.surface.painted_area().map(|area| {
+                // In canvas pixels, and on the canvas.
+                PixelRect::new(
+                    ((area.left as f32 / scale).floor() as i32).max(0),
+                    ((area.top as f32 / scale).floor() as i32).max(0),
+                    ((area.right as f32 / scale).ceil() as i32).min(width as i32),
+                    ((area.bottom as f32 / scale).ceil() as i32).min(height as i32),
+                )
+            }),
+        })
+        .collect()
+}
+
+/// "x 10..118, y 20..120", or "empty".
+fn describe_box(area: Option<PixelRect>) -> String {
+    match area {
+        Some(a) => format!("x {}..{}, y {}..{}", a.left, a.right, a.top, a.bottom),
+        None => "empty".to_owned(),
+    }
+}
+
+/// The player's warnings, and empty layers.
+fn warnings(report: &Report, layers: &[LayerBox]) -> Vec<String> {
+    let mut warnings = report.warnings.clone();
+    for layer in layers.iter().filter(|layer| layer.area.is_none()) {
+        warnings.push(format!("layer \"{}\" is empty", layer.name));
+    }
+    warnings
+}
+
+/// `entries` joined with " | " into lines about `width` long; at most
+/// `max_lines` of them, the last saying how many more there are.
+fn packed(entries: &[String], width: usize, max_lines: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let fits = lines
+            .last()
+            .is_some_and(|line| line.len() + 3 + entry.len() <= width);
+        if fits {
+            let line = lines.last_mut().expect("checked above");
+            line.push_str(" | ");
+            line.push_str(entry);
+        } else if lines.len() < max_lines {
+            lines.push(entry.clone());
+        } else {
+            let more = entries.len() - i;
+            let last = lines.last_mut().expect("max_lines is above 0");
+            last.push_str(&format!(" | ...and {more} more"));
+            break;
+        }
+    }
+    lines
 }
 
 fn background_for(transparent: bool) -> Background {
@@ -472,11 +747,13 @@ fn layer_names(document: &Document) -> String {
 // ---- check ----------------------------------------------------------------------
 
 fn check(path: &Path) -> Result<(), Problem> {
+    let started = Instant::now();
     let script = load(path)?;
     let command_count = script.commands.len();
+    // It really paints (at full size), so what it reports is exactly
+    // what `render` would make.
     let options = PlayOptions {
         folder: path.parent().map(Path::to_path_buf),
-        dry_run: true,
         ..PlayOptions::default()
     };
     let mut snapshots = Vec::new();
@@ -492,18 +769,56 @@ fn check(path: &Path) -> Result<(), Problem> {
             }
         })
         .map_err(|e| failed(format!("{}: {e}", path.display())))?;
-    say!("OK: {}", path.display());
+    let report = player.report();
+    let layers = layer_boxes(&document, 1.0, Layer::visible);
+    let warnings = warnings(&report, &layers);
+
+    say!(
+        "OK: {} (painted in {:.2} s{})",
+        path.display(),
+        started.elapsed().as_secs_f32(),
+        match warnings.len() {
+            0 => String::new(),
+            1 => ", 1 warning".to_owned(),
+            n => format!(", {n} warnings"),
+        }
+    );
     say!(
         "  canvas {} x {}, {command_count} commands",
         document.width(),
         document.height()
     );
-    say!("  layers (bottom to top): {}", layer_names(&document));
+    say!("  layers, bottom to top:");
+    for layer in &layers {
+        say!("    {}: {}", layer.title(), describe_box(layer.area));
+    }
+    if !report.parts.is_empty() {
+        say!("  named groups and uses:");
+        for part in report.parts.iter().take(CHECK_PARTS) {
+            say!("    {}: {}", part.path, describe_box(part.area));
+        }
+        if report.parts.len() > CHECK_PARTS {
+            say!("    ...and {} more", report.parts.len() - CHECK_PARTS);
+        }
+    }
     if !snapshots.is_empty() {
         say!("  snapshots: {}", snapshots.join(", "));
     }
+    if !warnings.is_empty() {
+        say!("  warnings:");
+        for warning in warnings.iter().take(CHECK_WARNINGS) {
+            say!("    {warning}");
+        }
+        if warnings.len() > CHECK_WARNINGS {
+            say!("    ...and {} more", warnings.len() - CHECK_WARNINGS);
+        }
+    }
     Ok(())
 }
+
+/// `check` lists at most this many groups and uses, and warnings.
+const CHECK_PARTS: usize = 60;
+const CHECK_WARNINGS: usize = 40;
 
 // ---- info -----------------------------------------------------------------------
 
@@ -519,11 +834,8 @@ fn info(path: &Path) -> Result<(), Problem> {
     say!("  {} layer(s), bottom to top:", document.layers().len());
     let active = document.active_id();
     for (i, layer) in document.layers().iter().enumerate() {
-        let painted = match painted_area(layer) {
-            Some(area) => format!(
-                "painted x {}..{}, y {}..{}",
-                area.left, area.right, area.top, area.bottom
-            ),
+        let painted = match layer.surface.painted_area() {
+            Some(area) => format!("painted {}", describe_box(Some(area))),
             None => "empty".to_owned(),
         };
         say!(
@@ -541,31 +853,6 @@ fn info(path: &Path) -> Result<(), Problem> {
         );
     }
     Ok(())
-}
-
-/// The smallest rectangle around everything painted on a layer.
-fn painted_area(layer: &art_engine::layer::Layer) -> Option<PixelRect> {
-    let mut area: Option<PixelRect> = None;
-    for (coord, tile) in layer.surface.tiles() {
-        let (left, top) = coord.origin();
-        for (i, pixel) in tile.pixels().iter().enumerate() {
-            if pixel.a == 0 {
-                continue;
-            }
-            let size = art_engine::tile::TILE_SIZE;
-            let (x, y) = (left + (i % size) as i32, top + (i / size) as i32);
-            area = Some(match area {
-                None => PixelRect::new(x, y, x + 1, y + 1),
-                Some(a) => PixelRect::new(
-                    a.left.min(x),
-                    a.top.min(y),
-                    a.right.max(x + 1),
-                    a.bottom.max(y + 1),
-                ),
-            });
-        }
-    }
-    area
 }
 
 #[cfg(test)]
@@ -601,6 +888,58 @@ mod tests {
         assert!(message("a.json --zoom 0").contains("--zoom"));
         assert!(message("a.json --colour red").contains("unknown option --colour"));
         assert!(message("--sheet").contains("needs a script"));
+    }
+
+    #[test]
+    fn seeing_options_are_read() {
+        let options = parse_render(&args(
+            "a.json --layers Sky,Duck --transparent --bg #4080A0 --grid 50",
+        ))
+        .ok()
+        .unwrap();
+        assert_eq!(options.layers, Some(vec!["Sky".into(), "Duck".into()]));
+        assert_eq!(options.bg, Some([0x40, 0x80, 0xA0, 255]));
+        assert_eq!(options.grid, Some(50));
+        let options = parse_render(&args("a.json --hide Sketch,,Notes"))
+            .ok()
+            .unwrap();
+        assert_eq!(options.hide, ["Sketch", "Notes"]);
+    }
+
+    #[test]
+    fn bad_seeing_options_are_explained() {
+        let message = |text: &str| match parse_render(&args(text)) {
+            Err(Problem::Usage(message)) => message,
+            _ => panic!("expected a usage problem for {text}"),
+        };
+        assert!(message("a.json --layers A --hide B").contains("not both"));
+        assert!(message("a.json --bg #4080A0").contains("--transparent"));
+        assert!(message("a.json --transparent --bg blue").contains("--bg is a colour"));
+        assert!(message("a.json --transparent --bg #4080A080").contains("not see-through"));
+        assert!(message("a.json --grid 1").contains("--grid"));
+        assert!(message("a.json --layers ,").contains("layer names"));
+    }
+
+    #[test]
+    fn summaries_pack_layers_into_a_few_lines() {
+        let entries: Vec<String> = (1..=30).map(|i| format!("Layer {i}: empty")).collect();
+        let lines = packed(&entries, 40, 3);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "Layer 1: empty | Layer 2: empty");
+        assert!(lines[2].ends_with("...and 24 more"), "{}", lines[2]);
+        assert_eq!(
+            packed(&entries[..2], 100, 3),
+            ["Layer 1: empty | Layer 2: empty"]
+        );
+    }
+
+    #[test]
+    fn boxes_are_described_in_canvas_pixels() {
+        assert_eq!(
+            describe_box(Some(PixelRect::new(10, 20, 118, 120))),
+            "x 10..118, y 20..120"
+        );
+        assert_eq!(describe_box(None), "empty");
     }
 
     #[test]

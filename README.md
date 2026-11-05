@@ -90,9 +90,18 @@ art-cli render examples/sunset.json                      # out/sunset.png and ou
 art-cli render examples/sunset.json --preview --sheet    # quick half-size render + contact sheet
 art-cli render examples/sunset.json --snapshots          # a picture at every snapshot and layer
 art-cli render examples/sunset.json --crop 1040,220,180,100 --zoom 3   # close-up of one area
-art-cli check examples/sunset.json                       # find mistakes without painting
+art-cli render examples/sunset.json --preview --grid 100   # with a grid and coordinates
+art-cli render examples/sunset.json --preview --layers "Sky,Sun"   # only some layers (or --hide)
+art-cli render sprite.json --transparent --bg "#4080A0"  # see-through PNG, also shown on a colour
+art-cli check examples/sunset.json                       # mistakes, and where everything was drawn
 art-cli info out/sunset.artapp                           # size, paper and layers of a picture
 ```
+
+After a render it prints a short summary: the canvas, the box around each layer's paint, the time
+taken, warnings, and the files saved. `check` paints without saving anything and lists more: every
+layer's box, every named group's and symbol `use`'s box, and warnings about things that are
+probably mistakes (drawn entirely off the canvas, empty layers, symbols never used, palette colours
+never used).
 
 Build it with `cargo build --release -p art_cli`; the program is `target/release/art-cli`
 (`art-cli.exe` on Windows). `art-cli help` lists every option.
@@ -140,6 +149,7 @@ art-app/
     │   └── src/
     │       ├── main.rs        render / check / info commands
     │       ├── sheet.rs       contact sheets (every stage in one image)
+    │       ├── grid.rs        the --grid: lines and coordinates over a picture
     │       └── font.rs        a tiny pixel font for the labels
     └── app/              the program: window and interface (egui)
         ├── build.rs      puts the icon into ArtApp.exe

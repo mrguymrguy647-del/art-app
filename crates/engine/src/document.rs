@@ -270,10 +270,22 @@ impl Document {
     /// apps), and is only there inside the canvas: the parts of edge
     /// tiles outside the canvas stay transparent.
     pub fn composite_tile(&self, coord: TileCoord, background: Background) -> Option<Tile> {
+        self.composite_tile_showing(coord, background, Layer::visible)
+    }
+
+    /// Like [`composite_tile`](Self::composite_tile), with only the layers
+    /// `show` picks (whether they're visible or not), e.g. to look at one
+    /// layer on its own.
+    pub fn composite_tile_showing(
+        &self,
+        coord: TileCoord,
+        background: Background,
+        show: impl Fn(&Layer) -> bool,
+    ) -> Option<Tile> {
         let mut showing = self
             .layers
             .iter()
-            .filter(|layer| layer.visible() && layer.opacity() > 0.0)
+            .filter(|layer| show(layer) && layer.opacity() > 0.0)
             .filter_map(|layer| layer.surface.tile(coord).map(|tile| (layer, tile)))
             .peekable();
         let (first_layer, first_tile) = *showing.peek()?;

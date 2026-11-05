@@ -502,3 +502,55 @@ painter can place text without trying it first.
 A reference picture (`tests/reference/text.png`) keeps text looking
 the same from now on, and a test checks that every printable ASCII
 character draws something.
+
+## 42. Seeing and checking: numbers first, then pictures
+An AI painting on a machine without a screen has two ways to know where
+things went: look at a picture, or read numbers. Pictures cost a lot to
+look at and are easy to misjudge by a few pixels; numbers are cheap and
+exact. So art-cli now gives both.
+
+**`check` paints for real** (at full size, saving nothing). Before, it
+only worked each command out without painting, which was quick but
+couldn't say what ended up where, and in one case disagreed with
+`render` about the layers. Painting takes under a second for the
+examples, and then everything it says is exactly what `render` makes.
+It lists:
+- each layer's box: the smallest rectangle around everything painted
+  on it (from its pixels), or "empty";
+- each named `group` and each `use` of a symbol, with the box around
+  what it drew. The player works these out from the shapes and strokes
+  it sends to be painted (a stroke's box includes half its brush
+  width), so they're in canvas pixels even in a preview. A paint bucket
+  counts only where it starts: where it spreads isn't known until it's
+  done;
+- warnings for what's probably a mistake: a command drawn entirely
+  outside the canvas (if a whole group or `use` is, one warning names
+  it rather than one per shape inside), a layer left empty, a symbol
+  defined but never used, a palette colour never used.
+
+Boxes are written `x 10..118, y 20..120` (left..right, top..bottom),
+the same as `art-cli info` already did.
+
+**`render` prints a short summary** (12 lines or fewer): canvas, the
+layers' boxes packed a few to a line, time, up to three warnings and
+the files saved. Long lists are left to `check`, so the summary stays
+readable after every render.
+
+**Viewing aids**, all for looking only:
+- `--layers "Sky,Duck"` shows just those layers (even ones the script
+  hid), `--hide "Sketch"` all but those. A name that isn't a layer is
+  an error, so a typo can't silently give an empty picture. The
+  `.artapp` always keeps every layer.
+- `--bg "#4080A0"` (with `--transparent`) puts a colour behind the
+  see-through parts, because a transparent sprite is hard to judge
+  on nothing.
+- `--grid 100` draws a light grid with coordinates. Lines are a little
+  darker on light colours and lighter on dark ones, so they show on
+  anything; when they'd be crowded (a small grid on a small preview)
+  only every 2nd, 5th, 10th... line is drawn.
+
+They go on previews, crops, snapshots and contact sheets (the sheet
+gets the colour but not the grid: its pictures are too small for
+labels). The real picture, `<name>.png`, and the `.artapp` never get
+them; at full size the picture with them is saved next to it as
+`<name>-view.png`.

@@ -27,15 +27,42 @@ target/release/art-cli render examples/sunset.json --preview --out /tmp/try
 ## 2. The loop
 
 ```bash
-art-cli check picture.json                          # mistakes? (milliseconds, paints nothing)
+art-cli check picture.json                          # mistakes, and where everything landed
 art-cli render picture.json --preview --sheet       # quick look: half size + every stage in one image
-art-cli render picture.json --crop 600,400,300,200 --zoom 3   # close-up of one area, full size, enlarged
+art-cli render picture.json --crop 600,400,300,200 --zoom 3 --grid 50  # close-up with coordinates
 art-cli render picture.json --snapshots             # full size, plus a PNG per stage
+art-cli render picture.json --preview --layers "Duck"   # one layer on its own (or --hide "Sketch")
+art-cli render sprite.json --transparent --bg "#4080A0" # see-through PNG; previews on a colour
 art-cli info out/picture.artapp                     # layers, blend modes, what's painted where
 ```
 
 Files go to `out/` (or `--out folder`): `picture.png`, `picture.artapp`, `picture-preview.png`,
-`picture-sheet.png`, `snapshots/NN-name.png`, `picture-crop-x-y-w-h.png`.
+`picture-sheet.png`, `snapshots/NN-name.png`, `picture-crop-x-y-w-h.png`, `picture-view.png`.
+
+**Read the numbers before the picture.** `render` ends with a summary of 12 lines or fewer:
+
+```
+Rendered sprite.json in 0.01 s
+  canvas 256 x 128, 11 commands
+  layers, bottom to top:
+    Sketch: empty | Body: x 33..223, y 41..103 | Labels: x 57..201, y 107..120
+  warnings (3):
+    command 10 (rect) draws entirely outside the canvas (x 400..420, y 10..30)
+    symbol "unused" (command 3) is defined but never used
+    layer "Sketch" is empty
+  saved: out/sprite.png, out/sprite.artapp
+```
+
+`check` paints the same way without saving, and lists every layer, every named `group` and every
+`use` of a symbol with the box around what it drew (`x left..right, y top..bottom`, in canvas
+pixels), then all the warnings. That answers "did the duck land where I meant?" without opening a
+picture. Warnings are things that are probably mistakes: something drawn entirely off the canvas,
+a layer left empty, a symbol never used, a palette colour never used.
+
+**Viewing aids:** `--grid 100` draws a light grid with coordinates, `--bg "#4080A0"` (with
+`--transparent`) shows see-through pictures on a colour, `--layers`/`--hide` choose which layers
+show. They go on previews, crops, snapshots and sheets. `picture.png` and `picture.artapp` never
+get the grid or the colour; at full size, the picture with them is `picture-view.png`.
 
 The same script always gives exactly the same picture, so a change you see is the change you made.
 Errors name the command (counting from 1) and what's wrong:
@@ -228,8 +255,10 @@ When you look at a render, ask:
 4. Edges: any hard, computer-straight edges that should be organic (`jitter`, `path` instead of
    `polygon`)? Any gaps where shapes should meet (run shapes past each other and past the edges)?
 5. Zoom in (`--crop … --zoom 3`) on faces, outlines and joins: holes, halos, wrong layer order?
-6. `art-cli info out/x.artapp` or `art-cli check`: are the layers what you expect, in the right
-   order, with the right blend modes?
+6. Do the numbers agree? The boxes from `check` say where each layer, group and symbol ended up;
+   use `--grid` to read positions off the picture, and `--layers` to look at one layer alone.
+7. `art-cli info out/x.artapp` or `art-cli check`: are the layers what you expect, in the right
+   order, with the right blend modes? Any warnings?
 
 Write down what's wrong, change only that, and render again.
 
@@ -276,8 +305,8 @@ People can draw in the Art App window and send you their work:
 
 ## 10. Speed
 
-- `check` takes milliseconds; a 1600×1000 render well under a second; `--preview` about a third
-  of that.
+- A 1600×1000 render takes well under a second; `--preview` about a third of that. `check`
+  paints at full size too (so its boxes are exact), in about the time of a render.
 - Snapshots and the contact sheet cost a little per stage; use a few meaningful snapshots rather
   than one per command.
 - `scatter` and `hatch` with thousands of strokes are fine; hundreds of thousands are slow.

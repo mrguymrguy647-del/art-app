@@ -198,3 +198,100 @@ fn a_reader_that_stops_early_is_not_an_error() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+/// A small see-through sprite with a few mistakes in it.
+const SPRITE: &str = r##"{
+  "palette": { "ink": "#202020", "yellow": "#F2C230", "teal": "#208080" },
+  "commands": [
+    { "cmd": "canvas", "width": 128, "height": 128 },
+    { "cmd": "define", "name": "dot", "commands": [
+      { "cmd": "layer", "name": "Body" },
+      { "cmd": "ellipse", "center": [0, 0], "radius": 20, "fill": "yellow" } ] },
+    { "cmd": "define", "name": "spare", "commands": [] },
+    { "cmd": "layer", "name": "Sketch" },
+    { "cmd": "use", "name": "dot", "translate": [64, 64] },
+    { "cmd": "layer", "name": "Labels" },
+    { "cmd": "text", "text": "Hi", "at": [64, 90], "size": 16, "color": "ink", "align": "center" },
+    { "cmd": "rect", "x": 200, "y": 10, "width": 10, "height": 10, "fill": "ink" }
+  ]
+}"##;
+
+#[test]
+fn check_says_where_things_are_and_what_looks_wrong() {
+    let out = folder("check-sprite");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sprite.json");
+    std::fs::write(&script, SPRITE).unwrap();
+    let output = art_cli().arg("check").arg(&script).output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "4 warnings)",
+        "    Sketch: empty",
+        "    Body: x 44..84, y 44..84",
+        "    command 5 (use \"dot\"): x 44..84, y 44..84",
+        "    command 8 (rect) draws entirely outside the canvas (x 200..210, y 10..20)",
+        "    symbol \"spare\" (command 3) is defined but never used",
+        "    palette colour \"teal\" is never used",
+        "    layer \"Sketch\" is empty",
+    ] {
+        assert!(
+            text.contains(expected),
+            "{expected:?} missing from:\n{text}"
+        );
+    }
+    std::fs::remove_dir_all(out).ok();
+}
+
+#[test]
+fn seeing_options_and_the_short_summary() {
+    let out = folder("see-sprite");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sprite.json");
+    std::fs::write(&script, SPRITE).unwrap();
+    let render = |extra: &[&str]| {
+        let output = art_cli()
+            .arg("render")
+            .arg(&script)
+            .args(["--out", out.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // The summary is short, with the layers' boxes and the warnings.
+    let summary = render(&["--transparent", "--bg", "#4080A0", "--grid", "32"]);
+    assert!(summary.lines().count() <= 12, "{summary}");
+    assert!(summary.contains("Body: x 44..84, y 44..84"), "{summary}");
+    assert!(summary.contains("warnings (4):"), "{summary}");
+    // The picture keeps its see-through background; the view has the
+    // colour behind it (and the grid).
+    let png = std::fs::read(out.join("sprite.png")).unwrap();
+    let view = std::fs::read(out.join("sprite-view.png")).unwrap();
+    assert_ne!(png, view);
+    assert!(summary.contains("sprite-view.png"), "{summary}");
+
+    // Only some layers.
+    let only = render(&["--layers", "Body"]);
+    assert!(only.contains("Labels (hidden)"), "{only}");
+    assert_ne!(std::fs::read(out.join("sprite.png")).unwrap(), png);
+    let missing = art_cli()
+        .arg("render")
+        .arg(&script)
+        .args(["--out", out.to_str().unwrap(), "--hide", "Skech"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("no layer called \"Skech\""),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    std::fs::remove_dir_all(out).ok();
+}

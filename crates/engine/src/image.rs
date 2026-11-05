@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::document::{Background, Document};
 use crate::file::{FileError, write_error, write_safely};
+use crate::layer::Layer;
 use crate::surface::PixelRect;
 use crate::tile::{Rgba8, TILE_SIZE};
 
@@ -62,6 +63,17 @@ impl Image {
     /// `area` of the picture as you'd see it: all visible layers combined,
     /// on `background`. Parts of `area` outside the canvas are transparent.
     pub fn from_document(document: &Document, area: PixelRect, background: Background) -> Self {
+        Self::from_document_showing(document, area, background, Layer::visible)
+    }
+
+    /// Like [`from_document`](Self::from_document), with only the layers
+    /// `show` picks (whether they're visible or not).
+    pub fn from_document_showing(
+        document: &Document,
+        area: PixelRect,
+        background: Background,
+        show: impl Fn(&Layer) -> bool,
+    ) -> Self {
         let width = (area.right - area.left).max(0) as u32;
         let height = (area.bottom - area.top).max(0) as u32;
         let mut image = Image::new(width, height, [0, 0, 0, 0]);
@@ -70,7 +82,7 @@ impl Image {
         let size = TILE_SIZE as i32;
 
         for coord in inside.tiles() {
-            let tile = document.composite_tile(coord, background);
+            let tile = document.composite_tile_showing(coord, background, &show);
             let (left, top) = coord.origin();
             let part = inside.intersect(&PixelRect::new(left, top, left + size, top + size));
             for y in part.top..part.bottom {
@@ -186,6 +198,13 @@ impl Image {
                 self.set_pixel(tx, ty, over(below, top));
             }
         }
+    }
+
+    /// This image laid over a plain `color`: see-through parts show it.
+    pub fn on_color(&self, color: Color) -> Image {
+        let mut out = Image::new(self.width, self.height, color);
+        out.paste(self, 0, 0);
+        out
     }
 
     /// Fills a rectangle with one colour (cut to the image).

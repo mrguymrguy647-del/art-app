@@ -19,7 +19,8 @@
 //! problems are reported with the command's number (and, inside groups,
 //! the way to it).
 
-use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -46,6 +47,7 @@ use crate::layer_commands::{
 };
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
+use crate::surface::PixelRect;
 use crate::text::{self, Align};
 use crate::tile::Rgba8;
 use crate::transform::Transform;
@@ -86,6 +88,33 @@ pub enum Event {
     /// The script moved on from a layer it had painted on (or ended).
     LayerDone(String),
 }
+
+/// What a played script drew where, and what looks like a mistake, so
+/// a script can be checked without looking at the picture. See
+/// [`Player::report`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Report {
+    /// Every named group and every `use`, in the order they started.
+    pub parts: Vec<Part>,
+    /// Things that are probably mistakes, in plain words.
+    pub warnings: Vec<String>,
+}
+
+/// A named group or a `use`, and where its drawing went.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Part {
+    /// Where it is in the script, like `command 12 (group "duck")` or
+    /// `command 20 (use "pair") > 1 (use "duck")`.
+    pub path: String,
+    /// The box around everything it drew, in canvas pixels (the brush's
+    /// width included). `None` if it drew nothing. It isn't cut to the
+    /// canvas, so it shows what sticks out.
+    pub area: Option<PixelRect>,
+}
+
+/// A box around something drawn: left, top, right, bottom, in the pixels
+/// being painted.
+type Extent = (f32, f32, f32, f32);
 
 /// What `advance` stopped at.
 #[derive(Clone, Debug, PartialEq)]
@@ -173,6 +202,17 @@ struct Frame {
     swaps: Vec<(Rgba, Rgba)>,
     /// For a `repeat`: the copies still to come.
     copies: Option<Copies>,
+    /// Where this frame is in the script, for messages (`None` for the
+    /// script itself), like `command 12 (group "duck")`.
+    path: Option<String>,
+    /// The box around everything drawn in this frame so far.
+    drawn: Option<Extent>,
+    /// Warnings about drawing outside the canvas from inside this frame,
+    /// kept until it ends: if all of it was outside, one warning about
+    /// the whole frame replaces them.
+    outside: Vec<String>,
+    /// For a named group or a `use`: its place in the report's parts.
+    part: Option<usize>,
 }
 
 /// A `repeat` plays its commands once per copy, each with the step
@@ -200,6 +240,8 @@ struct NewFrame {
     seed_base: u64,
     symbol: Option<String>,
     swaps: Vec<(Rgba, Rgba)>,
+    /// True for a named group or a `use`: listed in the report.
+    part: bool,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -249,6 +291,14 @@ pub struct Player {
     painted: Option<String>,
     events: VecDeque<Event>,
     finished: bool,
+    /// For the report: named groups and uses, warnings so far, the
+    /// symbols defined (with their command numbers) and used, and the
+    /// palette colours used.
+    parts: Vec<Part>,
+    warnings: Vec<String>,
+    defined: Vec<(String, usize)>,
+    used_symbols: HashSet<String>,
+    used_colors: RefCell<HashSet<String>>,
 }
 
 impl Player {
@@ -303,6 +353,11 @@ impl Player {
             painted: None,
             events: VecDeque::new(),
             finished: false,
+            parts: Vec::new(),
+            warnings: Vec::new(),
+            defined: Vec::new(),
+            used_symbols: HashSet::new(),
+            used_colors: RefCell::new(HashSet::new()),
         })
     }
 
@@ -405,6 +460,10 @@ impl Player {
             symbol: None,
             swaps: Vec::new(),
             copies: None,
+            path: None,
+            drawn: None,
+            outside: Vec::new(),
+            part: None,
         }];
     }
 
@@ -437,8 +496,10 @@ impl Player {
                     let command = &commands[index];
                     self.current = index;
                     self.current_seed = self.default_seed(index);
+                    let queued = self.jobs.len();
                     self.start_command(document, command)
                         .map_err(|message| self.error_at(index, command, message))?;
+                    self.note_drawn(document, index, command, queued);
                 } else {
                     self.next_copy_or_end_frame(document);
                 }
@@ -519,6 +580,14 @@ impl Player {
                 "groups, symbols and repeats are nested too deeply (more than {MAX_DEPTH})"
             ));
         }
+        let path = self.path_to(self.current, &new.label);
+        let part = new.part.then(|| {
+            self.parts.push(Part {
+                path: path.clone(),
+                area: None,
+            });
+            self.parts.len() - 1
+        });
         let parent = self.frame();
         let own = new.placement.transform;
         let frame = Frame {
@@ -542,6 +611,10 @@ impl Player {
             symbol: new.symbol,
             swaps: new.swaps,
             copies: None,
+            path: Some(path),
+            drawn: None,
+            outside: Vec::new(),
+            part,
         };
         self.frames.push(frame);
         Ok(())
@@ -586,6 +659,26 @@ impl Player {
         if let Some(saved) = frame.restore {
             self.restore(document, saved.layer, saved.brush, saved.brush_alpha);
         }
+        // For the report: hand what it drew to the frame around it.
+        if let Some(index) = frame.part {
+            self.parts[index].area = frame.drawn.map(|area| self.canvas_box(area));
+        }
+        let mut outside = frame.outside;
+        if let (Some(drawn), Some(path)) = (frame.drawn, &frame.path)
+            && outside.len() > 1
+            && !overlaps(drawn, document.bounds())
+        {
+            outside = vec![self.outside_warning(path, drawn)];
+        }
+        match self.frames.last_mut() {
+            Some(parent) => {
+                if let Some(drawn) = frame.drawn {
+                    parent.drawn = Some(union(parent.drawn, drawn));
+                }
+                parent.outside.append(&mut outside);
+            }
+            None => self.warnings.append(&mut outside),
+        }
     }
 
     fn restore(
@@ -605,15 +698,37 @@ impl Player {
         }
     }
 
-    /// The error for a mistake in command `index` of the innermost frame,
-    /// with the way to it from the script's own commands.
-    fn error_at(&self, index: usize, command: &Command, message: String) -> ScriptError {
+    /// The way to command `index` of the innermost frame from the
+    /// script's own commands: (number, label) for each step.
+    fn steps_to(&self, index: usize, label: &str) -> Vec<(usize, String)> {
         let mut steps: Vec<(usize, String)> = self
             .frames
             .iter()
             .filter_map(|frame| frame.label.clone())
             .collect();
-        steps.push((index + 1, command.label()));
+        steps.push((index + 1, label.to_owned()));
+        steps
+    }
+
+    /// Where command `index` of the innermost frame is, as in error
+    /// messages: `command 12 (group "duck") > 3 (ellipse)`.
+    fn path_to(&self, index: usize, label: &str) -> String {
+        let steps = self.steps_to(index, label);
+        let mut path = String::new();
+        for (i, (number, label)) in steps.iter().enumerate() {
+            if i == 0 {
+                path = format!("command {number} ({label})");
+            } else {
+                path.push_str(&format!(" > {number} ({label})"));
+            }
+        }
+        path
+    }
+
+    /// The error for a mistake in command `index` of the innermost frame,
+    /// with the way to it from the script's own commands.
+    fn error_at(&self, index: usize, command: &Command, message: String) -> ScriptError {
+        let mut steps = self.steps_to(index, &command.label());
         let (number, label) = steps.remove(0);
         ScriptError {
             command: Some(number),
@@ -625,6 +740,73 @@ impl Player {
             line: None,
             message,
         }
+    }
+
+    // ---- The report ---------------------------------------------------------------
+
+    /// What was drawn where, and what looks like a mistake. Complete once
+    /// the script has finished (before that, it's what's known so far).
+    pub fn report(&self) -> Report {
+        let mut warnings = self.warnings.clone();
+        for (name, command) in &self.defined {
+            if !self.used_symbols.contains(name) {
+                warnings.push(format!(
+                    "symbol \"{name}\" (command {command}) is defined but never used"
+                ));
+            }
+        }
+        let used = self.used_colors.borrow();
+        let mut unused: Vec<&str> = self
+            .palette
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !used.contains(*name))
+            .collect();
+        unused.sort_unstable();
+        for name in unused {
+            warnings.push(format!("palette colour \"{name}\" is never used"));
+        }
+        Report {
+            parts: self.parts.clone(),
+            warnings,
+        }
+    }
+
+    /// After a command has started: adds the box around what it queued to
+    /// its frame's, and warns if all of it is outside the canvas.
+    fn note_drawn(&mut self, document: &Document, index: usize, command: &Command, queued: usize) {
+        let mut drawn = None;
+        for job in self.jobs.iter().skip(queued) {
+            drawn = Some(union(drawn, job_extent(job, document)));
+        }
+        let Some(drawn) = drawn else {
+            return;
+        };
+        let warning = (!overlaps(drawn, document.bounds()))
+            .then(|| self.outside_warning(&self.path_to(index, &command.label()), drawn));
+        let frame = self.frames.last_mut().expect("a command runs in a frame");
+        frame.drawn = Some(union(frame.drawn, drawn));
+        frame.outside.extend(warning);
+    }
+
+    fn outside_warning(&self, path: &str, drawn: Extent) -> String {
+        let area = self.canvas_box(drawn);
+        format!(
+            "{path} draws entirely outside the canvas (x {}..{}, y {}..{})",
+            area.left, area.right, area.top, area.bottom
+        )
+    }
+
+    /// A box in the pixels being painted, in canvas pixels (they differ
+    /// when painting smaller, for a preview).
+    fn canvas_box(&self, (left, top, right, bottom): Extent) -> PixelRect {
+        let scale = self.options.scale;
+        PixelRect::new(
+            (left / scale).floor() as i32,
+            (top / scale).floor() as i32,
+            (right / scale).ceil() as i32,
+            (bottom / scale).ceil() as i32,
+        )
     }
 
     // ---- Placing drawing on the canvas ------------------------------------------
@@ -875,6 +1057,7 @@ impl Player {
                 // refused when the script is read.
                 self.symbols
                     .insert(define.name.clone(), Arc::new(define.commands.clone()));
+                self.defined.push((define.name.clone(), self.current + 1));
                 Ok(())
             }
             Command::Use(using) => self.use_symbol(document, using),
@@ -903,6 +1086,7 @@ impl Player {
             seed_base: self.current_seed,
             symbol: None,
             swaps: Vec::new(),
+            part: command.name.is_some(),
         };
         self.push_frame(document, new)
     }
@@ -963,7 +1147,9 @@ impl Player {
             seed_base: name_seed(name),
             symbol: Some(name.clone()),
             swaps,
+            part: true,
         };
+        self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
     }
 
@@ -990,7 +1176,7 @@ impl Player {
         .transform;
         let new = NewFrame {
             commands: Arc::new(command.commands.clone()),
-            label: "repeat, copy 1".to_owned(),
+            label: "repeat".to_owned(),
             placement: Placement {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
@@ -999,9 +1185,14 @@ impl Player {
             seed_base: Random::mix(self.current_seed, 1),
             symbol: None,
             swaps: Vec::new(),
+            part: false,
         };
         self.push_frame(document, new)?;
         let frame = self.frames.last_mut().expect("just pushed");
+        // Its commands are numbered by copy in messages.
+        if let Some((_, label)) = &mut frame.label {
+            *label = "repeat, copy 1".to_owned();
+        }
         frame.copies = Some(Copies {
             count: command.count,
             current: 0,
@@ -1845,6 +2036,9 @@ impl Player {
         if text.starts_with('#') {
             return parse_hex(text);
         }
+        if self.palette.contains_key(text) {
+            self.used_colors.borrow_mut().insert(text.to_owned());
+        }
         self.palette.get(text).copied().ok_or_else(|| {
             let names: Vec<&str> = self.palette.keys().map(String::as_str).collect();
             if names.is_empty() {
@@ -2252,6 +2446,51 @@ fn range(value: Option<&Value>, default: (f32, f32), what: &str) -> Result<(f32,
         }
         Some(_) => Err(help()),
     }
+}
+
+/// The box around what a job paints, in the pixels being painted.
+fn job_extent(job: &Job, document: &Document) -> Extent {
+    let around = |points: &mut dyn Iterator<Item = Pt>, margin: f32| {
+        let (l, t, r, b) = points.fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(l, t, r, b), (x, y)| (l.min(x), t.min(y), r.max(x), b.max(y)),
+        );
+        (l - margin, t - margin, r + margin, b + margin)
+    };
+    let canvas = document.bounds();
+    let whole = (
+        canvas.left as f32,
+        canvas.top as f32,
+        canvas.right as f32,
+        canvas.bottom as f32,
+    );
+    match job {
+        Job::Stroke { brush, points, .. } => {
+            around(&mut points.iter().map(|p| (p.x, p.y)), brush.size / 2.0)
+        }
+        Job::Area {
+            shape: Some(rings), ..
+        } => around(&mut rings.iter().flatten().copied(), 0.0),
+        Job::Area { shape: None, .. } => whole,
+        // Where it ends up isn't known until it's done: count where it starts.
+        Job::Bucket { fill, .. } => (fill.x, fill.y, fill.x + 1.0, fill.y + 1.0),
+    }
+}
+
+/// The box around both (`a` may be nothing yet).
+fn union(a: Option<Extent>, b: Extent) -> Extent {
+    match a {
+        Some(a) => (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)),
+        None => b,
+    }
+}
+
+/// True if any of `area` is inside `canvas`.
+fn overlaps((left, top, right, bottom): Extent, canvas: PixelRect) -> bool {
+    left < canvas.right as f32
+        && right > canvas.left as f32
+        && top < canvas.bottom as f32
+        && bottom > canvas.top as f32
 }
 
 fn to_stroke_points(points: &[Pt]) -> Vec<StrokePoint> {
@@ -3121,5 +3360,120 @@ mod tests {
             assert!(problem.contains(expected), "{problem}");
             assert!(problem.starts_with("command 2 (text)"), "{problem}");
         }
+    }
+
+    // ---- The report -----------------------------------------------------------
+
+    fn report_with(text: &str, options: PlayOptions) -> Report {
+        let mut player = Player::new(Script::parse(text).unwrap(), options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        player.report()
+    }
+
+    fn report_of(text: &str) -> Report {
+        report_with(text, PlayOptions::default())
+    }
+
+    #[test]
+    fn named_groups_and_uses_report_where_they_drew() {
+        let report = report_of(&small(
+            r##"{ "cmd": "define", "name": "dot", "commands": [
+                    { "cmd": "ellipse", "center": [0, 0], "radius": 5, "fill": "red" } ] },
+                { "cmd": "define", "name": "pair", "commands": [
+                    { "cmd": "use", "name": "dot" },
+                    { "cmd": "use", "name": "dot", "translate": [20, 0] } ] },
+                { "cmd": "group", "name": "box", "commands": [
+                    { "cmd": "rect", "x": 10, "y": 20, "width": 50, "height": 30, "fill": "ink" } ] },
+                { "cmd": "group", "commands": [
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" } ] },
+                { "cmd": "use", "name": "pair", "translate": [100, 100] }"##,
+        ));
+        let parts: Vec<(&str, Option<PixelRect>)> = report
+            .parts
+            .iter()
+            .map(|part| (part.path.as_str(), part.area))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                (
+                    r#"command 4 (group "box")"#,
+                    Some(PixelRect::new(10, 20, 60, 50))
+                ),
+                // (The group without a name isn't listed.)
+                (
+                    r#"command 6 (use "pair")"#,
+                    Some(PixelRect::new(95, 95, 125, 105))
+                ),
+                (
+                    r#"command 6 (use "pair") > 1 (use "dot")"#,
+                    Some(PixelRect::new(95, 95, 105, 105))
+                ),
+                (
+                    r#"command 6 (use "pair") > 2 (use "dot")"#,
+                    Some(PixelRect::new(115, 95, 125, 105))
+                ),
+            ]
+        );
+        // Brush widths count: a 10-pixel line reaches 5 pixels past its ends.
+        let line = report_of(&small(
+            r##"{ "cmd": "group", "name": "line", "commands": [
+                { "cmd": "stroke", "points": [[50, 50], [100, 50]], "size": 10, "color": "ink" } ] }"##,
+        ));
+        assert_eq!(line.parts[0].area, Some(PixelRect::new(45, 45, 105, 55)));
+    }
+
+    #[test]
+    fn boxes_are_in_canvas_pixels_in_previews_too() {
+        let text = small(
+            r##"{ "cmd": "group", "name": "box", "commands": [
+                { "cmd": "rect", "x": 10, "y": 20, "width": 50, "height": 30, "fill": "ink" } ] }"##,
+        );
+        let half = report_with(
+            &text,
+            PlayOptions {
+                scale: 0.5,
+                ..PlayOptions::default()
+            },
+        );
+        assert_eq!(half.parts[0].area, Some(PixelRect::new(10, 20, 60, 50)));
+    }
+
+    #[test]
+    fn drawing_outside_the_canvas_is_reported_once() {
+        let report = report_of(&small(
+            r##"{ "cmd": "ellipse", "center": [300, 50], "radius": 10, "fill": "ink" },
+                { "cmd": "rect", "x": 190, "y": 0, "width": 50, "height": 10, "fill": "ink" },
+                { "cmd": "define", "name": "two", "commands": [
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "red" },
+                    { "cmd": "rect", "x": 20, "y": 0, "width": 10, "height": 10, "fill": "red" } ] },
+                { "cmd": "use", "name": "two", "translate": [-100, 0] }"##,
+        ));
+        assert_eq!(
+            report.warnings,
+            [
+                "command 2 (ellipse) draws entirely outside the canvas (x 290..310, y 40..60)",
+                // (The rect half on the canvas is fine.)
+                r#"command 5 (use "two") draws entirely outside the canvas (x -100..-70, y 0..10)"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn unused_symbols_and_palette_colours_are_reported() {
+        let report = report_of(&small(
+            r##"{ "cmd": "define", "name": "tree", "commands": [
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "red" } ] },
+                { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" }"##,
+        ));
+        assert_eq!(
+            report.warnings,
+            [
+                r#"symbol "tree" (command 2) is defined but never used"#,
+                // Only used inside the symbol that's never used.
+                r#"palette colour "red" is never used"#,
+            ]
+        );
     }
 }
