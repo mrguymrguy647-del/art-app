@@ -8,9 +8,9 @@ exists (layers, groups, symbols, keyframes, pixel mode) and on **three engine id
 1. **Coverage masks.** A group's drawing can be limited by a mask: every dab, fill and flood
    inside the group is multiplied by the mask's coverage. Clipping, alpha lock and group masks
    are all this one thing, applied in three places.
-2. **Group buffers.** A group with a `filter` or an `outline` paints into a scratch surface, the
-   effect is applied to that surface as a whole, and the result is laid on the layer. One
-   mechanism gives blur, glow, drop shadows, colour adjustments and seamless outlines.
+2. **Group buffers.** A group with a `filter` or an `outline` paints into scratch surfaces, one
+   per layer it touches; the effect is applied to those, and the result is laid on the layers.
+   One mechanism gives blur, glow, drop shadows, colour adjustments and seamless outlines.
 3. **Paint sources.** Wherever a colour goes today (`fill`, brush `color`, gradient stops), a
    noise or a texture may go instead. Brush tips are small pictures the brush stamps.
 
@@ -118,8 +118,13 @@ keyframed, what it means on a pixel canvas, and what the app shows.
 - **Texture** is a tiled picture as a paint source: a PNG (`file`, `scale`, `offset`, and
   optional `colors` to tint it by its lightness) or the built-in `"paper"` grain (made from noise,
   no file). A paper look is a texture-filled layer on `multiply` or `overlay` at low opacity.
-- **Keyframes:** `offset` and `scale` inside a noise or texture fill may be keyframes (drifting
-  clouds, moving water); so may `contrast`.
+- **Coordinates:** a noise or texture lives in the coordinates of the group it's used in, like
+  the shapes there: it moves, scales and turns with the group, so a textured duck doesn't swim
+  through its texture while it walks, and a tilted rock has tilted grain. (The paint source is
+  sampled through the inverse of the group's transform.) A test checks that a textured symbol
+  moved by a group gives the same pixels as the texture moved by hand.
+- **Keyframes:** `offset` and `scale` inside a noise or texture fill may be keyframes, for
+  deliberate drift (clouds, water); so may `contrast`.
 - **Pixel canvas:** both work; the vote snaps them to the palette, which gives dithered-looking
   texture for free.
 - **App:** nothing new to paint with (a gradient tool already exists); textures and noise are
@@ -145,10 +150,16 @@ keyframed, what it means on a pixel canvas, and what the app shows.
 - **The whole picture:** `"from": "below"` on a new layer fills it with everything below it
   flattened, so a gradient map or an adjustment on that layer unifies the picture (at `opacity`
   0.5, half way). No second mechanism.
-- **`filter` on a group or `use`:** the group paints into a scratch surface (on the selected
-  layer only: a `layer` command inside is a mistake), the filter is applied to that drawing
-  alone, and it's laid on the layer. That's how a sun gets a glow, a duck a drop shadow, a far
-  hill a haze, without touching what's already on the layer.
+- **`filter` on a group or `use`:** the group paints into scratch surfaces instead of the
+  layers, the filter is applied to that drawing alone, and the result is laid on the layers.
+  That's how a sun gets a glow, a duck a drop shadow, a far hill a haze, without touching what's
+  already on the layers. **The rule for several layers** (a symbol may switch layers; the
+  animated duck paints on "Shadow" and "Duck"): the group keeps one scratch surface per layer it
+  paints on. `blur`, `glow`, `adjust` and `gradient_map` are applied to each layer's part
+  separately, then each part is laid on its own layer. A `shadow` (and an `outline`, below) is
+  made from the **combined silhouette** of all the parts and laid on the **lowest** of those
+  layers, under everything the group drew, so one shadow falls behind the whole duck and no
+  seam shows between its layers.
 - **Keyframes:** every number in a group's `filter` (a pulsing glow, a shadow that moves with
   the light); the `filter` command's numbers too, in an animation.
 - **Pixel canvas:** `blur`, `glow` and a blurred `shadow` are mistakes (they'd melt the pixels);
@@ -165,9 +176,10 @@ keyframed, what it means on a pixel canvas, and what the app shows.
   "outline": { "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } } }
 ```
 
-A group or `use` with `outline` paints into a scratch surface (like a filter), and the outline
-is drawn around the **silhouette of everything together**, behind it, so a head on a body shows
-no seam. `rim` adds a light line along the inside edge on the side facing `angle` (degrees, where
+A group or `use` with `outline` paints into scratch surfaces (like a filter), and the outline
+is drawn around the **silhouette of everything together**, on the lowest layer the group
+painted, behind it, so a head on a body shows no seam, even when the parts are on different
+layers. `rim` adds a light line along the inside edge on the side facing `angle` (degrees, where
 the light comes from), for rim light in one line. Shapes inside keep their own `outline` fields if
 they have them. It works with keyframes and `mirror` because it happens after the drawing. On a
 pixel canvas it's one or more whole pixels, like `pixel`'s `outline`.
@@ -186,8 +198,11 @@ symbol or colour defined twice says both files. Mistakes inside an included file
 `library/cloud.json: command 3 (define "cloud") > ...`. `check`'s "never used" warnings skip
 included symbols (a library has more than any one picture uses).
 
-`library/` in the repository holds reusable parts made with these tools, each with parameters, a
+`skills/art-app/library/` holds reusable parts made with these tools, each with parameters, a
 small example script and a preview picture: cloud, water, grass, reed, tree, lily pad, the duck.
+It sits next to `skills/art-app/gallery/`, so everything an agent learns from is one folder that
+can be copied or installed as a skill on its own; a script includes a part by a path relative to
+itself (`"file": "../skills/art-app/library/cloud.json"` from `examples/`).
 
 ## 7. Fixes from phase 2's reviews
 
