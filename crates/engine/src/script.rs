@@ -17,6 +17,7 @@
 //! it; `script/geometry.rs` works out the shapes. The full description,
 //! with examples, is in `docs/script-format.md`.
 
+pub mod animate;
 mod geometry;
 mod player;
 pub mod record;
@@ -612,21 +613,28 @@ pub struct TextCmd {
 pub struct GroupCmd {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// `[x, y]`. This and the fields below may also be keyframes
+    /// (`{"keys": ...}`) or a symbol parameter (`"$name"`): see
+    /// `animate.rs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub translate: Option<[f32; 2]>,
+    pub translate: Option<Value>,
     /// One number, or `[sx, sy]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rotate: Option<f32>,
+    pub rotate: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mirror: Option<String>,
+    pub mirror: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<[f32; 2]>,
+    pub origin: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
+    pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
+    /// `true`: not turned by the groups around it (a foot stays flat
+    /// while the leg turns). It still moves and mirrors with them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upright: Option<bool>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -637,6 +645,10 @@ pub struct GroupCmd {
 #[serde(deny_unknown_fields)]
 pub struct DefineCmd {
     pub name: String,
+    /// Parameters and their defaults: `{"leg": 0, "eye": "eye_open"}`.
+    /// Inside the symbol, `"$leg"` stands for the value a `use` gives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<BTreeMap<String, Value>>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -648,23 +660,30 @@ pub struct DefineCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UseCmd {
+    /// The symbol's name (or a parameter, `"$mouth"`).
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub translate: Option<[f32; 2]>,
+    pub translate: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rotate: Option<f32>,
+    pub rotate: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mirror: Option<String>,
+    pub mirror: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origin: Option<[f32; 2]>,
+    pub origin: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opacity: Option<f32>,
+    pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colors: Option<BTreeMap<String, String>>,
+    pub upright: Option<bool>,
+    /// Colours to paint instead of the symbol's: `{"yellow": "#C04040"}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<BTreeMap<String, Value>>,
+    /// Values for the symbol's parameters: `{"leg": 20}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<BTreeMap<String, Value>>,
 }
 
 /// `repeat`: draws `commands` `count` times, each copy with `step`

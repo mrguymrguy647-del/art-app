@@ -482,6 +482,53 @@ the frame number, counting from 0; keyframes (next section) make values change w
 level `"pivot": [x, y]` is the character's anchor point for sprite sheets (default: the bottom
 centre of the canvas). A script without `animations` is a single picture, exactly as before.
 
+### Keyframes: values that change with the frame
+
+Any number of a `group` or `use` (`translate`, `scale`, `rotate`, `origin`, `opacity`, `mirror`,
+the new colour in `colors`, and a parameter in `with`) can be keyframes instead:
+
+```json
+{ "cmd": "group", "name": "bounce", "origin": [64, 100],
+  "translate": { "keys": [[0, [0, -60]], [6, [0, 0], "out"], [9, [0, -8]], [12, [0, 0]]] },
+  "scale": { "keys": [[0, [0.9, 1.1]], [6, [1.2, 0.8], "out"], [12, [1, 1]]], "ease": "in-out" },
+  "commands": [ { "cmd": "ellipse", "center": [64, 90], "radius": 10, "fill": "#F2C230" } ] }
+```
+
+`keys` is a list of `[frame, value]` pairs in frame order. Before the first key the value is the
+first key's, after the last the last's; between keys it blends: numbers, `[x, y]` lists (each
+number on its own) and colours (each channel on its own). Anything else, like a symbol name or
+`"x"` for `mirror`, holds until the next key: that's how a mouth is swapped at a frame.
+
+| Field | |
+|---|---|
+| `keys` | `[[frame, value], ...]`, or `[frame, value, "ease"]` to name the curve *into* that key. |
+| `ease` | The curve between keys: `linear` (default), `in` (starts slow), `out` (ends slow), `in-out`, `step` (holds the earlier value until the next key). |
+| `shift` | Plays the same keys this many frames later, wrapping round in a looping animation. A walk's far leg is the near leg's keys with `"shift"` of half the cycle. |
+
+Exactly on a key's frame, the value is the key's. In a single picture (no animation) keyframes
+are read at frame 0. To animate text or a shape, put it in a group.
+
+### Symbol parameters, and `upright`
+
+```json
+{ "cmd": "define", "name": "leg", "params": { "angle": 0 }, "commands": [
+  { "cmd": "group", "name": "thigh", "rotate": "$angle", "commands": [
+    { "cmd": "line", "from": [0, 0], "to": [0, 17], "size": 4, "color": "#E08020", "taper": 0 },
+    { "cmd": "use", "name": "foot", "translate": [0, 17], "upright": true } ] } ] }
+{ "cmd": "use", "name": "leg", "translate": [60, 96], "with": { "angle": { "keys": [[0, -22], [4, 22], [8, -22]] } } }
+{ "cmd": "use", "name": "leg", "translate": [68, 96], "with": { "angle": { "keys": [[0, -22], [4, 22], [8, -22]], "shift": 4 } } }
+```
+
+`define` takes `params`: names and their defaults. Inside the symbol, `"$angle"` stands for the
+value, anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`). A `use` gives
+values with `with`; a name the symbol doesn't have is a mistake. A value in `with` may be
+keyframes, so one symbol covers every pose of a walk. There's no arithmetic (`"-$angle"`): use
+`shift`, a second parameter or `mirror`.
+
+`"upright": true` on a group or `use` undoes the turning of everything around it: a foot inside a
+turned leg still moves with the leg (its position is turned) but stays flat on the ground. It still
+mirrors and resizes with the groups around it.
+
 `art-cli render` paints frame 0 of the first animation unless told otherwise: `--frame 3`,
 `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation. Frames are
 saved as `name-walk-003.png`. `art-cli check` plays every frame of every animation, so a mistake

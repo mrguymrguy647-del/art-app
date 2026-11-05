@@ -230,6 +230,24 @@ pub fn without_palette(commands: &[Command], palette: &BTreeMap<String, String>)
         .collect()
 }
 
+/// Calls `f` on a colour written as a string, or on each key's colour
+/// in keyframes.
+fn colors_in_value(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+    match value {
+        Value::String(color) => f(color),
+        Value::Object(keyed) => {
+            if let Some(Value::Array(keys)) = keyed.get_mut("keys") {
+                for key in keys {
+                    if let Some(Value::String(color)) = key.get_mut(1) {
+                        f(color);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Calls `f` on every colour written in `command`.
 fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
     let paint = |value: &mut Value, f: &mut dyn FnMut(&mut String)| match value {
@@ -323,13 +341,14 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             }
         }
         Command::Use(c) => {
-            // Both sides of a colour swap are colours.
+            // Both sides of a colour swap are colours (the new one may be
+            // keyframes, with a colour in each key).
             if let Some(swaps) = &mut c.colors {
                 *swaps = std::mem::take(swaps)
                     .into_iter()
                     .map(|(mut from, mut to)| {
                         f(&mut from);
-                        f(&mut to);
+                        colors_in_value(&mut to, f);
                         (from, to)
                     })
                     .collect();

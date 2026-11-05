@@ -97,10 +97,10 @@ as keyframes instead of a number:
   "commands": [ "...the scene..." ] }
 ```
 
-- Keyframes work on: `group` and `use` (`translate`, `scale`, `rotate`, `origin`, `opacity`,
-  `mirror`, the `name` of a `use`, `colors` and `with`), `text` (`at`, `size`, `rotate`,
-  `opacity`, `text`) and `seed` on any command. Not on layers, brushes or shapes: move those by
-  putting them in a group.
+- Keyframes work on `group` and `use` (`translate`, `scale`, `rotate`, `origin`, `opacity`,
+  `mirror`, `colors` and `with`). Not on layers, brushes, shapes or text: move those by putting
+  them in a group. (Built: a `use`'s `name` takes a parameter, `"$mouth"`, which is how a mouth
+  is swapped; keyframing `text` and `seed` was left out as not worth its code.)
 - Inside a symbol, keyframes see the same frame number, so a symbol can animate itself (a
   breathing body), and a `use` of it can animate on top.
 

@@ -1,0 +1,53 @@
+{
+  "title": "Duck: idle and walk, one set of symbols with parameters and keyframes",
+  "notes": "Render with --transparent. Frames are 128 x 128; the duck stands on the pivot.",
+  "pivot": [64, 116],
+  "palette": {
+    "yellow": "#F2C230", "wing": "#D9A21E", "ink": "#2A2420",
+    "beak": "#E8892B", "leg": "#E8892B", "leg_far": "#B8601A", "shadow": "#00000030"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 128, "height": 128 },
+    { "cmd": "define", "name": "foot", "commands": [
+      { "cmd": "polygon", "points": [[-3, -1], [11, 2], [13, 6], [-4, 6]], "fill": "leg", "outline": "ink", "outline_size": 1.5 }
+    ] },
+    { "cmd": "define", "name": "leg", "params": { "angle": 0, "lift": 0 }, "commands": [
+      { "cmd": "group", "name": "thigh", "rotate": "$angle", "commands": [
+        { "cmd": "line", "from": [0, 0], "to": [0, 17], "size": 4, "color": "leg", "taper": 0 },
+        { "cmd": "use", "name": "foot", "translate": [0, 17], "upright": true }
+      ] }
+    ] },
+    { "cmd": "define", "name": "body", "params": { "squash": 1 }, "commands": [
+      { "cmd": "group", "name": "torso", "scale": [1, "$squash"], "origin": [0, 0], "commands": [
+        { "cmd": "polygon", "points": [[-24, -30], [-42, -42], [-30, -18]], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+        { "cmd": "ellipse", "center": [0, -22], "radius": [30, 20], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+        { "cmd": "ellipse", "center": [22, -50], "radius": 14, "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+        { "cmd": "ellipse", "center": [16, -34], "radius": [8, 10], "fill": "yellow" },
+        { "cmd": "ellipse", "center": [-6, -22], "radius": [17, 9], "rotation": -12, "fill": "wing", "outline": "ink", "outline_size": 2 },
+        { "cmd": "polygon", "points": [[33, -54], [49, -48], [33, -43]], "fill": "beak", "outline": "ink", "outline_size": 1.5 },
+        { "cmd": "ellipse", "center": [27, -54], "radius": 2.5, "fill": "ink" }
+      ] }
+    ] },
+    { "cmd": "define", "name": "duck", "params": { "near": 0, "far": 0, "bob": 0, "squash": 1 }, "commands": [
+      { "cmd": "layer", "name": "Shadow" },
+      { "cmd": "ellipse", "center": [0, 20], "radius": [28, 4], "fill": "shadow" },
+      { "cmd": "layer", "name": "Duck" },
+      { "cmd": "use", "name": "leg", "translate": [-4, 2], "with": { "angle": "$far" }, "colors": { "leg": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, "$bob"], "with": { "squash": "$squash" } },
+      { "cmd": "use", "name": "leg", "translate": [4, 2], "with": { "angle": "$near" } }
+    ] }
+  ],
+  "animations": {
+    "idle": { "frames": 4, "fps": 6, "loop": true, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [64, 96],
+        "with": { "bob": { "keys": [[0, 0], [2, 2], [4, 0]], "ease": "in-out" },
+                  "squash": { "keys": [[0, 1], [2, 0.96], [4, 1]], "ease": "in-out" } } }
+    ] },
+    "walk": { "frames": 8, "fps": 12, "loop": true, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [64, 96],
+        "with": { "near": { "keys": [[0, -22], [4, 22], [8, -22]], "ease": "in-out" },
+                  "far": { "keys": [[0, -22], [4, 22], [8, -22]], "ease": "in-out", "shift": 4 },
+                  "bob": { "keys": [[0, 0], [2, -3], [4, 0], [6, -3], [8, 0]] } } }
+    ] }
+  }
+}

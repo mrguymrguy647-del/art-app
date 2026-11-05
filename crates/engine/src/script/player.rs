@@ -20,13 +20,14 @@
 //! the way to it).
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
@@ -229,6 +230,16 @@ struct Frame {
     part: Option<usize>,
     /// The animation whose own commands this frame plays, if it's that.
     animation: Option<String>,
+    /// For a `use`: the symbol's parameters, with the values this use
+    /// gave (defaults for the rest). `"$name"` inside looks them up.
+    params: Option<Arc<BTreeMap<String, Value>>>,
+}
+
+/// A symbol: what `define` stored.
+struct Symbol {
+    commands: Arc<Vec<Command>>,
+    /// Its parameters and their defaults.
+    params: Arc<BTreeMap<String, Value>>,
 }
 
 /// A `repeat` plays its commands once per copy, each with the step
@@ -258,6 +269,9 @@ struct NewFrame {
     swaps: Vec<(Rgba, Rgba)>,
     /// True for a named group or a `use`: listed in the report.
     part: bool,
+    params: Option<Arc<BTreeMap<String, Value>>>,
+    /// Not turned by the frames around it.
+    upright: bool,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -272,6 +286,8 @@ struct Placement {
     transform: Transform,
     opacity: f32,
     scale_brush: bool,
+    /// The point it turns and resizes around (drawing units).
+    origin: (f32, f32),
 }
 
 /// Plays a script, start to finish.
@@ -280,7 +296,7 @@ pub struct Player {
     commands: Arc<Vec<Command>>,
     palette: HashMap<String, Rgba>,
     /// Symbols defined so far.
-    symbols: HashMap<String, Arc<Vec<Command>>>,
+    symbols: HashMap<String, Symbol>,
     seed: u64,
     options: PlayOptions,
     /// The commands being played, innermost last.
@@ -322,6 +338,8 @@ pub struct Player {
     pending_animation: Option<Arc<Vec<Command>>>,
     /// The frame being painted, counting from 0.
     frame: u32,
+    /// The frame and the animation's length, for keyframes.
+    clock: Clock,
 }
 
 impl Player {
@@ -375,6 +393,10 @@ impl Player {
                 options.frame
             )));
         }
+        let clock = Clock {
+            frame: options.frame,
+            length: animation.as_ref().map(|(_, a)| (a.frames, a.looping)),
+        };
         let animation = animation.map(|(name, a)| (name, Arc::new(a.commands.clone())));
         let palette = script
             .palette
@@ -414,6 +436,7 @@ impl Player {
             used_colors: RefCell::new(HashSet::new()),
             painted_by: HashMap::new(),
             frame: options.frame,
+            clock,
             animation,
             pending_animation: None,
             options,
@@ -534,6 +557,7 @@ impl Player {
             outside: Vec::new(),
             part: None,
             animation: None,
+            params: None,
         }];
         self.pending_animation = self.animation.as_ref().map(|(_, c)| Arc::clone(c));
     }
@@ -596,6 +620,7 @@ impl Player {
                     outside: Vec::new(),
                     part: None,
                     animation: name,
+                    params: None,
                 });
             } else {
                 self.flush_tiles();
@@ -688,11 +713,25 @@ impl Player {
         });
         let parent = self.frame();
         let own = new.placement.transform;
+        let mut place = own.then(parent.place);
+        if new.upright {
+            // Undo the turning of everything around it, around the point
+            // where its origin lands (so it still moves and mirrors along).
+            let (x, y) = place.apply(new.placement.origin);
+            let mut turned = parent.place.b.atan2(parent.place.a).to_degrees();
+            if parent.place.mirrors() {
+                turned -= 180.0; // a mirrored x-axis points backwards
+            }
+            place = place
+                .then(Transform::translate(-x, -y))
+                .then(Transform::rotate(-turned))
+                .then(Transform::translate(x, y));
+        }
         let frame = Frame {
             commands: new.commands,
             next: 0,
             label: Some((self.current + 1, new.label)),
-            place: own.then(parent.place),
+            place,
             detail: parent.detail * own.size_factor(),
             brush_scale: if new.placement.scale_brush {
                 parent.brush_scale * own.size_factor()
@@ -714,6 +753,7 @@ impl Player {
             outside: Vec::new(),
             part,
             animation: None,
+            params: new.params,
         };
         self.frames.push(frame);
         Ok(())
@@ -1194,8 +1234,13 @@ impl Player {
             Command::Define(define) => {
                 // Duplicate names and `define` inside other commands are
                 // refused when the script is read.
-                self.symbols
-                    .insert(define.name.clone(), Arc::new(define.commands.clone()));
+                self.symbols.insert(
+                    define.name.clone(),
+                    Symbol {
+                        commands: Arc::new(define.commands.clone()),
+                        params: Arc::new(define.params.clone().unwrap_or_default()),
+                    },
+                );
                 self.defined.push((define.name.clone(), self.current + 1));
                 Ok(())
             }
@@ -1205,13 +1250,13 @@ impl Player {
     }
 
     fn group(&mut self, document: &Document, command: &GroupCmd) -> Result<(), String> {
-        let placement = placement(
-            command.translate,
+        let placement = self.placement_of(
+            command.translate.as_ref(),
             command.scale.as_ref(),
-            command.rotate,
-            command.mirror.as_deref(),
-            command.origin,
-            command.opacity,
+            command.rotate.as_ref(),
+            command.mirror.as_ref(),
+            command.origin.as_ref(),
+            command.opacity.as_ref(),
             command.scale_brush,
         )?;
         let label = match &command.name {
@@ -1226,6 +1271,8 @@ impl Player {
             symbol: None,
             swaps: Vec::new(),
             part: command.name.is_some(),
+            params: None,
+            upright: command.upright.unwrap_or(false),
         };
         self.push_frame(document, new)
     }
@@ -1233,8 +1280,8 @@ impl Player {
     /// `use`: plays a symbol's commands, placed like a group, with some
     /// colours swapped.
     fn use_symbol(&mut self, document: &Document, command: &UseCmd) -> Result<(), String> {
-        let name = &command.name;
-        let Some(commands) = self.symbols.get(name).cloned() else {
+        let name = &self.string(&Value::String(command.name.clone()), "name")?;
+        let Some(symbol) = self.symbols.get(name) else {
             let mut names: Vec<&str> = self.symbols.keys().map(String::as_str).collect();
             names.sort_unstable();
             return Err(if names.is_empty() {
@@ -1261,22 +1308,50 @@ impl Player {
                 chain.join(" > ")
             ));
         }
-        let placement = placement(
-            command.translate,
+        let commands = Arc::clone(&symbol.commands);
+        let defaults = Arc::clone(&symbol.params);
+        let placement = self.placement_of(
+            command.translate.as_ref(),
             command.scale.as_ref(),
-            command.rotate,
-            command.mirror.as_deref(),
-            command.origin,
-            command.opacity,
+            command.rotate.as_ref(),
+            command.mirror.as_ref(),
+            command.origin.as_ref(),
+            command.opacity.as_ref(),
             command.scale_brush,
         )?;
         let mut swaps = Vec::new();
         for (from, to) in command.colors.iter().flatten() {
             let error = |problem: String| format!("`colors`: {problem}");
+            let to = self.string(to, "colors").map_err(error)?;
             swaps.push((
                 self.color(from).map_err(error)?,
-                self.color(to).map_err(error)?,
+                self.color(&to).map_err(error)?,
             ));
+        }
+        // The symbol's parameters: its defaults, then what this use gives
+        // (worked out here, so keyframes and `$names` are the use's own).
+        let mut params = (*defaults).clone();
+        for (key, value) in command.with.iter().flatten() {
+            if !defaults.contains_key(key) {
+                let mut names: Vec<&str> = defaults.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                return Err(if names.is_empty() {
+                    format!(
+                        "`with`: symbol \"{name}\" has no parameters (give it some with \
+                         \"params\" in its define)"
+                    )
+                } else {
+                    format!(
+                        "`with`: symbol \"{name}\" has no parameter called \"{key}\" (it has: {})",
+                        names.join(", ")
+                    )
+                });
+            }
+            params.insert(
+                key.clone(),
+                self.value(value)
+                    .map_err(|p| format!("`with`: {key}: {p}"))?,
+            );
         }
         let new = NewFrame {
             commands,
@@ -1287,6 +1362,8 @@ impl Player {
             symbol: Some(name.clone()),
             swaps,
             part: true,
+            params: Some(Arc::new(params)),
+            upright: command.upright.unwrap_or(false),
         };
         self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
@@ -1320,11 +1397,14 @@ impl Player {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
                 scale_brush: true,
+                origin: (0.0, 0.0),
             },
             seed_base: Random::mix(self.current_seed, 1),
             symbol: None,
             swaps: Vec::new(),
             part: false,
+            params: None,
+            upright: false,
         };
         self.push_frame(document, new)?;
         let frame = self.frames.last_mut().expect("just pushed");
@@ -2206,6 +2286,120 @@ impl Player {
 
     // ---- Reading values -----------------------------------------------------------------
 
+    // ---- Values that change: keyframes and parameters ------------------------------
+
+    /// What a field's value is now: keyframes at this frame, a `"$name"`
+    /// parameter's value, a list of such things, or the value as written.
+    fn value(&self, written: &Value) -> Result<Value, String> {
+        match written {
+            Value::String(text) if text.starts_with('$') => self.param(&text[1..]),
+            keyed if animate::is_keyed(keyed) => {
+                let inner = |v: &Value| self.value(v);
+                let color = |name: &str| self.base_color(name).ok();
+                animate::evaluate(keyed, self.clock, &inner, &color)
+            }
+            Value::Array(items) => items
+                .iter()
+                .map(|item| self.value(item))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array),
+            other => Ok(other.clone()),
+        }
+    }
+
+    /// A parameter's value, from the innermost symbol being used.
+    fn param(&self, name: &str) -> Result<Value, String> {
+        let Some(params) = self.frames.iter().rev().find_map(|f| f.params.as_ref()) else {
+            return Err(format!(
+                "\"${name}\" is a parameter, so it only works inside a symbol that has one \
+                 (\"params\": {{\"{name}\": ...}} in its define)"
+            ));
+        };
+        match params.get(name) {
+            Some(value) => Ok(value.clone()),
+            None => {
+                let mut names: Vec<&str> = params.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                Err(format!(
+                    "there's no parameter called \"{name}\" (this symbol has: {})",
+                    if names.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        names.join(", ")
+                    }
+                ))
+            }
+        }
+    }
+
+    /// A field that must be a number, once worked out.
+    fn number(&self, written: Option<&Value>, what: &str) -> Result<Option<f32>, String> {
+        match written {
+            None => Ok(None),
+            Some(v) => match self.value(v)? {
+                Value::Number(n) => Ok(Some(n.as_f64().unwrap_or(f32::NAN as f64) as f32)),
+                other => Err(format!("`{what}` must be a number, not {other}")),
+            },
+        }
+    }
+
+    /// A field that must be `[x, y]`, once worked out.
+    fn pair(&self, written: Option<&Value>, what: &str) -> Result<Option<[f32; 2]>, String> {
+        match written {
+            None => Ok(None),
+            Some(v) => match self.value(v)? {
+                Value::Array(items) if items.len() == 2 => {
+                    let n = |i: usize| items[i].as_f64().map(|n| n as f32);
+                    match (n(0), n(1)) {
+                        (Some(x), Some(y)) => Ok(Some([x, y])),
+                        _ => Err(format!("`{what}` must be [x, y], two numbers")),
+                    }
+                }
+                other => Err(format!("`{what}` must be [x, y], not {other}")),
+            },
+        }
+    }
+
+    /// A field that must be text, once worked out.
+    fn string(&self, written: &Value, what: &str) -> Result<String, String> {
+        match self.value(written)? {
+            Value::String(text) => Ok(text),
+            other => Err(format!("`{what}` must be text in quotes, not {other}")),
+        }
+    }
+
+    /// A group's or use's placement, with its fields worked out for this
+    /// frame and the symbol's parameters.
+    #[allow(clippy::too_many_arguments)]
+    fn placement_of(
+        &self,
+        translate: Option<&Value>,
+        scale: Option<&Value>,
+        rotate: Option<&Value>,
+        mirror: Option<&Value>,
+        origin: Option<&Value>,
+        opacity: Option<&Value>,
+        scale_brush: Option<bool>,
+    ) -> Result<Placement, String> {
+        let scale = match scale {
+            Some(v) => Some(self.value(v)?),
+            None => None,
+        };
+        let mirror = match mirror {
+            Some(v) => Some(self.string(v, "mirror")?),
+            None => None,
+        };
+        placement(
+            self.pair(translate, "translate")?,
+            scale.as_ref(),
+            self.number(rotate, "rotate")?,
+            mirror.as_deref(),
+            self.pair(origin, "origin")?,
+            self.number(opacity, "opacity")?,
+            scale_brush,
+        )
+    }
+
     /// A colour: "#RRGGBB", "#RRGGBBAA", a palette name, or "transparent",
     /// swapped for another if a `use` says so (innermost first).
     fn color(&self, text: &str) -> Result<Rgba, String> {
@@ -2517,6 +2711,7 @@ fn placement(
         transform: Transform::about(origin, translate, scale, rotate, mirror_x, mirror_y),
         opacity: unit("opacity", opacity.unwrap_or(1.0))?,
         scale_brush: scale_brush.unwrap_or(true),
+        origin,
     })
 }
 
@@ -3969,5 +4164,153 @@ mod tests {
         );
         assert_eq!(player.animation(), Some("slide"));
         assert_eq!(player.frame_number(), 0);
+    }
+
+    // ---- Keyframes, parameters and upright --------------------------------------
+
+    /// An 8-frame loop where a box slides and a leg symbol turns.
+    fn keyed(animation_commands: &str) -> String {
+        format!(
+            r##"{{ "palette": {{ "ink": "#202020", "red": "#E02020", "leg": "#E08020" }}, "commands": [
+                {{ "cmd": "canvas", "width": 200, "height": 200 }},
+                {{ "cmd": "define", "name": "box", "commands": [
+                    {{ "cmd": "rect", "x": -10, "y": -10, "width": 20, "height": 20, "fill": "red" }} ] }},
+                {{ "cmd": "define", "name": "foot", "commands": [
+                    {{ "cmd": "rect", "x": -4, "y": 0, "width": 16, "height": 5, "fill": "ink" }} ] }},
+                {{ "cmd": "define", "name": "leg", "params": {{ "angle": 0, "foot": "foot" }}, "commands": [
+                    {{ "cmd": "group", "name": "thigh", "origin": [0, 0], "rotate": "$angle", "commands": [
+                        {{ "cmd": "line", "from": [0, 0], "to": [0, 30], "size": 4, "color": "leg", "taper": 0 }},
+                        {{ "cmd": "use", "name": "$foot", "translate": [0, 30], "upright": true }} ] }} ] }}
+              ], "animations": {{ "walk": {{ "frames": 8, "fps": 8, "loop": true, "commands": [ {animation_commands} ] }} }} }}"##
+        )
+    }
+
+    fn frame_of(text: &str, frame: u32) -> Document {
+        play_frame(text, None, frame).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn in_between_frames_are_exactly_right() {
+        let sliding = keyed(
+            r##"{ "cmd": "use", "name": "box", "translate": { "keys": [[0, [20, 100]], [4, [100, 60]], [8, [20, 100]]] },
+                 "rotate": { "keys": [[0, 0], [8, 90]], "ease": "in" } }"##,
+        );
+        // Frame 2 is halfway to the second key: (60, 80); and in-eased
+        // rotation at t = 0.25 is 90 * 0.0625 = 5.625 degrees.
+        let by_hand = play(&small(
+            r##"{ "cmd": "define", "name": "box", "commands": [
+                    { "cmd": "rect", "x": -10, "y": -10, "width": 20, "height": 20, "fill": "red" } ] },
+                { "cmd": "use", "name": "box", "translate": [60, 80], "rotate": 5.625 }"##,
+        ));
+        assert_eq!(png(&frame_of(&sliding, 2)), png(&by_hand));
+        // Frame 6: three quarters round: (60, 80) again, turned 90 * 0.5625.
+        let by_hand = play(&small(
+            r##"{ "cmd": "define", "name": "box", "commands": [
+                    { "cmd": "rect", "x": -10, "y": -10, "width": 20, "height": 20, "fill": "red" } ] },
+                { "cmd": "use", "name": "box", "translate": [60, 80], "rotate": 50.625 }"##,
+        ));
+        assert_eq!(png(&frame_of(&sliding, 6)), png(&by_hand));
+    }
+
+    #[test]
+    fn parameters_paint_the_same_pixels_as_the_pose_written_by_hand() {
+        let with_param = keyed(
+            r##"{ "cmd": "use", "name": "leg", "translate": [100, 100], "with": { "angle": 25 } }"##,
+        );
+        let by_hand = play(&small(
+            r##"{ "cmd": "define", "name": "foot", "commands": [
+                    { "cmd": "rect", "x": -4, "y": 0, "width": 16, "height": 5, "fill": "ink" } ] },
+                { "cmd": "group", "translate": [100, 100], "commands": [
+                    { "cmd": "group", "name": "thigh", "origin": [0, 0], "rotate": 25, "commands": [
+                        { "cmd": "line", "from": [0, 0], "to": [0, 30], "size": 4, "color": "#E08020", "taper": 0 },
+                        { "cmd": "use", "name": "foot", "translate": [0, 30], "upright": true } ] } ] }"##,
+        ));
+        assert_eq!(png(&frame_of(&with_param, 3)), png(&by_hand));
+        // The default (angle 0) when `with` doesn't say; and a keyframed
+        // parameter at a known frame (keys 0 and 8: frame 4 is halfway).
+        let defaulted = keyed(r##"{ "cmd": "use", "name": "leg", "translate": [100, 100] }"##);
+        let keyed_param = keyed(
+            r##"{ "cmd": "use", "name": "leg", "translate": [100, 100], "with": { "angle": { "keys": [[0, 0], [8, 50]] } } }"##,
+        );
+        assert_eq!(
+            png(&frame_of(&defaulted, 5)),
+            png(&frame_of(&keyed_param, 0))
+        );
+        assert_eq!(
+            png(&frame_of(&with_param, 0)),
+            png(&frame_of(&keyed_param, 4))
+        );
+    }
+
+    #[test]
+    fn upright_parts_move_with_the_leg_but_stay_flat() {
+        // With the leg turned 90 degrees clockwise (down becomes left), the
+        // ankle (0, 30) lands at (-30, 0) from the hip: the foot sits
+        // there, still flat.
+        let turned = keyed(
+            r##"{ "cmd": "use", "name": "leg", "translate": [100, 100], "with": { "angle": 90 } }"##,
+        );
+        let by_hand = play(&small(
+            r##"{ "cmd": "line", "from": [100, 100], "to": [70, 100], "size": 4, "color": "#E08020", "taper": 0 },
+                { "cmd": "rect", "x": 66, "y": 100, "width": 16, "height": 5, "fill": "ink" }"##,
+        ));
+        assert!(largest_difference(&frame_of(&turned, 0), &by_hand) <= 2);
+        // Mirrored from outside, the foot is mirrored too (and still flat).
+        let mirrored = keyed(
+            r##"{ "cmd": "group", "mirror": "x", "origin": [100, 0], "commands": [
+                { "cmd": "use", "name": "leg", "translate": [100, 100], "with": { "angle": 90 } } ] }"##,
+        );
+        let by_hand = play(&small(
+            r##"{ "cmd": "line", "from": [100, 100], "to": [130, 100], "size": 4, "color": "#E08020", "taper": 0 },
+                { "cmd": "rect", "x": 118, "y": 100, "width": 16, "height": 5, "fill": "ink" }"##,
+        ));
+        assert!(largest_difference(&frame_of(&mirrored, 0), &by_hand) <= 2);
+    }
+
+    #[test]
+    fn shift_plays_the_far_leg_half_a_cycle_later() {
+        let legs = keyed(
+            r##"{ "cmd": "use", "name": "leg", "translate": [60, 100], "with": { "angle": { "keys": [[0, -30], [4, 30], [8, -30]] } } },
+                { "cmd": "use", "name": "leg", "translate": [140, 100], "with": { "angle": { "keys": [[0, -30], [4, 30], [8, -30]], "shift": 4 } } }"##,
+        );
+        // At frame 1 the near leg is at -15, the far leg at the keys'
+        // frame 5 (wrapped): 15.
+        let by_hand = keyed(
+            r##"{ "cmd": "use", "name": "leg", "translate": [60, 100], "with": { "angle": -15 } },
+                { "cmd": "use", "name": "leg", "translate": [140, 100], "with": { "angle": 15 } }"##,
+        );
+        assert_eq!(png(&frame_of(&legs, 1)), png(&frame_of(&by_hand, 0)));
+    }
+
+    #[test]
+    fn parameter_and_keyframe_mistakes_are_explained() {
+        let problem = |commands: &str| {
+            play_frame(&keyed(commands), None, 0)
+                .unwrap_err()
+                .to_string()
+        };
+        let error = problem(r##"{ "cmd": "use", "name": "leg", "with": { "angel": 5 } }"##);
+        assert!(
+            error.contains("no parameter called \"angel\" (it has: angle, foot)"),
+            "{error}"
+        );
+        let error = problem(r##"{ "cmd": "use", "name": "box", "with": { "angle": 5 } }"##);
+        assert!(
+            error.contains("symbol \"box\" has no parameters"),
+            "{error}"
+        );
+        let error = problem(r##"{ "cmd": "group", "rotate": "$angle", "commands": [] }"##);
+        assert!(error.contains("only works inside a symbol"), "{error}");
+        let error =
+            problem(r##"{ "cmd": "use", "name": "box", "rotate": { "keys": [[4, 1], [2, 0]] } }"##);
+        assert!(
+            error.starts_with(
+                "animation \"walk\" > command 1 (use \"box\"): keys must be in frame order"
+            ),
+            "{error}"
+        );
+        let error =
+            problem(r##"{ "cmd": "use", "name": "box", "translate": { "keys": [[0, 5]] } }"##);
+        assert!(error.contains("`translate` must be [x, y]"), "{error}");
     }
 }

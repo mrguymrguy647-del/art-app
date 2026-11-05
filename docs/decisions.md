@@ -730,3 +730,40 @@ every frame of every animation, since a mistake can hide in frame 7
 alone, and reports frame 0's layers and parts (the motion summary comes
 in step 3). `render` without a frame option paints frame 0 and says how
 to get the others, rather than painting everything unasked.
+
+## 51. Keyframes, parameters, shift and upright (phase 2, step 2)
+A `group`'s or `use`'s number can be keyframes, `{"keys": [[0, 0],
+[4, 20]], "ease": "in-out", "shift": 4}`, or a symbol parameter,
+`"$angle"`. Both are worked out when the command starts, for the frame
+being painted and the symbol being used; the rest of the player sees
+plain numbers, so nothing about drawing changed. In the script format,
+those fields are now "any JSON value" instead of typed numbers, and
+the player checks them with messages like "`translate` must be [x, y]".
+
+Choices:
+- **Blend or hold by kind.** Numbers, lists of numbers and colours
+  blend; anything else (a symbol name, `"x"`) holds until the next key.
+  So a mouth swap needs no special syntax: it's a keyframed parameter
+  with names in it.
+- **Five easings, no curves.** `linear`, `in` (t²), `out`, `in-out`
+  and `step`, on the whole field or per key. Enough for bounces and
+  walks; bezier handles would need an editor to be worth having.
+- **`shift` instead of arithmetic.** The far leg, arms and tail are the
+  near leg's motion half a cycle later, so the same keys with a shift
+  cover them, wrapping in loops. No `"-$angle"`, so there's no little
+  language to learn or to get wrong.
+- **Parameters are plain values** (resolved when the `use` starts,
+  with that use's keyframes and the outer symbol's parameters), and
+  `"$name"` replaces a whole value. A parameter can be used where a
+  keyframe could, including a `use`'s `name`.
+- **`upright`** undoes the turning of the frames around a group or
+  use, around the point where its origin lands: the foot moves with
+  the leg but stays flat. Mirroring and resizing from outside still
+  apply (a mirrored parent's x-axis points backwards, which is told
+  apart from a turn by the sign of the transform's determinant).
+
+Tests: in-between frames equal the pose written by hand, pixel for
+pixel; easings match their formulas; a parameter gives the pixels of
+the hand-written pose; shift gives the far leg's frame; upright feet
+land where the ankle does, flat, also mirrored. `examples/duck-animated.json`
+is an 8-frame walk and a 4-frame idle from one `use` each.
