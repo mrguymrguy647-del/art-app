@@ -36,11 +36,18 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Plays a script at full size and returns the picture.
-fn render(script: &Path, background: Background) -> Image {
+/// Plays one frame of one animation of a script.
+fn render_frame(
+    script: &Path,
+    background: Background,
+    animation: Option<&str>,
+    frame: u32,
+) -> Image {
     let text = std::fs::read_to_string(script).unwrap();
     let options = PlayOptions {
         folder: script.parent().map(Path::to_path_buf),
+        animation: animation.map(str::to_owned),
+        frame,
         ..PlayOptions::default()
     };
     let mut player = Player::new(Script::parse(&text).unwrap(), options).unwrap();
@@ -70,9 +77,20 @@ fn read_png(path: &Path) -> (u32, u32, Vec<[u8; 4]>) {
 /// Compares a fresh render of `script` with `reference` (or writes the
 /// reference when updating).
 fn compare(script: &str, reference: &str, background: Background) {
+    compare_frame(script, reference, background, None, 0);
+}
+
+/// Like [`compare`], for one frame of an animation.
+fn compare_frame(
+    script: &str,
+    reference: &str,
+    background: Background,
+    animation: Option<&str>,
+    frame: u32,
+) {
     let script = root().join(script);
     let reference = root().join("crates/engine/tests/reference").join(reference);
-    let image = render(&script, background);
+    let image = render_frame(&script, background, animation, frame);
     let with_alpha = background == Background::Transparent;
     if std::env::var_os("ARTAPP_UPDATE_REFERENCES").is_some() {
         image.save_png(&reference, with_alpha).unwrap();
@@ -162,5 +180,33 @@ fn the_duck_examples_keep_their_pixels() {
         "examples/duck-sheet.json",
         "duck-sheet.png",
         Background::Paper,
+    );
+}
+
+#[test]
+fn animation_frames_keep_their_pixels() {
+    // Keyframes, parameters, shift and upright in one frame of the walk;
+    // a pixel canvas's shrink and outline in a frame of the pixel walk;
+    // text squashed in a group in the title.
+    compare_frame(
+        "examples/duck-animated.json",
+        "duck-animated-walk-3.png",
+        Background::Transparent,
+        Some("walk"),
+        3,
+    );
+    compare_frame(
+        "examples/duck-pixel.json",
+        "duck-pixel-walk-2.png",
+        Background::Transparent,
+        Some("walk"),
+        2,
+    );
+    compare_frame(
+        "examples/duck-forge-title.json",
+        "duck-forge-title-14.png",
+        Background::Paper,
+        Some("title"),
+        14,
     );
 }

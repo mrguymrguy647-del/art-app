@@ -1,0 +1,47 @@
+{
+  "title": "Duck Forge: a 3-second animated title for a video",
+  "notes": "640 x 360 at 24 fps. The words drop in, squash on landing, stretch back up and settle; a duck slides in below. Export with --mp4 (and --gif).",
+  "palette": {
+    "night": "#1B2433", "night_top": "#2A3A58", "ember": "#F2A33A", "ember_dark": "#C2651C",
+    "cream": "#FFF3DC", "ink": "#1A1410", "yellow": "#F2C230", "wing": "#D9A21E", "beak": "#E8892B"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 360, "paper": "night" },
+    { "cmd": "layer", "name": "Background" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 360], "colors": ["night_top", "night"] },
+    { "cmd": "scatter", "area": { "rect": [0, 0, 640, 240] }, "count": 60, "size": [1, 2.5], "color": "cream", "opacity": [0.2, 0.7], "seed": 7 },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "polygon", "points": [[-24, -30], [-42, -42], [-30, -18]], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [0, -22], "radius": [30, 20], "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [22, -50], "radius": 14, "fill": "yellow", "outline": "ink", "outline_size": 2.5 },
+      { "cmd": "ellipse", "center": [16, -34], "radius": [8, 10], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [-6, -22], "radius": [17, 9], "rotation": -12, "fill": "wing", "outline": "ink", "outline_size": 2 },
+      { "cmd": "polygon", "points": [[33, -54], [49, -48], [33, -43]], "fill": "beak", "outline": "ink", "outline_size": 1.5 },
+      { "cmd": "ellipse", "center": [27, -54], "radius": 2.5, "fill": "ink" }
+    ] },
+    { "cmd": "define", "name": "title", "commands": [
+      { "cmd": "text", "text": "DUCK FORGE", "at": [0, -84], "size": 84, "color": "ember", "align": "center", "outline": "ember_dark", "outline_size": 5 },
+      { "cmd": "text", "text": "DUCK FORGE", "at": [0, -84], "size": 84, "color": "ember", "align": "center" }
+    ] }
+  ],
+  "animations": {
+    "title": { "frames": 72, "fps": 24, "loop": false, "commands": [
+      { "cmd": "layer", "name": "Title" },
+      { "cmd": "group", "name": "words", "origin": [320, 200],
+        "translate": { "keys": [[0, [0, -330]], [14, [0, 0], "in"], [20, [0, -34], "out"], [26, [0, 0], "in"], [30, [0, -8], "out"], [34, [0, 0], "in"]] },
+        "scale": { "keys": [[0, [0.8, 1.25]], [13, [0.9, 1.15]], [14, [1.3, 0.7]], [18, [0.95, 1.08], "out"], [22, [1, 1], "in-out"], [26, [1.12, 0.9]], [30, [1, 1], "out"]] },
+        "commands": [ { "cmd": "use", "name": "title", "translate": [320, 200] } ] },
+      { "cmd": "layer", "name": "Duck" },
+      { "cmd": "group", "name": "duck", "origin": [320, 300],
+        "translate": { "keys": [[0, [-420, 0]], [26, [-420, 0], "step"], [44, [0, 0], "out"]] },
+        "commands": [
+          { "cmd": "group", "name": "hop", "origin": [320, 300],
+            "translate": { "keys": [[44, [0, 0]], [50, [0, -22], "out"], [56, [0, 0], "in"], [60, [0, -6], "out"], [64, [0, 0], "in"]] },
+            "scale": { "keys": [[44, [1, 1]], [46, [1.1, 0.9]], [50, [0.95, 1.08], "out"], [56, [1.1, 0.9], "in"], [60, [1, 1], "out"]] },
+            "commands": [ { "cmd": "use", "name": "duck", "translate": [320, 300] } ] } ] },
+      { "cmd": "layer", "name": "Caption" },
+      { "cmd": "group", "name": "caption", "opacity": { "keys": [[48, 0], [60, 1]] }, "commands": [
+        { "cmd": "text", "text": "a game, in the making", "at": [320, 326], "size": 22, "color": "cream", "align": "center" } ] }
+    ] }
+  }
+}

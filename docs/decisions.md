@@ -891,3 +891,47 @@ frames come out shrunk); it can't be played onto an open picture.
 The panel's playing, stepping, onion skin and exports are tested
 without a screen; the panel was also tried in the real app on a
 virtual screen.
+
+## 58. Proof of phase 2, and what was still slow
+Three jobs, as examples with reference pictures:
+- `examples/duck-animated.json`: the painted duck, idle (4 frames) and
+  walk (8 frames) from one set of symbols with parameters. Each
+  animation is **one `use`** with keyframes in `with`; the far leg is
+  the near leg's keys with `shift: 4`; feet are `upright`. Exported as
+  a sprite sheet with JSON (`art-cli export --sheet`) and GIFs.
+- `examples/duck-pixel.json`: a 32 × 32 pixel duck, six colours, idle
+  and walk, the same kind of symbols on a pixel canvas with
+  `supersample: 8` and an outline. Sheet + JSON at 1× for the game and
+  GIFs at 8× for people.
+- `examples/duck-forge-title.json`: a 3-second title at 640 × 360 and
+  24 fps. The words drop in and squash and stretch (keyframed `scale`
+  on a group with `origin` at their base), a duck slides in and hops,
+  a caption fades in. Exported as GIF and MP4 (72 frames, H.264).
+
+What was still slow or uncomfortable as an agent, for phase 3:
+- **Timing by arithmetic.** Keys are frame numbers, so a bounce at
+  24 fps is "frames 14, 20, 26, 30, 34" worked out by hand, and
+  changing the fps means redoing every key. Seconds (or a `"time"`
+  unit) for keys, and a way to say "then, after 6 frames" would help.
+- **Squash and stretch is two keyframe lists** (`translate` and
+  `scale`) that must agree frame by frame. A named motion ("bounce
+  with squash") that takes a few numbers, like a symbol takes
+  parameters, would make it one line.
+- **Entrance warnings.** A thing that drops in from above is "drawn
+  entirely outside the canvas" for its first frames, and layers it
+  lands on are "empty" in frame 0. `check` can't tell an entrance from
+  a mistake; a way to mark "off-screen on purpose" (or warning only
+  when a part is *never* on the canvas) would cut the noise.
+- **The motion summary follows boxes, not parts.** It can't say "the
+  foot slides on the ground between frames 2 and 3" (the classic walk
+  mistake); comparing a part's bottom edge frame to frame would.
+- **No way to see a frame's pixels as numbers** for pixel art: at 32
+  pixels, "is the eye one pixel or two" needs `--zoom 8` and a look.
+  A `--pixels` dump (rows of palette letters, the `pixels` command's
+  own format) would close the loop for an agent.
+- **Still some coordinate arithmetic** for layouts: where a caption
+  goes under a title, the panels of a character sheet.
+- **GIF size.** A 72-frame 640 × 360 GIF is 2 MB; fine for a preview,
+  not for sharing. (MP4 is 66 KB.)
+Rendering was never the slow part: the title's 72 frames take about
+2 seconds; the sprites, hundredths of a second.

@@ -1197,10 +1197,18 @@ fn frame_warnings(motions: &[Motion]) -> Vec<String> {
         // of first appearance).
         let own_prefix = format!("animation \"{}\" > ", motion.name);
         let mut found: Vec<(String, Vec<u32>)> = Vec::new();
+        // The same thing drawn off the canvas in several frames is one
+        // warning, even though its box differs from frame to frame: the
+        // text up to the box is what's matched, and the first frame's box
+        // is the one shown.
+        let same_thing = |a: &str, b: &str| {
+            let cut = |t: &str| t.split(" (x ").next().unwrap_or(t).to_owned();
+            cut(a) == cut(b)
+        };
         for (frame, report) in motion.reports.iter().enumerate() {
             for warning in &report.warnings {
                 let text = warning.strip_prefix(&own_prefix).unwrap_or(warning);
-                match found.iter_mut().find(|(t, _)| t == text) {
+                match found.iter_mut().find(|(t, _)| same_thing(t, text)) {
                     Some((_, frames)) => frames.push(frame as u32),
                     None => found.push((text.to_owned(), vec![frame as u32])),
                 }

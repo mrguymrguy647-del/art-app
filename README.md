@@ -87,7 +87,9 @@ strokes, hatching and more. The format, with examples, is in
 [docs/script-format.md](docs/script-format.md). Full examples: [examples/sunset.json](examples/sunset.json),
 [examples/night-hills.json](examples/night-hills.json) and [examples/two-ducks.json](examples/two-ducks.json); for
 games, a 4-frame walk cycle [examples/duck-walk.json](examples/duck-walk.json) (render it with `--transparent`)
-and a character sheet [examples/duck-sheet.json](examples/duck-sheet.json).
+and a character sheet [examples/duck-sheet.json](examples/duck-sheet.json); animated, an idle and a walk
+[examples/duck-animated.json](examples/duck-animated.json), a 32-pixel duck [examples/duck-pixel.json](examples/duck-pixel.json)
+and a 3-second video title [examples/duck-forge-title.json](examples/duck-forge-title.json).
 
 **Painting with an AI assistant:** [docs/AI_GUIDE.md](docs/AI_GUIDE.md) is a practical manual for an
 AI (like Claude) painting with these scripts on a machine without a screen: how to build `art-cli`,
@@ -132,7 +134,7 @@ Build it with `cargo build --release -p art_cli`; the program is `target/release
 art-app/
 ├── Cargo.toml            workspace: lists the two crates below
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
-├── examples/             example scripts (sunset, night hills, two ducks, duck walk cycle and sheet)
+├── examples/             example scripts: paintings, duck sheets, animated and pixel ducks, a video title
 ├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page
 ├── docs/animation-design.md   how animation, sprite sheets and pixel art fit the format
 ├── docs/sprite-sheet-format.md the exported sheet's PNG and JSON, for games
