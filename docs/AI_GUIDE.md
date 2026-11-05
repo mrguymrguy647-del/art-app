@@ -83,6 +83,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `fill` | Paint bucket at a point (`tolerance`, `grow`, `sample`). |
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
+| `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
@@ -193,6 +194,16 @@ No coordinate maths by hand.
 variant is one line: `"colors": { "yellow": "#C04040" }`. Facing the other way: `"mirror": "x"`.
 Parts that move (legs, arms) can be symbols of their own, used inside the character.
 
+**Labels and titles:** `text` with an `outline` in a contrasting colour stays readable on any
+background. `at` is the top of the first line; capitals take up y from `at` + 0.24 × `size` to
+`at` + 0.97 × `size`, and each line is 1.21 × `size` high. Use `"align": "center"` to centre a
+label under a character without measuring it. Labels that belong to a drawing go inside its
+group or symbol, so they move with it.
+
+```json
+{ "cmd": "text", "text": "Player 2", "at": [64, 132], "size": 18, "color": "ink", "align": "center", "outline": "white", "outline_size": 3 }
+```
+
 **Rows and rings:** `repeat` with a `step`: fence posts (`translate`), petals or spokes (`rotate`
 around the centre as `origin`), shrinking copies (`scale`).
 
@@ -247,6 +258,8 @@ Write down what's wrong, change only that, and render again.
 - **Mirror and rotate work around `origin`**, which is `[0, 0]` unless you give it. To flip or
   turn a drawing in place, set `origin` to its middle.
 - **Symbols are defined before they're used**, only at the top level, and each name once.
+- **Text `at` is the top of the line, not the baseline.** Letters start a little below it. Give
+  `size` in pixels (it's the font size; a line is 1.21 × that high).
 - **Colour swaps only work on colours the symbol uses.** Give symbols palette colours, and swap by
   those names.
 

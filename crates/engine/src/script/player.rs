@@ -30,7 +30,7 @@ use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
     MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError,
-    StrokeCmd, UseCmd, parse_hex,
+    StrokeCmd, TextCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
@@ -46,6 +46,7 @@ use crate::layer_commands::{
 };
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
+use crate::text::{self, Align};
 use crate::tile::Rgba8;
 use crate::transform::Transform;
 
@@ -109,6 +110,8 @@ const WOBBLE_WAVELENGTH: f32 = 40.0;
 const MAX_DEPTH: usize = 64;
 /// The most copies one `repeat` may draw.
 const MAX_REPEAT: u32 = 10_000;
+/// The biggest font size `text` takes, in pixels.
+const MAX_TEXT_SIZE: f32 = 5000.0;
 
 /// One simple job a command was turned into. Positions are on the canvas.
 enum Job {
@@ -117,10 +120,11 @@ enum Job {
         brush: BrushSettings,
         points: Vec<StrokePoint>,
     },
-    /// Fills a shape (or the whole layer, if `shape` is `None`).
+    /// Fills a shape (or the whole layer, if `shape` is `None`). A shape
+    /// is one or more outlines filled together (a letter "o" has two).
     Area {
         layer: LayerId,
-        shape: Option<Vec<Pt>>,
+        shape: Option<Vec<Vec<Pt>>>,
         paint: Paint,
         opacity: f32,
         mode: BrushMode,
@@ -721,8 +725,8 @@ impl Player {
                     return 0.0;
                 };
                 let before = match shape {
-                    Some(points) => {
-                        let mask = geometry::polygon_mask(&points, limits);
+                    Some(rings) => {
+                        let mask = geometry::polygons_mask(&rings, limits);
                         paint_mask(&mut target.surface, &mask, &paint, opacity, mode, limits)
                     }
                     None => paint_rect(&mut target.surface, limits, &paint, opacity, mode),
@@ -858,6 +862,7 @@ impl Player {
             Command::Gradient(gradient) => self.gradient(document, gradient),
             Command::Hatch(hatch) => self.hatch(document, hatch),
             Command::Scatter(scatter) => self.scatter(document, scatter),
+            Command::Text(text) => self.text(document, text),
             Command::Snapshot(snapshot) => {
                 self.painted = None; // the snapshot already shows that layer
                 self.events
@@ -1321,7 +1326,7 @@ impl Player {
             let opacity = unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(points.iter().map(|p| (p.x, p.y)).collect()),
+                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
                 paint,
                 opacity,
                 mode: BrushMode::Paint,
@@ -1449,7 +1454,7 @@ impl Player {
             let paint = self.paint(fill)?;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(points.iter().map(|p| (p.x, p.y)).collect()),
+                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
                 paint,
                 opacity: opacity * self.frame().opacity,
                 mode,
@@ -1473,6 +1478,100 @@ impl Player {
                 layer,
                 brush,
                 points,
+            });
+        }
+        Ok(())
+    }
+
+    /// Letters: laid out in drawing units, turned around `at`, then placed
+    /// like everything else. The outline goes first, so the letters cover
+    /// its inner half and only the border outside them shows.
+    fn text(&mut self, document: &Document, command: &TextCmd) -> Result<(), String> {
+        if command.text.trim().is_empty() {
+            return Err("`text` is empty: give the words to write".into());
+        }
+        let size = command.size.unwrap_or(32.0);
+        if !(size > 0.0 && size <= MAX_TEXT_SIZE) {
+            return Err(format!(
+                "`size` must be more than 0 and at most {MAX_TEXT_SIZE}, not {size}"
+            ));
+        }
+        let align = match command.align.as_deref() {
+            None | Some("left") => Align::Left,
+            Some("center") => Align::Center,
+            Some("right") => Align::Right,
+            Some(other) => {
+                return Err(format!(
+                    "`align` is \"left\", \"center\" or \"right\", not \"{other}\""
+                ));
+            }
+        };
+        let rotate = command.rotate.unwrap_or(0.0);
+        if !rotate.is_finite() {
+            return Err("`rotate` must be a number of degrees".into());
+        }
+        let opacity = unit("opacity", command.opacity.unwrap_or(1.0))?;
+        let color = match &command.color {
+            Some(color) => self.color(color)?,
+            None => {
+                let [r, g, b] = self.brush.color;
+                [r, g, b, self.brush_alpha]
+            }
+        };
+        let (x, y) = pt(command.at)?;
+
+        let shape = text::layout(&command.text, size, align, self.detail());
+        let place = Transform::rotate(rotate)
+            .then(Transform::translate(x, y))
+            .then(self.frame().place);
+        let rings: Vec<Vec<Pt>> = shape
+            .contours
+            .into_iter()
+            .map(|ring| ring.into_iter().map(|p| place.apply(p)).collect())
+            .collect();
+        let layer = document.active_id();
+
+        if let Some(outline) = &command.outline {
+            let outline_size = command.outline_size.unwrap_or(2.0);
+            if !(outline_size > 0.0 && outline_size * 2.0 <= MAX_SIZE) {
+                return Err(format!(
+                    "`outline_size` must be more than 0 and at most {}, not {outline_size}",
+                    MAX_SIZE / 2.0
+                ));
+            }
+            // A crisp, even border, whatever the brush is set to.
+            let mut brush = self.stroke_brush(
+                BrushChanges {
+                    color: Some(outline),
+                    size: Some(outline_size * 2.0),
+                    opacity: Some(opacity),
+                    hardness: Some(1.0),
+                    flow: Some(1.0),
+                },
+                BrushMode::Paint,
+            )?;
+            brush.spacing = 0.1;
+            for ring in &rings {
+                // Points close together all the way round, or the stroke
+                // would round off the long straight edges.
+                let mut points = to_stroke_points(&geometry::densify(ring, true, 1.0));
+                points.push(points[0]); // back to the start, to close it
+                self.jobs.push_back(Job::Stroke {
+                    layer,
+                    brush,
+                    points,
+                });
+            }
+        } else if command.outline_size.is_some() {
+            return Err("`outline_size` needs an `outline` colour too".into());
+        }
+        if !rings.is_empty() {
+            self.jobs.push_back(Job::Area {
+                layer,
+                shape: Some(rings),
+                paint: Paint::Color(color),
+                opacity: opacity * self.frame().opacity,
+                mode: BrushMode::Paint,
             });
         }
         Ok(())
@@ -1524,7 +1623,7 @@ impl Player {
             command.stops.as_deref(),
         )?;
         let shape = match &command.area {
-            Some(area) => Some(self.place_polygon(self.area(area)?)),
+            Some(area) => Some(vec![self.place_polygon(self.area(area)?)]),
             None => None,
         };
         let mode = if command.erase.unwrap_or(false) {
@@ -2897,5 +2996,130 @@ mod tests {
             region(100, 100),
             "copies of a repeat differ"
         );
+    }
+
+    // ---- Text ---------------------------------------------------------------
+
+    /// Where the picture isn't plain paper: (how many pixels, left, top,
+    /// right, bottom).
+    fn painted(document: &Document) -> (usize, i32, i32, i32, i32) {
+        let paper = seen(document, 0, 0);
+        let mut found = (0, i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for y in 0..document.height() as i32 {
+            for x in 0..document.width() as i32 {
+                if seen(document, x, y) != paper {
+                    found = (
+                        found.0 + 1,
+                        found.1.min(x),
+                        found.2.min(y),
+                        found.3.max(x),
+                        found.4.max(y),
+                    );
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_printable_character_paints_something_except_space() {
+        for code in 0x21u8..=0x7E {
+            let c = serde_json::to_string(&char::from(code).to_string()).unwrap();
+            let document = play(&small(&format!(
+                r##"{{ "cmd": "text", "text": {c}, "at": [100, 60], "size": 40, "color": "ink", "align": "center" }}"##
+            )));
+            assert!(painted(&document).0 > 0, "{c} painted nothing");
+        }
+        // A space alone is almost certainly a mistake.
+        let problem = error(&small(r##"{ "cmd": "text", "text": " ", "at": [0, 0] }"##));
+        assert!(problem.contains("`text` is empty"), "{problem}");
+    }
+
+    #[test]
+    fn the_outline_goes_around_the_letters_not_over_them() {
+        // A big "I" is a plain upright bar.
+        let document = play(&small(
+            r##"{ "cmd": "text", "text": "I", "at": [100, 10], "size": 150, "color": "red", "align": "center", "outline": "ink", "outline_size": 4 }"##,
+        ));
+        let red = Rgba8::new(0xE0, 0x20, 0x20, 255);
+        let row: Vec<Rgba8> = (0..200).map(|x| seen(&document, x, 110)).collect();
+        let first_red = row
+            .iter()
+            .position(|&p| p == red)
+            .expect("the letter is filled");
+        let last_red = row.iter().rposition(|&p| p == red).unwrap();
+        // The letter's colour covers the middle of the bar completely...
+        assert!(row[first_red..=last_red].iter().all(|&p| p == red));
+        // ...and about 4 pixels of outline show on each side of it.
+        let darker = |p: &&Rgba8| p.r < 0x80;
+        let left = row[..first_red].iter().filter(darker).count();
+        let right = row[last_red + 1..].iter().filter(darker).count();
+        assert!(
+            (3..=5).contains(&left) && (3..=5).contains(&right),
+            "{left} {right}"
+        );
+    }
+
+    #[test]
+    fn text_moves_turns_and_mirrors_with_groups_and_symbols() {
+        // Used from a symbol, moved: exactly as if written there.
+        let used = play(&small(
+            r##"{ "cmd": "define", "name": "label", "commands": [
+                    { "cmd": "text", "text": "Hi, Duck!", "at": [10, 20], "size": 30, "color": "ink", "outline": "red" } ] },
+                { "cmd": "use", "name": "label", "translate": [40, 100] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "text", "text": "Hi, Duck!", "at": [50, 120], "size": 30, "color": "ink", "outline": "red" }"##,
+        ));
+        assert_eq!(png(&used), png(&by_hand));
+
+        // Mirrored left-right in a group: the same picture, flipped.
+        let words = r##"{ "cmd": "text", "text": "Quack", "at": [100, 60], "size": 48, "color": "ink", "align": "center" }"##;
+        let plain = play(&small(words));
+        let mirrored = play(&small(&format!(
+            r##"{{ "cmd": "group", "mirror": "x", "origin": [100, 0], "commands": [ {words} ] }}"##
+        )));
+        let mut most = 0;
+        for y in 0..200 {
+            for x in 0..200 {
+                let (p, q) = (seen(&plain, x, y), seen(&mirrored, 199 - x, y));
+                most = most.max(p.r.abs_diff(q.r)).max(p.a.abs_diff(q.a));
+            }
+        }
+        assert!(most <= 2, "differs by {most}");
+
+        // Turned 90 degrees around `at`: the line now runs downwards,
+        // and the letters' tops face right, so it all lies left of `at`.
+        let turned = play(&small(
+            r##"{ "cmd": "text", "text": "HHHH", "at": [100, 20], "size": 30, "color": "ink", "rotate": 90 }"##,
+        ));
+        let (count, left, top, right, bottom) = painted(&turned);
+        assert!(
+            count > 0 && right <= 100 && top >= 20,
+            "{left} {top} {right} {bottom}"
+        );
+        assert!(bottom - top > 2 * (right - left), "taller than wide");
+    }
+
+    #[test]
+    fn text_mistakes_are_explained() {
+        for (command, expected) in [
+            (
+                r#""align": "middle""#,
+                "`align` is \"left\", \"center\" or \"right\", not \"middle\"",
+            ),
+            (r#""size": 0"#, "`size` must be more than 0"),
+            (
+                r#""outline_size": 3"#,
+                "`outline_size` needs an `outline` colour too",
+            ),
+            (r#""color": "blue""#, "blue"),
+        ] {
+            let problem = error(&small(&format!(
+                r#"{{ "cmd": "text", "text": "Hi", "at": [10, 10], {command} }}"#
+            )));
+            assert!(problem.contains(expected), "{problem}");
+            assert!(problem.starts_with("command 2 (text)"), "{problem}");
+        }
     }
 }

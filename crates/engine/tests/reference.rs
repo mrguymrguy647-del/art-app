@@ -1,8 +1,9 @@
 //! Old scripts must keep painting exactly the same pixels.
 //!
 //! The pictures in `tests/reference/` were rendered before groups,
-//! symbols and text were added. Each test plays a script and compares
-//! every pixel with its reference picture.
+//! symbols and text were added (except `text.png`, made when text was
+//! added, to keep letters looking the same from then on). Each test plays
+//! a script and compares every pixel with its reference picture.
 //!
 //! If a change is *meant* to change pictures, make new references with
 //! `ARTAPP_UPDATE_REFERENCES=1 cargo test -p art_engine --test reference`
@@ -122,5 +123,14 @@ fn a_script_with_every_command_keeps_its_pixels() {
         "crates/engine/tests/scripts/all-commands.json",
         "all-commands-transparent.png",
         Background::Transparent,
+    );
+}
+
+#[test]
+fn text_keeps_its_pixels() {
+    compare(
+        "crates/engine/tests/scripts/text.json",
+        "text.png",
+        Background::Paper,
     );
 }

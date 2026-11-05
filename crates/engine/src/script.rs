@@ -117,6 +117,7 @@ pub enum Command {
     Gradient(GradientCmd),
     Hatch(HatchCmd),
     Scatter(ScatterCmd),
+    Text(TextCmd),
     Snapshot(SnapshotCmd),
     Group(GroupCmd),
     Define(DefineCmd),
@@ -147,6 +148,7 @@ impl Command {
             Command::Gradient(_) => "gradient",
             Command::Hatch(_) => "hatch",
             Command::Scatter(_) => "scatter",
+            Command::Text(_) => "text",
             Command::Snapshot(_) => "snapshot",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
@@ -523,6 +525,34 @@ pub struct ScatterCmd {
     pub angle: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+}
+
+/// `text`: letters in the built-in font (see `text.rs`). `at` is the
+/// top of the first line: its left end, middle or right end, depending on
+/// `align` ("left", "center" or "right"). `size` is the font size in
+/// pixels (32 if not given); "\n" starts a new line. `color` is the
+/// letters' colour (the brush colour if not given); an `outline` colour
+/// draws a border `outline_size` pixels wide (2 if not given) around
+/// them. `rotate` turns the text around `at`, in degrees clockwise.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextCmd {
+    pub text: String,
+    pub at: [f32; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
 }
 
 /// `group`: draws its `commands` moved (`translate`), resized (`scale`),

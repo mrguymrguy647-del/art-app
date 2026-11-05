@@ -20,6 +20,7 @@ pub mod script;
 pub mod smoothing;
 pub mod stroke;
 pub mod surface;
+pub mod text;
 pub mod tile;
 pub mod transform;
 pub mod view;

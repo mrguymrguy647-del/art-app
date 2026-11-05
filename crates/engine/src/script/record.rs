@@ -282,6 +282,10 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                 f(color);
             }
         }
+        Command::Text(c) => {
+            option(&mut c.color, f);
+            option(&mut c.outline, f);
+        }
         Command::Group(c) => {
             for inner in &mut c.commands {
                 for_each_color(inner, f);

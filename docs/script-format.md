@@ -299,6 +299,35 @@ Sizes, opacities, lengths and angles can be one number or `[min, max]` (picked a
 | `angle` | (strokes) Default `[0, 360]`. |
 | `seed` | See [randomness](#randomness). |
 
+### `text` — letters
+
+```json
+{ "cmd": "text", "text": "Mario's Duck!", "at": [400, 40], "size": 64, "color": "sun", "align": "center", "outline": "ink", "outline_size": 3 }
+{ "cmd": "text", "text": "First line\nsecond line", "at": [20, 500], "size": 24, "color": "ink", "rotate": -5 }
+```
+
+Writes `text` in Art App's own font, [Inter](https://rsms.me/inter/), which is built into the
+program, so it looks the same on every computer. `"\n"` starts a new line. The letters are
+filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-and-mirror) or a
+[symbol](#symbols-define-once-use-many-times) they move, turn, resize and mirror like everything else.
+
+| Field | |
+|---|---|
+| `text` | The words. Every printable ASCII character works, and so do most accented letters and symbols (a character the font doesn't have shows as a box). |
+| `at` | `[x, y]`: the **top** of the first line, at its left end (`align` `"left"`, the default), its middle (`"center"`) or its right end (`"right"`). |
+| `size` | Font size in pixels (default 32). |
+| `color` | Default: the brush colour. |
+| `align` | `"left"`, `"center"` or `"right"`: each line is placed against `at` this way. |
+| `outline` | A colour for a border around the letters. It's drawn behind them, so it doesn't make them thinner. |
+| `outline_size` | How wide that border is, in pixels (default 2). |
+| `rotate` | Degrees clockwise, around `at`. |
+| `opacity` | Default 1. |
+
+Sizes, for placing text without guessing: each line is **1.21 × `size`** high. Capital letters
+start **0.24 × `size`** below the top of their line and are **0.73 × `size`** tall, so they sit on
+a baseline 0.97 × `size` below it. For `"size": 100` at `[x, 0]`: capitals from y = 24 to 97, the
+next line's top at 121. Letters with a tail (g, p, y) go down to about 1.2 × `size`.
+
 ### `snapshot`
 
 ```json

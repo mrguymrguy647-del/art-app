@@ -1,0 +1,13 @@
+{
+  "palette": { "ink": "#202020", "sun": "#F2C230", "sky": "#9CC8E8" },
+  "commands": [
+    { "cmd": "canvas", "width": 320, "height": 160, "paper": "sky" },
+    { "cmd": "layer", "name": "Words" },
+    { "cmd": "text", "text": "Mario's Duck!", "at": [160, 8], "size": 40, "color": "sun", "align": "center", "outline": "ink", "outline_size": 3 },
+    { "cmd": "text", "text": "Left, two lines:\n\"quack\" & (quack)?", "at": [10, 64], "size": 16, "color": "ink" },
+    { "cmd": "text", "text": "right #1", "at": [310, 64], "size": 16, "color": "ink", "align": "right" },
+    { "cmd": "group", "name": "tilted", "rotate": -10, "origin": [240, 130], "opacity": 0.8, "commands": [
+      { "cmd": "text", "text": "Tilted 50%", "at": [240, 116], "size": 20, "color": "#C04040", "align": "center" }
+    ] }
+  ]
+}

@@ -465,3 +465,40 @@ waiting copies into each other's error messages.
 
 A test checks that `use` paints exactly the same pixels as writing the
 symbol's commands out by hand.
+
+## 41. Text: a built-in font, letters as shapes
+Painting scripts write text with a font that is part of Art App, so a
+script gives the same picture on every computer, including a cloud
+machine with no fonts installed. The font is **Inter** (Regular): very
+clear, with every ASCII character and most accented letters, and its
+licence (the SIL Open Font License) lets it be built into a program as
+long as the licence goes with it (`assets/fonts/OFL.txt`, and a credit
+in the README).
+
+Reading the font file is done by **ttf-parser**, a small library with no
+other dependencies that only reads letter shapes; it draws nothing. The
+engine then does the rest itself (`text.rs`):
+- Each letter's curves are cut into short straight pieces (about one
+  canvas pixel long), so a letter becomes a few polygons.
+- They're filled like any other shape, with the same smooth edges. A
+  letter like "o" is two outlines, the hole going the other way round;
+  the fill already used the "non-zero" rule, which leaves such holes
+  empty, so it only had to learn to fill several outlines at once.
+- Letters are spaced with the font's own advance widths and its
+  kerning pairs (so "AV" tucks together). There's no shaping for
+  joined-up scripts or right-to-left text: not needed for labels.
+- The outline is a crisp stroke along every letter's edge, painted
+  first, so the letters cover its inner half and only a border outside
+  them shows. Letters don't get thinner when they get an outline.
+
+Because letters are shapes, text moves, turns, resizes and mirrors
+inside groups and symbols with no special cases.
+
+`at` is the **top** of the first line, not the baseline: then
+`"at": [x, y]` means "the text starts here and goes down", like every
+other box in the format. Exact sizes are in script-format.md, so a
+painter can place text without trying it first.
+
+A reference picture (`tests/reference/text.png`) keeps text looking
+the same from now on, and a test checks that every printable ASCII
+character draws something.

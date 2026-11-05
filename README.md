@@ -5,7 +5,7 @@ A digital painting app for Windows, written in Rust.
 **Status:** Phase 1 is complete, plus a paint bucket, gradients, blend modes, and **painting
 scripts**: pictures described as text, step by step (see [docs/script-format.md](docs/script-format.md)),
 with groups that move, resize, turn and mirror a drawing, symbols (define once, use many times,
-with colours swapped) and repeats. Paint and erase with a round brush (pen pressure changes size
+with colours swapped), repeats and text. Paint and erase with a round brush (pen pressure changes size
 and opacity) on layers, pick colours from a colour wheel or the canvas, undo and redo, zoom, pan
 and rotate the canvas, and save, open and export your pictures. The pen test is under
 **Pen test** in the top bar.
@@ -109,6 +109,7 @@ art-app/
 ├── docs/AI_GUIDE.md      how an AI assistant paints with scripts and art-cli
 └── crates/
     ├── engine/           painting engine: plain Rust, no window/UI code
+    │   ├── assets/fonts/ the built-in font for text (Inter, SIL Open Font License)
     │   └── src/
     │       ├── lib.rs
     │       ├── tile.rs       256×256 blocks of pixels
@@ -123,6 +124,7 @@ art-app/
     │       ├── blend.rs      blend modes (Multiply, Screen, ...)
     │       ├── random.rs     random numbers that repeat exactly (for scripts)
     │       ├── transform.rs  moving, turning, resizing, mirroring (groups, previews)
+    │       ├── text.rs       text: letter shapes from the built-in font, laid out in lines
     │       ├── image.rs      flat images: crop, shrink, enlarge, save PNG
     │       ├── script.rs     painting scripts: the format, reading, errors
     │       ├── script/
@@ -161,3 +163,9 @@ art-app/
 cargo run -p art_app          # build and start (debug build)
 cargo test --workspace        # run all tests
 ```
+
+## Credits
+
+Text in painting scripts uses the [Inter](https://rsms.me/inter/) typeface by The Inter Project
+Authors, under the SIL Open Font License 1.1 (see `crates/engine/assets/fonts/OFL.txt`). It's
+built into the program, so no fonts need to be installed.

@@ -239,15 +239,25 @@ pub fn wobble(
 /// How many slices each pixel row is cut into to work out smooth edges.
 const SUBROWS: usize = 16;
 
-/// Which pixels a polygon covers, with smooth edges: 255 inside, 0
-/// outside, and in between on the edge. Overlapping or crossing parts
-/// count as inside (the "non-zero" rule), so a star drawn in one go is
-/// filled completely.
-pub fn polygon_mask(points: &[Pt], limits: PixelRect) -> Mask {
-    if points.len() < 3 {
+/// Which pixels a shape covers, with smooth edges: 255 inside, 0
+/// outside, and in between on the edge. The shape is one or more closed
+/// outlines (rings) filled together. Overlapping or crossing parts count
+/// as inside (the "non-zero" rule), so a star drawn in one go is filled
+/// completely; a hole, like the middle of a letter "o", is an outline
+/// going the other way round, so it stays empty.
+pub fn polygons_mask<P: AsRef<[Pt]>>(rings: &[P], limits: PixelRect) -> Mask {
+    let rings: Vec<&[Pt]> = rings
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|ring| ring.len() >= 3)
+        .collect();
+    if rings.is_empty() {
         return Mask::new(PixelRect::new(0, 0, 0, 0));
     }
-    let (l, t, r, b) = bounds(points);
+    let (l, t, r, b) = rings.iter().map(|ring| bounds(ring)).fold(
+        (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+        |(l, t, r, b), (l2, t2, r2, b2)| (l.min(l2), t.min(t2), r.max(r2), b.max(b2)),
+    );
     let rect = PixelRect::new(
         l.floor() as i32,
         t.floor() as i32,
@@ -262,11 +272,14 @@ pub fn polygon_mask(points: &[Pt], limits: PixelRect) -> Mask {
 
     // Each edge: from (x0, y0) to (x1, y1), and whether it goes down (+1)
     // or up (-1). Flat edges never cross a row, so they're left out.
-    let n = points.len();
-    let edges: Vec<(f32, f32, f32, f32, i32)> = (0..n)
-        .filter_map(|i| {
-            let (a, b) = (points[i], points[(i + 1) % n]);
-            (a.1 != b.1).then_some((a.0, a.1, b.0, b.1, if b.1 > a.1 { 1 } else { -1 }))
+    let edges: Vec<(f32, f32, f32, f32, i32)> = rings
+        .iter()
+        .flat_map(|points| {
+            let n = points.len();
+            (0..n).filter_map(move |i| {
+                let (a, b) = (points[i], points[(i + 1) % n]);
+                (a.1 != b.1).then_some((a.0, a.1, b.0, b.1, if b.1 > a.1 { 1 } else { -1 }))
+            })
         })
         .collect();
 
@@ -417,6 +430,27 @@ mod tests {
 
     fn square(x: f32, y: f32, size: f32) -> Vec<Pt> {
         vec![(x, y), (x + size, y), (x + size, y + size), (x, y + size)]
+    }
+
+    fn polygon_mask(points: &[Pt], limits: PixelRect) -> Mask {
+        polygons_mask(&[points], limits)
+    }
+
+    #[test]
+    fn an_outline_going_the_other_way_makes_a_hole() {
+        let outer = square(10.0, 10.0, 40.0);
+        let mut hole = square(20.0, 20.0, 20.0);
+        hole.reverse();
+        let mask = polygons_mask(&[outer.clone(), hole], PixelRect::new(0, 0, 100, 100));
+        assert_eq!(mask.covered_pixels(), 40 * 40 - 20 * 20);
+        assert_eq!(mask.get(15, 15), 255);
+        assert_eq!(mask.get(30, 30), 0, "the middle is empty");
+        // Two outlines going the same way just overlap.
+        let both = polygons_mask(
+            &[outer, square(20.0, 20.0, 20.0)],
+            PixelRect::new(0, 0, 100, 100),
+        );
+        assert_eq!(both.covered_pixels(), 40 * 40);
     }
 
     #[test]
