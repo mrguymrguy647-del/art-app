@@ -5,6 +5,11 @@
 //! Every shape is turned into a list of points around its edge (a
 //! polygon). Curves get enough points that the corners between them are
 //! too small to see.
+//!
+//! Shapes are worked out in a drawing's own units, which a group or a
+//! preview may then resize. `detail` says how many canvas pixels one unit
+//! becomes (1 at normal size), so curves still get a point every couple of
+//! *canvas* pixels: smooth when enlarged, not wasteful when shrunk.
 
 use std::f32::consts::TAU;
 
@@ -16,7 +21,7 @@ use crate::surface::PixelRect;
 /// A point on the canvas, in pixels.
 pub type Pt = (f32, f32);
 
-/// Curves are cut into straight pieces about this long (in pixels).
+/// Curves are cut into straight pieces about this long (in canvas pixels).
 const PIECE: f32 = 2.0;
 
 /// The smallest rectangle around `points`: (left, top, right, bottom).
@@ -41,9 +46,11 @@ fn rotate(point: Pt, centre: Pt, degrees: f32) -> Pt {
 }
 
 /// The outline of an ellipse: radii `rx` and `ry`, turned by `rotation` degrees.
-pub fn ellipse_outline(centre: Pt, rx: f32, ry: f32, rotation: f32) -> Vec<Pt> {
-    // Roughly the distance around it, to choose how many points to use.
-    let around = TAU * ((rx * rx + ry * ry) / 2.0).sqrt();
+pub fn ellipse_outline(centre: Pt, rx: f32, ry: f32, rotation: f32, detail: f32) -> Vec<Pt> {
+    // Roughly the distance around it on the canvas, to choose how many
+    // points to use.
+    let (crx, cry) = (rx * detail, ry * detail);
+    let around = TAU * ((crx * crx + cry * cry) / 2.0).sqrt();
     let count = ((around / PIECE).ceil() as usize).clamp(24, 4096);
     (0..count)
         .map(|i| {
@@ -63,6 +70,7 @@ pub fn rect_outline(
     height: f32,
     radius: f32,
     rotation: f32,
+    detail: f32,
 ) -> Vec<Pt> {
     let centre = (x + width / 2.0, y + height / 2.0);
     let radius = radius.clamp(0.0, width.abs().min(height.abs()) / 2.0);
@@ -75,7 +83,7 @@ pub fn rect_outline(
         ]
     } else {
         // A quarter circle at each corner, going round clockwise.
-        let steps = ((TAU * radius / 4.0 / PIECE).ceil() as usize).clamp(4, 512);
+        let steps = ((TAU * radius * detail / 4.0 / PIECE).ceil() as usize).clamp(4, 512);
         let corners = [
             ((x + width - radius, y + radius), -90.0_f32),
             ((x + width - radius, y + height - radius), 0.0),
@@ -101,7 +109,7 @@ pub fn rect_outline(
 /// A smooth curve through `points` (with their pressures), as many short
 /// pieces. With `closed`, the curve also comes back round to the start.
 /// Uses the same curve as brush strokes, so it never overshoots or loops.
-pub fn smooth_path(points: &[StrokePoint], closed: bool) -> Vec<StrokePoint> {
+pub fn smooth_path(points: &[StrokePoint], closed: bool, detail: f32) -> Vec<StrokePoint> {
     let n = points.len();
     if n < 2 {
         return points.to_vec();
@@ -117,7 +125,7 @@ pub fn smooth_path(points: &[StrokePoint], closed: bool) -> Vec<StrokePoint> {
     let mut out = vec![points[0]];
     for i in 0..segments as isize {
         let (a, b, c, d) = (at(i - 1), at(i), at(i + 1), at(i + 2));
-        let pieces = (b.distance_to(&c) / PIECE).ceil().max(1.0) as usize;
+        let pieces = (b.distance_to(&c) * detail / PIECE).ceil().max(1.0) as usize;
         for piece in 1..=pieces {
             let t = piece as f32 / pieces as f32;
             let (x, y) = curve_point(a, b, c, d, t);
@@ -133,13 +141,15 @@ pub fn smooth_path(points: &[StrokePoint], closed: bool) -> Vec<StrokePoint> {
 
 /// Adds points along straight lines between `points` (closing the loop if
 /// `closed`), at most `PIECE` apart, so wobble and tapering are smooth.
-pub fn densify(points: &[Pt], closed: bool) -> Vec<Pt> {
+pub fn densify(points: &[Pt], closed: bool, detail: f32) -> Vec<Pt> {
     let mut out = Vec::new();
     let n = points.len();
     let segments = if closed { n } else { n.saturating_sub(1) };
     for i in 0..segments {
         let (a, b) = (points[i], points[(i + 1) % n]);
-        let pieces = ((b.0 - a.0).hypot(b.1 - a.1) / PIECE).ceil().max(1.0) as usize;
+        let pieces = ((b.0 - a.0).hypot(b.1 - a.1) * detail / PIECE)
+            .ceil()
+            .max(1.0) as usize;
         for piece in 0..pieces {
             let t = piece as f32 / pieces as f32;
             out.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
@@ -450,7 +460,7 @@ mod tests {
 
     #[test]
     fn an_ellipse_covers_about_pi_r_squared() {
-        let outline = ellipse_outline((50.0, 50.0), 30.0, 30.0, 0.0);
+        let outline = ellipse_outline((50.0, 50.0), 30.0, 30.0, 0.0, 1.0);
         let mask = polygon_mask(&outline, PixelRect::new(0, 0, 100, 100));
         let area: f32 = (0..100)
             .flat_map(|y| (0..100).map(move |x| (x, y)))
@@ -465,14 +475,14 @@ mod tests {
 
     #[test]
     fn rotating_a_rectangle_by_90_degrees_swaps_its_sides() {
-        let outline = rect_outline(0.0, 0.0, 40.0, 20.0, 0.0, 90.0);
+        let outline = rect_outline(0.0, 0.0, 40.0, 20.0, 0.0, 90.0, 1.0);
         let (l, t, r, b) = bounds(&outline);
         assert!(((r - l) - 20.0).abs() < 1e-3 && ((b - t) - 40.0).abs() < 1e-3);
     }
 
     #[test]
     fn rounded_corners_cut_the_corners_off() {
-        let outline = rect_outline(0.0, 0.0, 100.0, 100.0, 20.0, 0.0);
+        let outline = rect_outline(0.0, 0.0, 100.0, 100.0, 20.0, 0.0, 1.0);
         assert!(!contains(&outline, (1.0, 1.0)), "the corner is cut away");
         assert!(
             contains(&outline, (50.0, 1.0)),
@@ -487,7 +497,7 @@ mod tests {
             StrokePoint::new(50.0, 40.0, 1.0),
             StrokePoint::new(100.0, 0.0, 1.0),
         ];
-        let path = smooth_path(&points, false);
+        let path = smooth_path(&points, false, 1.0);
         for p in points {
             assert!(path.iter().any(|q| q.distance_to(&p) < 0.01), "{p:?}");
         }

@@ -7,19 +7,29 @@
 //! small budget), while the command-line renderer just plays everything
 //! at once (`run`).
 //!
+//! Commands are played from a stack of *frames*: the script itself is the
+//! bottom one, and a `group` adds one for its own commands, with its own
+//! transform (where its drawing lands on the canvas). Every drawing
+//! command first works out its shape in its own units, then places it
+//! with the frame's transform. A quick preview is simply the whole script
+//! inside a shrinking transform.
+//!
 //! Everything a command needs is checked before anything is painted, and
-//! problems are reported with the command's number.
+//! problems are reported with the command's number (and, inside groups,
+//! the way to it).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::geometry::{self, Pt};
 use super::{
-    BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, HatchCmd, LayerCmd, LineCmd, MoveLayerCmd,
-    PathCmd, Point, PolygonCmd, RectCmd, ScatterCmd, Script, ScriptError, StrokeCmd, parse_hex,
+    BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
+    MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, ScatterCmd, Script, ScriptError, StrokeCmd,
+    parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
@@ -36,6 +46,7 @@ use crate::layer_commands::{
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
 use crate::tile::Rgba8;
+use crate::transform::Transform;
 
 /// How the script is played.
 #[derive(Clone, Debug)]
@@ -91,10 +102,12 @@ const AREA_COST: f32 = 600.0;
 const MAX_SCATTER: u32 = 200_000;
 /// The most lines one `hatch` may draw.
 const MAX_HATCH_LINES: usize = 20_000;
-/// Random wobble changes direction about this often (in pixels at full size).
+/// Random wobble changes direction about this often (in drawing units).
 const WOBBLE_WAVELENGTH: f32 = 40.0;
+/// Groups can hold groups, but not endlessly.
+const MAX_DEPTH: usize = 64;
 
-/// One simple job a command was turned into.
+/// One simple job a command was turned into. Positions are on the canvas.
 enum Job {
     Stroke {
         layer: LayerId,
@@ -125,16 +138,56 @@ struct RunningStroke {
     next: usize,
 }
 
+/// Commands being played: the script itself, or the inside of a group.
+struct Frame {
+    commands: Arc<Vec<Command>>,
+    /// The next command to start.
+    next: usize,
+    /// For error messages: this frame's number in the frame below it, and
+    /// its name, like `group "duck"`. `None` for the script itself.
+    label: Option<(usize, String)>,
+    /// Where this frame's drawing lands on the canvas.
+    place: Transform,
+    /// How many canvas pixels one drawing unit is (how finely to cut curves).
+    detail: f32,
+    /// Brush and outline sizes are multiplied by this.
+    brush_scale: f32,
+    /// Everything drawn is made this much fainter (1 = not at all).
+    opacity: f32,
+    /// Where randomness starts for this frame's commands (`None` for the
+    /// script itself, where it's simply the command's number).
+    seed_base: Option<u64>,
+    /// What to put back when the frame ends.
+    restore: Option<Saved>,
+}
+
+/// The brush and selected layer from before a group, put back after it.
+struct Saved {
+    layer: LayerId,
+    brush: BrushSettings,
+    brush_alpha: u8,
+}
+
+/// A group's transform and settings, checked.
+struct Placement {
+    transform: Transform,
+    opacity: f32,
+    scale_brush: bool,
+}
+
 /// Plays a script, start to finish.
 pub struct Player {
-    commands: Vec<Command>,
+    /// The script's own commands.
+    commands: Arc<Vec<Command>>,
     palette: HashMap<String, Rgba>,
     seed: u64,
     options: PlayOptions,
-    /// The next command to start.
-    next: usize,
-    /// The command being worked on (for error messages).
+    /// The commands being played, innermost last.
+    frames: Vec<Frame>,
+    /// The position of the command being started, in its frame.
     current: usize,
+    /// Where randomness starts for the command being started.
+    current_seed: u64,
     brush: BrushSettings,
     /// The opacity part of the brush colour (from "#RRGGBBAA").
     brush_alpha: u8,
@@ -163,7 +216,7 @@ impl Player {
             Some(other) => {
                 return Err(ScriptError::in_command(
                     0,
-                    Some(other.kind()),
+                    Some(&other.label()),
                     "a script starts with a `canvas` command, e.g. \
                      {\"cmd\": \"canvas\", \"width\": 1600, \"height\": 1000}",
                 ));
@@ -186,12 +239,13 @@ impl Player {
             })
             .collect::<Result<_, ScriptError>>()?;
         Ok(Self {
-            commands: script.commands,
+            commands: Arc::new(script.commands),
             palette,
             seed: script.seed,
             options,
-            next: 0,
+            frames: Vec::new(),
             current: 0,
+            current_seed: 0,
             brush: BrushSettings {
                 color: [0, 0, 0],
                 ..BrushSettings::default()
@@ -270,7 +324,7 @@ impl Player {
                 ));
             }
         };
-        self.next = 1;
+        self.start_frames();
         Ok(document)
     }
 
@@ -286,8 +340,25 @@ impl Player {
                 self.record(step);
             }
         }
-        self.next = 1;
+        self.start_frames();
         Ok(())
+    }
+
+    /// The bottom frame: the script's own commands, after `canvas`. A
+    /// preview is everything shrunk around the canvas's top-left corner.
+    fn start_frames(&mut self) {
+        let scale = self.options.scale;
+        self.frames = vec![Frame {
+            commands: Arc::clone(&self.commands),
+            next: 1,
+            label: None,
+            place: Transform::scale(scale, scale),
+            detail: scale,
+            brush_scale: scale,
+            opacity: 1.0,
+            seed_base: None,
+            restore: None,
+        }];
     }
 
     /// Plays until `budget` is used up (roughly: pixels of brush travel),
@@ -311,13 +382,19 @@ impl Player {
                 budget = self.continue_stroke(document, budget);
             } else if let Some(job) = self.jobs.pop_front() {
                 budget -= self.start_job(document, job);
-            } else if self.next < self.commands.len() {
-                self.current = self.next;
-                self.next += 1;
-                let command = self.commands[self.current].clone();
-                self.start_command(document, &command).map_err(|message| {
-                    ScriptError::in_command(self.current, Some(command.kind()), message)
-                })?;
+            } else if let Some(frame) = self.frames.last_mut() {
+                if frame.next < frame.commands.len() {
+                    let commands = Arc::clone(&frame.commands);
+                    let index = frame.next;
+                    frame.next += 1;
+                    let command = &commands[index];
+                    self.current = index;
+                    self.current_seed = self.default_seed(index);
+                    self.start_command(document, command)
+                        .map_err(|message| self.error_at(index, command, message))?;
+                } else if let Some(frame) = self.frames.pop() {
+                    self.end_frame(document, frame);
+                }
             } else {
                 self.flush_tiles();
                 if let Some(name) = self.painted.take() {
@@ -344,9 +421,14 @@ impl Player {
         }
     }
 
-    /// How far along: (commands started, all commands).
+    /// How far along the script's own commands: (started, all of them).
     pub fn position(&self) -> (usize, usize) {
-        (self.next, self.commands.len())
+        let total = self.commands.len();
+        match self.frames.first() {
+            Some(script) => (script.next, total),
+            None if self.finished => (total, total),
+            None => (0, total),
+        }
     }
 
     pub fn is_finished(&self) -> bool {
@@ -362,6 +444,132 @@ impl Player {
         }
         self.flush_tiles();
         std::mem::take(&mut self.undo)
+    }
+
+    // ---- Frames -------------------------------------------------------------------
+
+    fn frame(&self) -> &Frame {
+        self.frames
+            .last()
+            .expect("a command is only started inside a frame")
+    }
+
+    /// Where randomness starts for command `index` of the innermost frame:
+    /// at the script's top level its number (as it always was), inside a
+    /// group a mix of the group's and the command's.
+    fn default_seed(&self, index: usize) -> u64 {
+        match self.frames.last().and_then(|frame| frame.seed_base) {
+            None => index as u64 + 1,
+            Some(base) => Random::mix(base, index as u64 + 1),
+        }
+    }
+
+    /// Starts playing `commands` inside the current frame, placed by
+    /// `placement` (on top of the current frame's own placement).
+    fn push_frame(
+        &mut self,
+        document: &Document,
+        commands: Arc<Vec<Command>>,
+        label: String,
+        placement: Placement,
+        seed_base: u64,
+    ) -> Result<(), String> {
+        if self.frames.len() >= MAX_DEPTH {
+            return Err(format!(
+                "groups are nested too deeply (more than {MAX_DEPTH})"
+            ));
+        }
+        let parent = self.frame();
+        let own = placement.transform;
+        let frame = Frame {
+            commands,
+            next: 0,
+            label: Some((self.current + 1, label)),
+            place: own.then(parent.place),
+            detail: parent.detail * own.size_factor(),
+            brush_scale: if placement.scale_brush {
+                parent.brush_scale * own.size_factor()
+            } else {
+                parent.brush_scale
+            },
+            opacity: parent.opacity * placement.opacity,
+            seed_base: Some(seed_base),
+            restore: Some(Saved {
+                layer: document.active_id(),
+                brush: self.brush,
+                brush_alpha: self.brush_alpha,
+            }),
+        };
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    /// A frame has played all its commands: put back the brush and the
+    /// selected layer from before it.
+    fn end_frame(&mut self, document: &mut Document, frame: Frame) {
+        let Some(saved) = frame.restore else {
+            return;
+        };
+        self.brush = saved.brush;
+        self.brush_alpha = saved.brush_alpha;
+        if document.layer(saved.layer).is_some() && document.active_id() != saved.layer {
+            if let Some(name) = self.painted.take() {
+                self.events.push_back(Event::LayerDone(name));
+            }
+            document.set_active(saved.layer);
+        }
+    }
+
+    /// The error for a mistake in command `index` of the innermost frame,
+    /// with the way to it from the script's own commands.
+    fn error_at(&self, index: usize, command: &Command, message: String) -> ScriptError {
+        let mut steps: Vec<(usize, String)> = self
+            .frames
+            .iter()
+            .filter_map(|frame| frame.label.clone())
+            .collect();
+        steps.push((index + 1, command.label()));
+        let (number, label) = steps.remove(0);
+        ScriptError {
+            command: Some(number),
+            kind: Some(label),
+            inside: steps
+                .into_iter()
+                .map(|(number, label)| format!("{number} ({label})"))
+                .collect(),
+            line: None,
+            message,
+        }
+    }
+
+    // ---- Placing drawing on the canvas ------------------------------------------
+
+    /// Where a point in drawing units lands on the canvas.
+    fn place(&self, point: Pt) -> Pt {
+        self.frame().place.apply(point)
+    }
+
+    fn place_all(&self, points: &mut [StrokePoint]) {
+        let place = self.frame().place;
+        if place.is_identity() {
+            return;
+        }
+        for point in points {
+            (point.x, point.y) = place.apply((point.x, point.y));
+        }
+    }
+
+    fn place_polygon(&self, points: Vec<Pt>) -> Vec<Pt> {
+        let place = self.frame().place;
+        if place.is_identity() {
+            return points;
+        }
+        points.into_iter().map(|p| place.apply(p)).collect()
+    }
+
+    /// How many canvas pixels one drawing unit is, here.
+    fn detail(&self) -> f32 {
+        self.frame().detail
     }
 
     // ---- Doing the work ---------------------------------------------------------
@@ -575,7 +783,26 @@ impl Player {
                     .push_back(Event::Snapshot(snapshot.name.clone()));
                 Ok(())
             }
+            Command::Group(group) => self.group(document, group),
         }
+    }
+
+    fn group(&mut self, document: &Document, command: &GroupCmd) -> Result<(), String> {
+        let placement = placement(
+            command.translate,
+            command.scale.as_ref(),
+            command.rotate,
+            command.mirror.as_deref(),
+            command.origin,
+            command.opacity,
+            command.scale_brush,
+        )?;
+        let label = match &command.name {
+            Some(name) => format!("group \"{name}\""),
+            None => "group".to_owned(),
+        };
+        let commands = Arc::new(command.commands.clone());
+        self.push_frame(document, commands, label, placement, self.current_seed)
     }
 
     fn layer(&mut self, document: &mut Document, command: &LayerCmd) -> Result<(), String> {
@@ -763,7 +990,7 @@ impl Player {
     }
 
     /// The brush for one stroke: the current brush with this command's
-    /// changes, at the playing scale.
+    /// changes, sized and faded for the current frame.
     fn stroke_brush(
         &self,
         changes: BrushChanges,
@@ -788,8 +1015,10 @@ impl Player {
         if let Some(flow) = changes.flow {
             brush.flow = unit("flow", flow)?.max(0.01);
         }
+        let frame = self.frame();
         brush.opacity *= f32::from(alpha) / 255.0;
-        brush.size = (brush.size * self.options.scale).max(0.25);
+        brush.opacity *= frame.opacity;
+        brush.size = (brush.size * frame.brush_scale).max(0.25);
         brush.mode = mode;
         Ok(brush)
     }
@@ -815,6 +1044,7 @@ impl Player {
         )?;
         let mut points = self.points(&command.points)?;
         self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.place_all(&mut points);
         self.jobs.push_back(Job::Stroke {
             layer: document.active_id(),
             brush,
@@ -834,14 +1064,15 @@ impl Player {
             },
             BrushMode::Paint,
         )?;
-        let ends = [self.pt(command.from)?, self.pt(command.to)?];
-        let mut points = to_stroke_points(&geometry::densify(&ends, false));
+        let ends = [pt(command.from)?, pt(command.to)?];
+        let mut points = to_stroke_points(&geometry::densify(&ends, false, self.detail()));
         let (start, end) = taper(command.taper.as_ref(), 0.25)?;
         if start > 0.0 || end > 0.0 {
             brush.pressure_size = true; // so the taper shows
             geometry::apply_taper(&mut points, start, end);
         }
         self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.place_all(&mut points);
         self.jobs.push_back(Job::Stroke {
             layer: document.active_id(),
             brush,
@@ -867,13 +1098,14 @@ impl Player {
             BrushMode::Paint,
         )?;
         let given = self.points(&command.points)?;
-        let mut points = geometry::smooth_path(&given, closed);
+        let mut points = geometry::smooth_path(&given, closed, self.detail());
         let (start, end) = taper(command.taper.as_ref(), 0.0)?;
         if start > 0.0 || end > 0.0 {
             brush.pressure_size = true;
             geometry::apply_taper(&mut points, start, end);
         }
         self.jitter(&mut points, command.jitter, command.seed, closed)?;
+        self.place_all(&mut points);
 
         let layer = document.active_id();
         if let Some(fill) = &command.fill {
@@ -881,7 +1113,7 @@ impl Player {
                 return Err("only a `closed` path can be filled: add \"closed\": true".into());
             }
             let paint = self.paint(fill)?;
-            let opacity = unit("opacity", command.opacity.unwrap_or(1.0))?;
+            let opacity = unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity;
             self.jobs.push_back(Job::Area {
                 layer,
                 shape: Some(points.iter().map(|p| (p.x, p.y)).collect()),
@@ -907,14 +1139,14 @@ impl Player {
             return Err("`width` and `height` must be more than 0".into());
         }
         let radius = not_negative("radius", command.radius.unwrap_or(0.0))?;
-        let s = self.options.scale;
         let outline = geometry::rect_outline(
-            command.x * s,
-            command.y * s,
-            command.width * s,
-            command.height * s,
-            radius * s,
+            command.x,
+            command.y,
+            command.width,
+            command.height,
+            radius,
             command.rotation.unwrap_or(0.0),
+            self.detail(),
         );
         let style = ShapeStyle {
             fill: command.fill.as_ref(),
@@ -943,10 +1175,14 @@ impl Player {
         if !(rx > 0.0 && ry > 0.0) {
             return Err("the radius must be more than 0".into());
         }
-        let s = self.options.scale;
-        let centre = self.pt(command.center)?;
-        let outline =
-            geometry::ellipse_outline(centre, rx * s, ry * s, command.rotation.unwrap_or(0.0));
+        let centre = pt(command.center)?;
+        let outline = geometry::ellipse_outline(
+            centre,
+            rx,
+            ry,
+            command.rotation.unwrap_or(0.0),
+            self.detail(),
+        );
         let style = ShapeStyle {
             fill: command.fill.as_ref(),
             outline: command.outline.as_ref(),
@@ -966,7 +1202,7 @@ impl Player {
         let outline = command
             .points
             .iter()
-            .map(|&p| self.pt(p))
+            .map(|&p| pt(p))
             .collect::<Result<Vec<_>, _>>()?;
         let style = ShapeStyle {
             fill: command.fill.as_ref(),
@@ -981,7 +1217,7 @@ impl Player {
     }
 
     /// The part all closed shapes share: optional wobble, then the fill,
-    /// then the outline on top.
+    /// then the outline on top. `outline` is in drawing units.
     fn shape(
         &mut self,
         document: &Document,
@@ -999,8 +1235,9 @@ impl Player {
         } else {
             BrushMode::Paint
         };
-        let mut points = to_stroke_points(&geometry::densify(&outline, true));
+        let mut points = to_stroke_points(&geometry::densify(&outline, true, self.detail()));
         self.jitter(&mut points, style.jitter, style.seed, true)?;
+        self.place_all(&mut points);
         let layer = document.active_id();
 
         if let Some(fill) = style.fill {
@@ -1009,7 +1246,7 @@ impl Player {
                 layer,
                 shape: Some(points.iter().map(|p| (p.x, p.y)).collect()),
                 paint,
-                opacity,
+                opacity: opacity * self.frame().opacity,
                 mode,
             });
         }
@@ -1037,7 +1274,7 @@ impl Player {
     }
 
     fn bucket(&mut self, document: &Document, command: &FillCmd) -> Result<(), String> {
-        let (x, y) = self.pt(command.at)?;
+        let (x, y) = self.place(pt(command.at)?);
         let paint = match &command.color {
             Some(color) => Paint::Color(self.color(color)?),
             None => {
@@ -1065,10 +1302,10 @@ impl Player {
                 y,
                 tolerance: unit("tolerance", command.tolerance.unwrap_or(0.1))?,
                 sample,
-                expand: (grow as f32 * self.options.scale).round() as u32,
+                expand: (grow as f32 * self.detail()).round() as u32,
             },
             paint,
-            opacity: unit("opacity", command.opacity.unwrap_or(1.0))?,
+            opacity: unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity,
         });
         Ok(())
     }
@@ -1082,7 +1319,7 @@ impl Player {
             command.stops.as_deref(),
         )?;
         let shape = match &command.area {
-            Some(area) => Some(self.area(area)?),
+            Some(area) => Some(self.place_polygon(self.area(area)?)),
             None => None,
         };
         let mode = if command.erase.unwrap_or(false) {
@@ -1094,7 +1331,7 @@ impl Player {
             layer: document.active_id(),
             shape,
             paint: Paint::Gradient(gradient),
-            opacity: unit("opacity", command.opacity.unwrap_or(1.0))?,
+            opacity: unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity,
             mode,
         });
         Ok(())
@@ -1112,11 +1349,12 @@ impl Player {
             },
             BrushMode::Paint,
         )?;
+        // In drawing units: by default, half again the brush's own size.
         let spacing = match command.spacing {
             Some(spacing) if spacing > 0.0 => spacing,
             Some(_) => return Err("`spacing` must be more than 0".into()),
-            None => (brush.size / self.options.scale * 1.5).max(2.0),
-        } * self.options.scale;
+            None => (command.size.unwrap_or(self.brush.size) * 1.5).max(2.0),
+        };
         let angle = command.angle.unwrap_or(45.0);
         let mut lines = geometry::hatch_lines(&area, angle, spacing);
         if command.cross.unwrap_or(false) {
@@ -1132,7 +1370,8 @@ impl Player {
         if start > 0.0 || end > 0.0 {
             brush.pressure_size = true;
         }
-        let jitter = not_negative("jitter", command.jitter.unwrap_or(0.0))? * self.options.scale;
+        let jitter = not_negative("jitter", command.jitter.unwrap_or(0.0))?;
+        let detail = self.detail();
         let mut random = self.random(command.seed);
         let layer = document.active_id();
         for (a, b) in lines {
@@ -1148,20 +1387,21 @@ impl Player {
             } else {
                 (a, b)
             };
-            if (b.0 - a.0).hypot(b.1 - a.1) < 1.0 {
+            if (b.0 - a.0).hypot(b.1 - a.1) * detail < 1.0 {
                 continue;
             }
-            let mut points = to_stroke_points(&geometry::densify(&[a, b], false));
+            let mut points = to_stroke_points(&geometry::densify(&[a, b], false, detail));
             geometry::apply_taper(&mut points, start, end);
             if jitter > 0.0 {
                 geometry::wobble(
                     &mut points,
                     jitter / 2.0,
-                    WOBBLE_WAVELENGTH * self.options.scale,
+                    WOBBLE_WAVELENGTH,
                     false,
                     &mut random,
                 );
             }
+            self.place_all(&mut points);
             self.jobs.push_back(Job::Stroke {
                 layer,
                 brush,
@@ -1219,7 +1459,10 @@ impl Player {
             None => self.brush.hardness,
         };
 
-        let s = self.options.scale;
+        let (brush_scale, fade, detail) = {
+            let frame = self.frame();
+            (frame.brush_scale, frame.opacity, frame.detail)
+        };
         let (left, top, right, bottom) = geometry::bounds(&area);
         let mut random = self.random(command.seed);
         let layer = document.active_id();
@@ -1237,19 +1480,21 @@ impl Player {
             let [r, g, b, a] = colors[random.index(colors.len())];
             let brush = BrushSettings {
                 color: [r, g, b],
-                size: (random.range(size.0, size.1.max(size.0 + f32::EPSILON)) * s).max(0.25),
+                size: (random.range(size.0, size.1.max(size.0 + f32::EPSILON)) * brush_scale)
+                    .max(0.25),
                 opacity: random
                     .range(opacity.0, opacity.1.max(opacity.0 + f32::EPSILON))
                     .min(1.0)
                     * f32::from(a)
-                    / 255.0,
+                    / 255.0
+                    * fade,
                 hardness,
                 mode: BrushMode::Paint,
                 pressure_size: true,
                 ..self.brush
             };
-            let points = if strokes {
-                let half = random.range(length.0, length.1.max(length.0 + f32::EPSILON)) * s / 2.0;
+            let mut points = if strokes {
+                let half = random.range(length.0, length.1.max(length.0 + f32::EPSILON)) / 2.0;
                 let (sin, cos) = random
                     .range(angle.0, angle.1.max(angle.0 + f32::EPSILON))
                     .to_radians()
@@ -1258,12 +1503,13 @@ impl Player {
                     (x - cos * half, y - sin * half),
                     (x + cos * half, y + sin * half),
                 ];
-                let mut points = to_stroke_points(&geometry::densify(&ends, false));
+                let mut points = to_stroke_points(&geometry::densify(&ends, false, detail));
                 geometry::apply_taper(&mut points, 0.3, 0.3);
                 points
             } else {
                 vec![StrokePoint::new(x, y, 1.0)]
             };
+            self.place_all(&mut points);
             self.jobs.push_back(Job::Stroke {
                 layer,
                 brush,
@@ -1333,6 +1579,9 @@ impl Player {
         }
     }
 
+    /// A gradient, with its start and end placed on the canvas. (Placing
+    /// moves, turns and resizes it with the frame; a round gradient stays
+    /// round even if the frame stretches more one way than the other.)
     fn make_gradient(
         &self,
         kind: Option<&str>,
@@ -1350,7 +1599,7 @@ impl Player {
                 ));
             }
         };
-        let (start, end) = (self.pt(from)?, self.pt(to)?);
+        let (start, end) = (self.place(pt(from)?), self.place(pt(to)?));
         let stops = match (colors, stops) {
             (Some(colors), None) if !colors.is_empty() => {
                 let last = (colors.len() - 1).max(1) as f32;
@@ -1385,7 +1634,8 @@ impl Player {
     }
 
     /// An area: {"rect": [x, y, w, h]}, {"ellipse": [cx, cy, rx, ry]},
-    /// {"circle": [cx, cy, r]} or {"polygon": [[x, y], ...]}, as a polygon.
+    /// {"circle": [cx, cy, r]} or {"polygon": [[x, y], ...]}, as a polygon
+    /// in drawing units.
     fn area(&self, value: &Value) -> Result<Vec<Pt>, String> {
         let help = "an area is {\"rect\": [x, y, width, height]}, {\"ellipse\": [cx, cy, rx, ry]}, \
                     {\"circle\": [cx, cy, r]} or {\"polygon\": [[x, y], ...]}";
@@ -1397,27 +1647,24 @@ impl Player {
                 .map(|v| v.as_f64().map(|f| f as f32).ok_or_else(|| help.to_owned()))
                 .collect()
         };
-        let s = self.options.scale;
+        let detail = self.detail();
         let polygon = match kind.as_str() {
             "rect" => {
                 let v = flat(4)?;
-                geometry::rect_outline(v[0] * s, v[1] * s, v[2] * s, v[3] * s, 0.0, 0.0)
+                geometry::rect_outline(v[0], v[1], v[2], v[3], 0.0, 0.0, detail)
             }
             "ellipse" => {
                 let v = flat(4)?;
-                geometry::ellipse_outline((v[0] * s, v[1] * s), v[2] * s, v[3] * s, 0.0)
+                geometry::ellipse_outline((v[0], v[1]), v[2], v[3], 0.0, detail)
             }
             "circle" => {
                 let v = flat(3)?;
-                geometry::ellipse_outline((v[0] * s, v[1] * s), v[2] * s, v[2] * s, 0.0)
+                geometry::ellipse_outline((v[0], v[1]), v[2], v[2], 0.0, detail)
             }
             "polygon" => {
                 let points: Vec<[f32; 2]> =
                     serde_json::from_value(numbers.clone()).map_err(|_| help.to_owned())?;
-                points
-                    .into_iter()
-                    .map(|p| self.pt(p))
-                    .collect::<Result<_, _>>()?
+                points.into_iter().map(pt).collect::<Result<_, _>>()?
             }
             _ => return Err(help.into()),
         };
@@ -1427,25 +1674,19 @@ impl Player {
         Ok(polygon)
     }
 
-    /// A position, at the playing scale.
-    fn pt(&self, [x, y]: [f32; 2]) -> Result<Pt, String> {
-        if !(x.is_finite() && y.is_finite()) {
-            return Err("positions must be numbers".into());
-        }
-        Ok((x * self.options.scale, y * self.options.scale))
-    }
-
+    /// Stroke points in drawing units, with their pressure.
     fn points(&self, points: &[Point]) -> Result<Vec<StrokePoint>, String> {
         points
             .iter()
             .map(|p| {
-                let (x, y) = self.pt([p.x, p.y])?;
+                let (x, y) = pt([p.x, p.y])?;
                 let pressure = unit("pressure", p.pressure.unwrap_or(1.0))?;
                 Ok(StrokePoint::new(x, y, pressure))
             })
             .collect()
     }
 
+    /// Wobbles points (in drawing units) by up to `jitter` units.
     fn jitter(
         &self,
         points: &mut [StrokePoint],
@@ -1457,11 +1698,10 @@ impl Player {
             return Ok(());
         };
         let amount = not_negative("jitter", amount)?;
-        let s = self.options.scale;
         geometry::wobble(
             points,
-            amount * s,
-            WOBBLE_WAVELENGTH * s,
+            amount,
+            WOBBLE_WAVELENGTH,
             closed,
             &mut self.random(seed),
         );
@@ -1469,12 +1709,9 @@ impl Player {
     }
 
     /// Random numbers for the current command: from the script's seed and
-    /// the command's own `seed` (or, without one, its number).
+    /// the command's own `seed` (or, without one, where it is).
     fn random(&self, seed: Option<u64>) -> Random {
-        Random::new(Random::mix(
-            self.seed,
-            seed.unwrap_or(self.current as u64 + 1),
-        ))
+        Random::new(Random::mix(self.seed, seed.unwrap_or(self.current_seed)))
     }
 }
 
@@ -1510,6 +1747,68 @@ struct GradientFill {
     colors: Option<Vec<String>>,
     #[serde(default)]
     stops: Option<Vec<(f32, String)>>,
+}
+
+/// Checks a group's (or symbol's) transform settings and makes the
+/// transform: around `origin`, mirror, then scale, then rotate; then move.
+fn placement(
+    translate: Option<[f32; 2]>,
+    scale: Option<&Value>,
+    rotate: Option<f32>,
+    mirror: Option<&str>,
+    origin: Option<[f32; 2]>,
+    opacity: Option<f32>,
+    scale_brush: Option<bool>,
+) -> Result<Placement, String> {
+    let translate = pt(translate.unwrap_or([0.0, 0.0]))?;
+    let origin = pt(origin.unwrap_or([0.0, 0.0]))?;
+    let scale_help = "`scale` is a number above 0 (like 1.5), or [across, down] like [2, 1]";
+    let scale = match scale {
+        None => (1.0, 1.0),
+        Some(Value::Number(n)) => {
+            let s = n.as_f64().unwrap_or(0.0) as f32;
+            (s, s)
+        }
+        Some(Value::Array(pair)) if pair.len() == 2 => (
+            pair[0].as_f64().ok_or(scale_help)? as f32,
+            pair[1].as_f64().ok_or(scale_help)? as f32,
+        ),
+        Some(_) => return Err(scale_help.into()),
+    };
+    if !(scale.0 > 0.0 && scale.1 > 0.0 && scale.0.is_finite() && scale.1.is_finite()) {
+        return Err(format!(
+            "{scale_help} (to flip a drawing, use \"mirror\": \"x\" or \"y\")"
+        ));
+    }
+    let rotate = rotate.unwrap_or(0.0);
+    if !rotate.is_finite() {
+        return Err("`rotate` must be a number of degrees".into());
+    }
+    let (mirror_x, mirror_y) = match mirror {
+        None => (false, false),
+        Some("x") => (true, false),
+        Some("y") => (false, true),
+        Some("xy") => (true, true),
+        Some(other) => {
+            return Err(format!(
+                "`mirror` is \"x\" (swap left and right), \"y\" (swap up and down) or \"xy\", \
+                 not \"{other}\""
+            ));
+        }
+    };
+    Ok(Placement {
+        transform: Transform::about(origin, translate, scale, rotate, mirror_x, mirror_y),
+        opacity: unit("opacity", opacity.unwrap_or(1.0))?,
+        scale_brush: scale_brush.unwrap_or(true),
+    })
+}
+
+/// A position, checked to be real numbers (in drawing units).
+fn pt([x, y]: [f32; 2]) -> Result<Pt, String> {
+    if !(x.is_finite() && y.is_finite()) {
+        return Err("positions must be numbers".into());
+    }
+    Ok((x, y))
 }
 
 /// The topmost layer called `name`, if there is one.
@@ -1924,5 +2223,200 @@ mod tests {
         let document = play(&docs[start..end]);
         let names: Vec<&str> = document.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["Sky", "Sun", "Sea"]);
+    }
+
+    // ---- Groups ---------------------------------------------------------------
+
+    /// A script on a white 200 x 200 canvas with `commands` (a JSON list body).
+    fn small(commands: &str) -> String {
+        format!(
+            r##"{{ "palette": {{ "ink": "#202020", "red": "#E02020" }}, "commands": [
+                {{ "cmd": "canvas", "width": 200, "height": 200 }}, {commands} ] }}"##
+        )
+    }
+
+    /// The largest difference in any colour channel between two pictures.
+    fn largest_difference(a: &Document, b: &Document) -> u8 {
+        let mut most = 0;
+        for y in 0..a.height() as i32 {
+            for x in 0..a.width() as i32 {
+                let (p, q) = (seen(a, x, y), seen(b, x, y));
+                for (u, v) in [(p.r, q.r), (p.g, q.g), (p.b, q.b), (p.a, q.a)] {
+                    most = most.max(u.abs_diff(v));
+                }
+            }
+        }
+        most
+    }
+
+    #[test]
+    fn a_mirrored_group_equals_the_shapes_mirrored_by_hand() {
+        let grouped = play(&small(
+            r##"{ "cmd": "group", "mirror": "x", "origin": [100, 0], "commands": [
+                { "cmd": "polygon", "points": [[10, 10], [60, 20], [30, 80]], "fill": "red" },
+                { "cmd": "rect", "x": 20, "y": 120, "width": 50, "height": 30, "fill": "ink" },
+                { "cmd": "stroke", "points": [[10, 190], [60, 160], [90, 185]], "size": 6, "color": "ink" }
+            ] }"##,
+        ));
+        // Mirroring left-right around x = 100: x becomes 200 - x.
+        let by_hand = play(&small(
+            r##"{ "cmd": "polygon", "points": [[190, 10], [140, 20], [170, 80]], "fill": "red" },
+                { "cmd": "rect", "x": 130, "y": 120, "width": 50, "height": 30, "fill": "ink" },
+                { "cmd": "stroke", "points": [[190, 190], [140, 160], [110, 185]], "size": 6, "color": "ink" }"##,
+        ));
+        assert_eq!(png(&grouped), png(&by_hand));
+    }
+
+    #[test]
+    fn nested_groups_combine_their_transforms() {
+        // Inner: twice as big. Outer: moved 100 right. A 20 x 20 square at
+        // (10, 10) ends up 40 x 40 at (120, 20), and its outline twice as thick.
+        let nested = play(&small(
+            r##"{ "cmd": "group", "translate": [100, 0], "commands": [
+                { "cmd": "group", "scale": 2, "commands": [
+                    { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "red", "outline": "ink", "outline_size": 2 }
+                ] }
+            ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "rect", "x": 120, "y": 20, "width": 40, "height": 40, "fill": "red", "outline": "ink", "outline_size": 4 }"##,
+        ));
+        assert_eq!(png(&nested), png(&by_hand));
+    }
+
+    #[test]
+    fn rotation_turns_around_the_origin() {
+        // 90 degrees clockwise around (100, 100): (x, y) goes to (200 - y, x).
+        let turned = play(&small(
+            r##"{ "cmd": "group", "rotate": 90, "origin": [100, 100], "commands": [
+                { "cmd": "rect", "x": 100, "y": 50, "width": 40, "height": 10, "fill": "red" }
+            ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "rect", "x": 140, "y": 100, "width": 10, "height": 40, "fill": "red" }"##,
+        ));
+        // Turning uses sines and cosines, so allow the tiniest rounding.
+        assert!(largest_difference(&turned, &by_hand) <= 2);
+        assert_eq!(seen(&turned, 145, 120), Rgba8::new(0xE0, 0x20, 0x20, 255));
+        assert_eq!(
+            seen(&turned, 120, 55),
+            Rgba8::WHITE,
+            "nothing left where it started"
+        );
+    }
+
+    #[test]
+    fn scale_brush_and_opacity() {
+        let thin = play(&small(
+            r##"{ "cmd": "group", "scale": 4, "scale_brush": false, "commands": [
+                { "cmd": "stroke", "points": [[5, 10], [45, 10]], "size": 4, "color": "ink" }
+            ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "stroke", "points": [[20, 40], [180, 40]], "size": 4, "color": "ink" }"##,
+        ));
+        assert_eq!(png(&thin), png(&by_hand), "the brush kept its size");
+
+        let faint = play(&small(
+            r##"{ "cmd": "group", "opacity": 0.5, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 50, "height": 50, "fill": "#FF0000" }
+            ] }"##,
+        ));
+        // Half-strength red is stored with opacity 128 of 255, so 127/255
+        // of the white paper shows through: 255 * 127 / 255 = 127.
+        assert_eq!(seen(&faint, 25, 25), Rgba8::new(255, 127, 127, 255));
+    }
+
+    #[test]
+    fn areas_fills_and_gradients_move_with_the_group() {
+        let document = play(&small(
+            r##"{ "cmd": "group", "translate": [100, 100], "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 60, "height": 60, "outline": "ink", "outline_size": 3 },
+                { "cmd": "fill", "at": [30, 30], "color": "red", "grow": 0 },
+                { "cmd": "scatter", "area": { "rect": [10, 10, 40, 40] }, "count": 50, "size": 2, "color": "ink", "seed": 1 },
+                { "cmd": "gradient", "from": [0, 0], "to": [60, 0], "colors": ["#0000FF", "#0000FF"], "area": { "rect": [0, 70, 60, 10] } }
+            ] }"##,
+        ));
+        assert_eq!(
+            seen(&document, 105, 105),
+            Rgba8::new(0xE0, 0x20, 0x20, 255),
+            "filled inside"
+        );
+        assert_eq!(
+            seen(&document, 50, 50),
+            Rgba8::WHITE,
+            "nothing where it would be without the move"
+        );
+        assert_eq!(
+            seen(&document, 130, 175),
+            Rgba8::new(0, 0, 255, 255),
+            "the gradient's area moved"
+        );
+        // Every scattered dab is inside the moved area.
+        for y in 0..200 {
+            for x in 0..200 {
+                let p = seen(&document, x, y);
+                let ink = p.r < 100 && p.g < 100 && p.b < 100;
+                if ink && !(98..=162).contains(&x) {
+                    panic!("a dark pixel outside the group at {x},{y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_group_gives_back_the_brush_and_layer_it_found() {
+        let document = play(&small(
+            r##"{ "cmd": "layer", "name": "Back" },
+                { "cmd": "brush", "size": 4, "color": "ink" },
+                { "cmd": "group", "commands": [
+                    { "cmd": "layer", "name": "Front" },
+                    { "cmd": "brush", "size": 40, "color": "red" },
+                    { "cmd": "stroke", "points": [[20, 20], [60, 20]] }
+                ] },
+                { "cmd": "stroke", "points": [[20, 150], [180, 150]] }"##,
+        ));
+        let back = layer_named(&document, "Back").unwrap();
+        assert_eq!(document.active_id(), back, "Back is selected again");
+        // The last stroke is thin, dark and on Back.
+        let pixel = document.layer(back).unwrap().surface.pixel(100, 150);
+        assert_eq!(pixel, Rgba8::new(0x20, 0x20, 0x20, 255));
+        assert_eq!(
+            document.layer(back).unwrap().surface.pixel(100, 158),
+            Rgba8::TRANSPARENT
+        );
+    }
+
+    #[test]
+    fn mistakes_inside_groups_say_where_they_are() {
+        // Found while reading the script.
+        let message = error(&small(
+            r##"{ "cmd": "group", "name": "duck", "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "red" },
+                { "cmd": "group", "commands": [ { "cmd": "ellipse", "center": [0, 0], "radius": 3, "colour": "red" } ] }
+            ] }"##,
+        ));
+        assert!(
+            message.starts_with(
+                "command 2 (group \"duck\") > 2 (group) > 1 (ellipse): unknown field `colour`"
+            ),
+            "{message}"
+        );
+        // Found while playing.
+        let message = error(&small(
+            r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "red" },
+                { "cmd": "group", "name": "duck", "commands": [
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "red" },
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "blu" }
+                ] }"##,
+        ));
+        assert!(
+            message.starts_with("command 3 (group \"duck\") > 2 (rect): unknown colour \"blu\""),
+            "{message}"
+        );
+        let message = error(&small(r#"{ "cmd": "group", "scale": 0, "commands": [] }"#));
+        assert!(message.contains("use \"mirror\""), "{message}");
+        let message = error(&small(r#"{ "cmd": "group", "mirror": "left" }"#));
+        assert!(message.contains("`commands` is missing"), "{message}");
     }
 }

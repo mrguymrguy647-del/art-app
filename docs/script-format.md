@@ -308,6 +308,45 @@ Sizes, opacities, lengths and angles can be one number or `[min, max]` (picked a
 A named checkpoint. `art-cli render --snapshots` saves a picture here, so you can check the
 picture at each stage. It doesn't change the picture.
 
+## Groups: move, turn, resize and mirror
+
+```json
+{ "cmd": "group", "name": "left wing", "translate": [300, 40], "rotate": -20, "origin": [60, 60],
+  "commands": [
+    { "cmd": "ellipse", "center": [60, 60], "radius": [50, 22], "fill": "#F2C230", "outline": "#3A2A10", "outline_size": 3 },
+    { "cmd": "line", "from": [20, 60], "to": [100, 60], "size": 3, "color": "#3A2A10" }
+  ] }
+```
+
+A `group` draws its `commands` through a transform. Draw a part once, in its own coordinates
+(often around `[0, 0]`), then place it where you want it, as big as you want it, turned or
+mirrored. Everything inside follows: points, shapes, paths, gradients, a fill's `at`, and the areas
+of `hatch` and `scatter`.
+
+| Field | |
+|---|---|
+| `commands` | The commands to draw inside the group (needed). Groups can hold groups. |
+| `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. |
+| `translate` | Move by `[x, y]`. |
+| `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. Above 0. |
+| `rotate` | Turn by this many degrees, clockwise. |
+| `mirror` | `"x"` swaps left and right, `"y"` swaps up and down, `"xy"` both. |
+| `origin` | The point the group mirrors, resizes and turns around, in the group's own coordinates. Default `[0, 0]`. |
+| `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
+| `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
+
+The order is always the same: around `origin`, first **mirror**, then **scale**, then **rotate**;
+then **translate**. So `"mirror": "x", "origin": [64, 0]` flips a drawing left to right around
+x = 64, and `"translate": [200, 0]` then moves the flipped drawing 200 pixels right.
+
+**After a group**, the brush and the selected layer are back to what they were before it: a group
+can set its own brush and draw on other layers without changing what comes after it.
+
+Random patterns inside a group (jitter, scatter, hatch) depend on where the command is inside the
+group, so a group's pattern doesn't change when you add commands before the group.
+
+Round gradients stay round when a group is stretched more one way than the other.
+
 ## Areas
 
 `gradient`, `hatch` and `scatter` take an `area`:
@@ -336,12 +375,15 @@ Every error says where it is and what's wrong:
 ```
 line 14: expected `,` or `}` (column 52)
 command 7 (stroke): unknown field `colour`, expected one of `points`, `color`, `size`, ...
+command 12 (group "duck") > 3 (ellipse): unknown colour "yelow"; the palette has: ink, yellow
 command 9 (layer): unknown blend mode "multipy"; use one of: normal, multiply, screen, ...
 command 12 (fill): unknown colour "skyblue"; the palette has: sea, sky, sun
 command 15 (delete_layer): there's no layer called "Sketch" (the layers are: Sky, Sea)
 ```
 
-Command numbers count from 1, in the order of the `commands` list.
+Command numbers count from 1, in the order of the `commands` list. Inside a group, `>` leads to
+the command: `command 12 (group "duck") > 3 (ellipse)` is the 3rd command inside the group that is
+the script's 12th.
 
 ## Tips
 

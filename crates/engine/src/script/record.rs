@@ -282,6 +282,11 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                 f(color);
             }
         }
+        Command::Group(c) => {
+            for inner in &mut c.commands {
+                for_each_color(inner, f);
+            }
+        }
         Command::Layer(_)
         | Command::DeleteLayer(_)
         | Command::MoveLayer(_)

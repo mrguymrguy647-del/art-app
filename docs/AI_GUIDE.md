@@ -84,6 +84,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
+| `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,
@@ -180,6 +181,11 @@ the side away from the light grounds it. `hatch` at low opacity gives shaded tex
 **Hand-made edges:** `jitter` of 2–6 pixels on shapes and paths. Without it, shapes look like
 computer graphics.
 
+**Draw once, place many times:** draw a part (a wing, a leg, a tree) inside a `group`, in its own
+coordinates around `[0, 0]`, and use `translate`, `scale`, `rotate` and `mirror` to put it in
+place. The other wing is the same group with `"mirror": "x"` and an `origin` at the body's middle.
+No coordinate maths by hand.
+
 ## 6. Light, colour and shapes: rules of thumb
 
 - **Values first.** A picture works when its lights and darks work. Render a tiny preview
@@ -228,6 +234,8 @@ Write down what's wrong, change only that, and render again.
   Check fine lines with `--crop`, which is always full size.
 - **Shapes stopping at the canvas edge leave slivers.** Run backgrounds and land past the edges.
 - **The paper must be opaque.** For a transparent PNG use `--transparent` instead.
+- **Mirror and rotate work around `origin`**, which is `[0, 0]` unless you give it. To flip or
+  turn a drawing in place, set `origin` to its middle.
 
 ## 9. Working with a person's drawing
 

@@ -403,3 +403,33 @@ saving pictures, is already done before anything is printed, and nobody
 is listening any more), like other command-line tools. Any other
 writing problem is reported with exit code 1. Error messages never
 crash either; if they can't be written, the exit code still tells.
+
+## 39. Groups: draw once, then move, turn, resize or mirror
+A `group` draws its commands through a *transform*: a small piece of
+maths (`transform.rs`) that says where each point of a drawing lands on
+the canvas. One transform can move, resize, turn and mirror at once, and
+two of them combine into one, which is how groups inside groups work.
+Scripts always apply the parts in the same order, around an `origin`:
+mirror, then resize, then turn, then move. One fixed order means there's
+one obvious way to write anything.
+
+Inside the player, commands are played from a stack of "frames": the
+script itself at the bottom, and one more for each group being played.
+Every drawing command works out its shape in its own units first and
+then *places* it with its frame's transform. A quick preview is now
+simply the whole script inside a shrinking transform, so previews and
+groups share the same code. Curves are still cut into pieces about two
+*canvas* pixels long, so an enlarged group stays smooth.
+
+When a group ends, the brush and the selected layer go back to what they
+were before it. That keeps a group (and, in the next step, a symbol)
+from quietly changing what comes after it.
+
+Errors inside groups give the way to them, like
+`command 12 (group "duck") > 3 (ellipse): ...`.
+
+Old scripts paint exactly the same pixels as before: a test renders the
+two examples and a script that uses every older command, and compares
+every pixel with pictures made before groups were added. (Previews of
+old scripts can differ by an invisible rounding step, because curves
+are now worked out before shrinking instead of after.)

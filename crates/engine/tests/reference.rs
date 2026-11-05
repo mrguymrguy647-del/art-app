@@ -63,7 +63,12 @@ fn compare(script: &str, reference: &str, background: Background) {
     }
 
     let (width, height, expected) = read_png(&reference);
-    assert_eq!((image.width(), image.height()), (width, height), "{}", script.display());
+    assert_eq!(
+        (image.width(), image.height()),
+        (width, height),
+        "{}",
+        script.display()
+    );
     let mut different = 0;
     let mut first = None;
     for y in 0..height {
@@ -99,7 +104,11 @@ fn the_sunset_example_keeps_its_pixels() {
 
 #[test]
 fn the_night_hills_example_keeps_its_pixels() {
-    compare("examples/night-hills.json", "night-hills.png", Background::Paper);
+    compare(
+        "examples/night-hills.json",
+        "night-hills.png",
+        Background::Paper,
+    );
 }
 
 #[test]

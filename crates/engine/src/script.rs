@@ -118,6 +118,7 @@ pub enum Command {
     Hatch(HatchCmd),
     Scatter(ScatterCmd),
     Snapshot(SnapshotCmd),
+    Group(GroupCmd),
 }
 
 impl Command {
@@ -144,6 +145,18 @@ impl Command {
             Command::Hatch(_) => "hatch",
             Command::Scatter(_) => "scatter",
             Command::Snapshot(_) => "snapshot",
+            Command::Group(_) => "group",
+        }
+    }
+
+    /// The command's name for messages: its kind, and its own name if it
+    /// has one, like `group "duck"`.
+    pub fn label(&self) -> String {
+        match self {
+            Command::Group(GroupCmd {
+                name: Some(name), ..
+            }) => format!("group \"{name}\""),
+            other => other.kind().to_owned(),
         }
     }
 }
@@ -504,6 +517,37 @@ pub struct ScatterCmd {
     pub seed: Option<u64>,
 }
 
+/// `group`: draws its `commands` moved (`translate`), resized (`scale`),
+/// turned (`rotate`, degrees clockwise) and/or mirrored (`mirror`: "x"
+/// swaps left and right, "y" up and down, "xy" both), all around
+/// `origin`. `opacity` makes everything inside fainter. With
+/// `scale_brush` false, brush and outline sizes stay as they are.
+/// Groups can hold groups. Afterwards, the brush and the selected layer
+/// are back to what they were before the group.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroupCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate: Option<[f32; 2]>,
+    /// One number, or `[sx, sy]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_brush: Option<bool>,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
 /// `snapshot`: a named checkpoint. The command-line renderer can save a
 /// picture here, to check progress.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,8 +563,11 @@ pub struct SnapshotCmd {
 pub struct ScriptError {
     /// The command's number, counting from 1, if the problem is in one.
     pub command: Option<usize>,
-    /// The command's name ("stroke"), if known.
+    /// The command's name ("stroke", or `group "duck"`), if known.
     pub kind: Option<String>,
+    /// Inside a group (or symbol, or repeat): the commands leading to the
+    /// mistake, like `3 (ellipse)`, outermost first.
+    pub inside: Vec<String>,
     /// The line in the file, for JSON mistakes (like a missing comma).
     pub line: Option<usize>,
     pub message: String,
@@ -532,6 +579,7 @@ impl ScriptError {
         Self {
             command: None,
             kind: None,
+            inside: Vec::new(),
             line: None,
             message: message.into(),
         }
@@ -542,6 +590,7 @@ impl ScriptError {
         Self {
             command: Some(index + 1),
             kind: kind.map(str::to_owned),
+            inside: Vec::new(),
             line: None,
             message: message.into(),
         }
@@ -552,7 +601,11 @@ impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (self.command, &self.kind, self.line) {
             (Some(number), Some(kind), _) => {
-                write!(f, "command {number} ({kind}): {}", self.message)
+                write!(f, "command {number} ({kind})")?;
+                for step in &self.inside {
+                    write!(f, " > {step}")?;
+                }
+                write!(f, ": {}", self.message)
             }
             (Some(number), None, _) => write!(f, "command {number}: {}", self.message),
             (None, _, Some(line)) => write!(f, "line {line}: {}", self.message),
@@ -594,6 +647,7 @@ impl Script {
         let raw: RawScript = serde_json::from_str(text).map_err(|error| ScriptError {
             command: None,
             kind: None,
+            inside: Vec::new(),
             line: Some(error.line()),
             message: describe_json_error(&error),
         })?;
@@ -625,19 +679,14 @@ impl Script {
         }
 
         let mut commands = Vec::with_capacity(raw.commands.len());
-        for (index, mut value) in raw.commands.into_iter().enumerate() {
-            let kind = value.get("cmd").and_then(Value::as_str).map(str::to_owned);
-            if let Some(object) = value.as_object_mut() {
-                object.remove("note"); // a comment for people
-            } else {
-                return Err(ScriptError::in_command(
-                    index,
-                    None,
-                    "each command must be an object like {\"cmd\": \"stroke\", ...}",
-                ));
-            }
-            let command: Command = serde_json::from_value(value).map_err(|error| {
-                ScriptError::in_command(index, kind.as_deref(), error.to_string())
+        for (index, value) in raw.commands.into_iter().enumerate() {
+            let label = label_of(&value);
+            let command = parse_command(value).map_err(|problem| ScriptError {
+                command: Some(index + 1),
+                kind: label,
+                inside: problem.inside,
+                line: None,
+                message: problem.message,
             })?;
             commands.push(command);
         }
@@ -674,6 +723,79 @@ impl Script {
         }
         out += "  ]\n}\n";
         out
+    }
+}
+
+/// A mistake found while reading a command: where inside it (for commands
+/// that hold others), and what.
+struct Problem {
+    inside: Vec<String>,
+    message: String,
+}
+
+impl Problem {
+    fn here(message: impl Into<String>) -> Self {
+        Self {
+            inside: Vec::new(),
+            message: message.into(),
+        }
+    }
+}
+
+/// Reads one command, and the commands inside it for those that hold
+/// others (like `group`), so mistakes in those can say exactly where they
+/// are.
+fn parse_command(mut value: Value) -> Result<Command, Problem> {
+    let Some(object) = value.as_object_mut() else {
+        return Err(Problem::here(
+            "each command must be an object like {\"cmd\": \"stroke\", ...}",
+        ));
+    };
+    object.remove("note"); // a comment for people
+    let kind = object
+        .get("cmd")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut inner = Vec::new();
+    if kind == "group" {
+        match object.remove("commands") {
+            Some(Value::Array(list)) => {
+                for (index, child) in list.into_iter().enumerate() {
+                    let label = label_of(&child).unwrap_or_else(|| "?".into());
+                    let command = parse_command(child).map_err(|mut problem| {
+                        problem.inside.insert(0, format!("{} ({label})", index + 1));
+                        problem
+                    })?;
+                    inner.push(command);
+                }
+            }
+            Some(_) => {
+                return Err(Problem::here(
+                    "`commands` must be a list of commands, like [{\"cmd\": \"ellipse\", ...}]",
+                ));
+            }
+            None => {
+                return Err(Problem::here(
+                    "`commands` is missing: the list of commands to draw inside it",
+                ));
+            }
+        }
+    }
+    let mut command: Command =
+        serde_json::from_value(value).map_err(|error| Problem::here(error.to_string()))?;
+    if let Command::Group(group) = &mut command {
+        group.commands = inner;
+    }
+    Ok(command)
+}
+
+/// How a command (still as JSON) is named in messages, like `stroke` or
+/// `group "duck"`.
+fn label_of(value: &Value) -> Option<String> {
+    let kind = value.get("cmd")?.as_str()?;
+    match value.get("name").and_then(Value::as_str) {
+        Some(name) if kind == "group" => Some(format!("{kind} \"{name}\"")),
+        _ => Some(kind.to_owned()),
     }
 }
 

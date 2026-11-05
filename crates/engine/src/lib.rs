@@ -21,6 +21,7 @@ pub mod smoothing;
 pub mod stroke;
 pub mod surface;
 pub mod tile;
+pub mod transform;
 pub mod view;
 
 /// The engine's version, for example "0.1.0" (taken from Cargo.toml).
