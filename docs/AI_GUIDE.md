@@ -85,6 +85,8 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
+| `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
+| `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,
@@ -186,6 +188,14 @@ coordinates around `[0, 0]`, and use `translate`, `scale`, `rotate` and `mirror`
 place. The other wing is the same group with `"mirror": "x"` and an `origin` at the body's middle.
 No coordinate maths by hand.
 
+**Characters and props as symbols:** `define` each character (or tree, house, coin) once, around
+`[0, 0]`, using palette names for its colours, then `use` it wherever it's needed. A colour-swapped
+variant is one line: `"colors": { "yellow": "#C04040" }`. Facing the other way: `"mirror": "x"`.
+Parts that move (legs, arms) can be symbols of their own, used inside the character.
+
+**Rows and rings:** `repeat` with a `step`: fence posts (`translate`), petals or spokes (`rotate`
+around the centre as `origin`), shrinking copies (`scale`).
+
 ## 6. Light, colour and shapes: rules of thumb
 
 - **Values first.** A picture works when its lights and darks work. Render a tiny preview
@@ -236,6 +246,9 @@ Write down what's wrong, change only that, and render again.
 - **The paper must be opaque.** For a transparent PNG use `--transparent` instead.
 - **Mirror and rotate work around `origin`**, which is `[0, 0]` unless you give it. To flip or
   turn a drawing in place, set `origin` to its middle.
+- **Symbols are defined before they're used**, only at the top level, and each name once.
+- **Colour swaps only work on colours the symbol uses.** Give symbols palette colours, and swap by
+  those names.
 
 ## 9. Working with a person's drawing
 

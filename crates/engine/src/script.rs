@@ -119,6 +119,9 @@ pub enum Command {
     Scatter(ScatterCmd),
     Snapshot(SnapshotCmd),
     Group(GroupCmd),
+    Define(DefineCmd),
+    Use(UseCmd),
+    Repeat(RepeatCmd),
 }
 
 impl Command {
@@ -146,6 +149,9 @@ impl Command {
             Command::Scatter(_) => "scatter",
             Command::Snapshot(_) => "snapshot",
             Command::Group(_) => "group",
+            Command::Define(_) => "define",
+            Command::Use(_) => "use",
+            Command::Repeat(_) => "repeat",
         }
     }
 
@@ -156,6 +162,8 @@ impl Command {
             Command::Group(GroupCmd {
                 name: Some(name), ..
             }) => format!("group \"{name}\""),
+            Command::Define(define) => format!("define \"{}\"", define.name),
+            Command::Use(using) => format!("use \"{}\"", using.name),
             other => other.kind().to_owned(),
         }
     }
@@ -548,6 +556,68 @@ pub struct GroupCmd {
     pub commands: Vec<Command>,
 }
 
+/// `define`: stores `commands` as a symbol called `name`, without
+/// painting anything. Only at the top level of a script.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DefineCmd {
+    pub name: String,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// `use`: paints the symbol `name`, placed like a group (the same
+/// transform fields), with some of its colours swapped: `colors` maps a
+/// colour the symbol uses (a palette name or "#hex") to the colour to
+/// paint instead.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UseCmd {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_brush: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<BTreeMap<String, String>>,
+}
+
+/// `repeat`: draws `commands` `count` times, each copy with `step`
+/// applied once more than the one before (the first copy as written).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatCmd {
+    pub count: u32,
+    pub step: StepCmd,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// How far each copy of a `repeat` moves, turns and resizes, around
+/// `origin`, compared with the copy before.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f32; 2]>,
+}
+
 /// `snapshot`: a named checkpoint. The command-line renderer can save a
 /// picture here, to check progress.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -679,15 +749,28 @@ impl Script {
         }
 
         let mut commands = Vec::with_capacity(raw.commands.len());
+        let mut symbols: BTreeMap<String, usize> = BTreeMap::new();
         for (index, value) in raw.commands.into_iter().enumerate() {
             let label = label_of(&value);
-            let command = parse_command(value).map_err(|problem| ScriptError {
+            let command = parse_command(value, false).map_err(|problem| ScriptError {
                 command: Some(index + 1),
-                kind: label,
+                kind: label.clone(),
                 inside: problem.inside,
                 line: None,
                 message: problem.message,
             })?;
+            if let Command::Define(define) = &command
+                && let Some(first) = symbols.insert(define.name.clone(), index + 1)
+            {
+                return Err(ScriptError::in_command(
+                    index,
+                    label.as_deref(),
+                    format!(
+                        "a symbol called \"{}\" was already defined by command {first}",
+                        define.name
+                    ),
+                ));
+            }
             commands.push(command);
         }
         if commands.is_empty() {
@@ -743,9 +826,9 @@ impl Problem {
 }
 
 /// Reads one command, and the commands inside it for those that hold
-/// others (like `group`), so mistakes in those can say exactly where they
-/// are.
-fn parse_command(mut value: Value) -> Result<Command, Problem> {
+/// others (`group`, `define`, `repeat`), so mistakes in those can say
+/// exactly where they are. `nested` is true inside one of those.
+fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
     let Some(object) = value.as_object_mut() else {
         return Err(Problem::here(
             "each command must be an object like {\"cmd\": \"stroke\", ...}",
@@ -756,13 +839,19 @@ fn parse_command(mut value: Value) -> Result<Command, Problem> {
         .get("cmd")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if kind == "define" && nested {
+        return Err(Problem::here(
+            "`define` only works at the top level of a script, not inside a group, symbol or \
+             repeat",
+        ));
+    }
     let mut inner = Vec::new();
-    if kind == "group" {
+    if matches!(kind, "group" | "define" | "repeat") {
         match object.remove("commands") {
             Some(Value::Array(list)) => {
                 for (index, child) in list.into_iter().enumerate() {
                     let label = label_of(&child).unwrap_or_else(|| "?".into());
-                    let command = parse_command(child).map_err(|mut problem| {
+                    let command = parse_command(child, true).map_err(|mut problem| {
                         problem.inside.insert(0, format!("{} ({label})", index + 1));
                         problem
                     })?;
@@ -783,8 +872,11 @@ fn parse_command(mut value: Value) -> Result<Command, Problem> {
     }
     let mut command: Command =
         serde_json::from_value(value).map_err(|error| Problem::here(error.to_string()))?;
-    if let Command::Group(group) = &mut command {
-        group.commands = inner;
+    match &mut command {
+        Command::Group(group) => group.commands = inner,
+        Command::Define(define) => define.commands = inner,
+        Command::Repeat(repeat) => repeat.commands = inner,
+        _ => {}
     }
     Ok(command)
 }
@@ -794,7 +886,9 @@ fn parse_command(mut value: Value) -> Result<Command, Problem> {
 fn label_of(value: &Value) -> Option<String> {
     let kind = value.get("cmd")?.as_str()?;
     match value.get("name").and_then(Value::as_str) {
-        Some(name) if kind == "group" => Some(format!("{kind} \"{name}\"")),
+        Some(name) if matches!(kind, "group" | "define" | "use") => {
+            Some(format!("{kind} \"{name}\""))
+        }
         _ => Some(kind.to_owned()),
     }
 }

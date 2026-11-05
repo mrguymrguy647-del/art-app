@@ -8,8 +8,9 @@
 //! at once (`run`).
 //!
 //! Commands are played from a stack of *frames*: the script itself is the
-//! bottom one, and a `group` adds one for its own commands, with its own
-//! transform (where its drawing lands on the canvas). Every drawing
+//! bottom one, and a `group`, a `use` of a symbol or a `repeat` adds one
+//! for its own commands, with its own transform (where its drawing lands
+//! on the canvas). Every drawing
 //! command first works out its shape in its own units, then places it
 //! with the frame's transform. A quick preview is simply the whole script
 //! inside a shrinking transform.
@@ -28,8 +29,8 @@ use serde_json::Value;
 use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
-    MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, ScatterCmd, Script, ScriptError, StrokeCmd,
-    parse_hex,
+    MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError,
+    StrokeCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
@@ -104,8 +105,10 @@ const MAX_SCATTER: u32 = 200_000;
 const MAX_HATCH_LINES: usize = 20_000;
 /// Random wobble changes direction about this often (in drawing units).
 const WOBBLE_WAVELENGTH: f32 = 40.0;
-/// Groups can hold groups, but not endlessly.
+/// Groups, symbols and repeats can hold each other, but not endlessly.
 const MAX_DEPTH: usize = 64;
+/// The most copies one `repeat` may draw.
+const MAX_REPEAT: u32 = 10_000;
 
 /// One simple job a command was turned into. Positions are on the canvas.
 enum Job {
@@ -138,7 +141,8 @@ struct RunningStroke {
     next: usize,
 }
 
-/// Commands being played: the script itself, or the inside of a group.
+/// Commands being played: the script itself, or the inside of a group,
+/// a symbol or a repeat.
 struct Frame {
     commands: Arc<Vec<Command>>,
     /// The next command to start.
@@ -159,6 +163,39 @@ struct Frame {
     seed_base: Option<u64>,
     /// What to put back when the frame ends.
     restore: Option<Saved>,
+    /// The symbol being played, if this frame is a `use`.
+    symbol: Option<String>,
+    /// Colours to paint instead of others (from a `use`'s `colors`).
+    swaps: Vec<(Rgba, Rgba)>,
+    /// For a `repeat`: the copies still to come.
+    copies: Option<Copies>,
+}
+
+/// A `repeat` plays its commands once per copy, each with the step
+/// applied once more.
+struct Copies {
+    count: u32,
+    /// The copy being played, from 0.
+    current: u32,
+    step: Transform,
+    /// The step applied `current` times.
+    so_far: Transform,
+    /// The repeat's own frame settings, which each copy starts from.
+    base_place: Transform,
+    base_detail: f32,
+    base_brush_scale: f32,
+    /// Randomness for the repeat command itself (each copy mixes in its number).
+    seed: u64,
+}
+
+/// What a new frame plays and how.
+struct NewFrame {
+    commands: Arc<Vec<Command>>,
+    label: String,
+    placement: Placement,
+    seed_base: u64,
+    symbol: Option<String>,
+    swaps: Vec<(Rgba, Rgba)>,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -180,6 +217,8 @@ pub struct Player {
     /// The script's own commands.
     commands: Arc<Vec<Command>>,
     palette: HashMap<String, Rgba>,
+    /// Symbols defined so far.
+    symbols: HashMap<String, Arc<Vec<Command>>>,
     seed: u64,
     options: PlayOptions,
     /// The commands being played, innermost last.
@@ -241,6 +280,7 @@ impl Player {
         Ok(Self {
             commands: Arc::new(script.commands),
             palette,
+            symbols: HashMap::new(),
             seed: script.seed,
             options,
             frames: Vec::new(),
@@ -358,6 +398,9 @@ impl Player {
             opacity: 1.0,
             seed_base: None,
             restore: None,
+            symbol: None,
+            swaps: Vec::new(),
+            copies: None,
         }];
     }
 
@@ -392,8 +435,8 @@ impl Player {
                     self.current_seed = self.default_seed(index);
                     self.start_command(document, command)
                         .map_err(|message| self.error_at(index, command, message))?;
-                } else if let Some(frame) = self.frames.pop() {
-                    self.end_frame(document, frame);
+                } else {
+                    self.next_copy_or_end_frame(document);
                 }
             } else {
                 self.flush_tiles();
@@ -464,59 +507,97 @@ impl Player {
         }
     }
 
-    /// Starts playing `commands` inside the current frame, placed by
-    /// `placement` (on top of the current frame's own placement).
-    fn push_frame(
-        &mut self,
-        document: &Document,
-        commands: Arc<Vec<Command>>,
-        label: String,
-        placement: Placement,
-        seed_base: u64,
-    ) -> Result<(), String> {
+    /// Starts playing new commands inside the current frame, placed by
+    /// their placement on top of the current frame's own.
+    fn push_frame(&mut self, document: &Document, new: NewFrame) -> Result<(), String> {
         if self.frames.len() >= MAX_DEPTH {
             return Err(format!(
-                "groups are nested too deeply (more than {MAX_DEPTH})"
+                "groups, symbols and repeats are nested too deeply (more than {MAX_DEPTH})"
             ));
         }
         let parent = self.frame();
-        let own = placement.transform;
+        let own = new.placement.transform;
         let frame = Frame {
-            commands,
+            commands: new.commands,
             next: 0,
-            label: Some((self.current + 1, label)),
+            label: Some((self.current + 1, new.label)),
             place: own.then(parent.place),
             detail: parent.detail * own.size_factor(),
-            brush_scale: if placement.scale_brush {
+            brush_scale: if new.placement.scale_brush {
                 parent.brush_scale * own.size_factor()
             } else {
                 parent.brush_scale
             },
-            opacity: parent.opacity * placement.opacity,
-            seed_base: Some(seed_base),
+            opacity: parent.opacity * new.placement.opacity,
+            seed_base: Some(new.seed_base),
             restore: Some(Saved {
                 layer: document.active_id(),
                 brush: self.brush,
                 brush_alpha: self.brush_alpha,
             }),
+            symbol: new.symbol,
+            swaps: new.swaps,
+            copies: None,
         };
         self.frames.push(frame);
         Ok(())
     }
 
+    /// The innermost frame has played all its commands: start its next
+    /// copy (for a `repeat`), or end it.
+    fn next_copy_or_end_frame(&mut self, document: &mut Document) {
+        let more_copies = self
+            .frames
+            .last()
+            .and_then(|frame| frame.copies.as_ref())
+            .is_some_and(|copies| copies.current + 1 < copies.count);
+        if !more_copies {
+            if let Some(frame) = self.frames.pop() {
+                self.end_frame(document, frame);
+            }
+            return;
+        }
+        // Each copy starts with the brush and layer from before the repeat.
+        if let Some(saved) = self.frames.last().and_then(|f| f.restore.as_ref()) {
+            let (layer, brush, alpha) = (saved.layer, saved.brush, saved.brush_alpha);
+            self.restore(document, layer, brush, alpha);
+        }
+        let frame = self.frames.last_mut().expect("checked above");
+        let copies = frame.copies.as_mut().expect("checked above");
+        copies.current += 1;
+        copies.so_far = copies.so_far.then(copies.step);
+        frame.next = 0;
+        frame.place = copies.so_far.then(copies.base_place);
+        frame.detail = copies.base_detail * copies.so_far.size_factor();
+        frame.brush_scale = copies.base_brush_scale * copies.so_far.size_factor();
+        frame.seed_base = Some(Random::mix(copies.seed, copies.current as u64 + 1));
+        if let Some((_, label)) = &mut frame.label {
+            *label = format!("repeat, copy {}", copies.current + 1);
+        }
+    }
+
     /// A frame has played all its commands: put back the brush and the
     /// selected layer from before it.
     fn end_frame(&mut self, document: &mut Document, frame: Frame) {
-        let Some(saved) = frame.restore else {
-            return;
-        };
-        self.brush = saved.brush;
-        self.brush_alpha = saved.brush_alpha;
-        if document.layer(saved.layer).is_some() && document.active_id() != saved.layer {
+        if let Some(saved) = frame.restore {
+            self.restore(document, saved.layer, saved.brush, saved.brush_alpha);
+        }
+    }
+
+    fn restore(
+        &mut self,
+        document: &mut Document,
+        layer: LayerId,
+        brush: BrushSettings,
+        alpha: u8,
+    ) {
+        self.brush = brush;
+        self.brush_alpha = alpha;
+        if document.layer(layer).is_some() && document.active_id() != layer {
             if let Some(name) = self.painted.take() {
                 self.events.push_back(Event::LayerDone(name));
             }
-            document.set_active(saved.layer);
+            document.set_active(layer);
         }
     }
 
@@ -784,6 +865,15 @@ impl Player {
                 Ok(())
             }
             Command::Group(group) => self.group(document, group),
+            Command::Define(define) => {
+                // Duplicate names and `define` inside other commands are
+                // refused when the script is read.
+                self.symbols
+                    .insert(define.name.clone(), Arc::new(define.commands.clone()));
+                Ok(())
+            }
+            Command::Use(using) => self.use_symbol(document, using),
+            Command::Repeat(repeat) => self.repeat(document, repeat),
         }
     }
 
@@ -801,8 +891,123 @@ impl Player {
             Some(name) => format!("group \"{name}\""),
             None => "group".to_owned(),
         };
-        let commands = Arc::new(command.commands.clone());
-        self.push_frame(document, commands, label, placement, self.current_seed)
+        let new = NewFrame {
+            commands: Arc::new(command.commands.clone()),
+            label,
+            placement,
+            seed_base: self.current_seed,
+            symbol: None,
+            swaps: Vec::new(),
+        };
+        self.push_frame(document, new)
+    }
+
+    /// `use`: plays a symbol's commands, placed like a group, with some
+    /// colours swapped.
+    fn use_symbol(&mut self, document: &Document, command: &UseCmd) -> Result<(), String> {
+        let name = &command.name;
+        let Some(commands) = self.symbols.get(name).cloned() else {
+            let mut names: Vec<&str> = self.symbols.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            return Err(if names.is_empty() {
+                format!(
+                    "there's no symbol called \"{name}\": define it first, with \
+                     {{\"cmd\": \"define\", \"name\": \"{name}\", \"commands\": [...]}}"
+                )
+            } else {
+                format!(
+                    "there's no symbol called \"{name}\" (defined so far: {})",
+                    names.join(", ")
+                )
+            });
+        };
+        // A symbol can't use itself, not even through other symbols.
+        let chain: Vec<&str> = self
+            .frames
+            .iter()
+            .filter_map(|frame| frame.symbol.as_deref())
+            .collect();
+        if chain.contains(&name.as_str()) {
+            return Err(format!(
+                "symbol \"{name}\" uses itself ({} > {name})",
+                chain.join(" > ")
+            ));
+        }
+        let placement = placement(
+            command.translate,
+            command.scale.as_ref(),
+            command.rotate,
+            command.mirror.as_deref(),
+            command.origin,
+            command.opacity,
+            command.scale_brush,
+        )?;
+        let mut swaps = Vec::new();
+        for (from, to) in command.colors.iter().flatten() {
+            let error = |problem: String| format!("`colors`: {problem}");
+            swaps.push((
+                self.color(from).map_err(error)?,
+                self.color(to).map_err(error)?,
+            ));
+        }
+        let new = NewFrame {
+            commands,
+            label: format!("use \"{name}\""),
+            placement,
+            // Every use of a symbol has the same random patterns.
+            seed_base: name_seed(name),
+            symbol: Some(name.clone()),
+            swaps,
+        };
+        self.push_frame(document, new)
+    }
+
+    /// `repeat`: plays its commands `count` times, each copy with the step
+    /// applied once more.
+    fn repeat(&mut self, document: &Document, command: &RepeatCmd) -> Result<(), String> {
+        if !(1..=MAX_REPEAT).contains(&command.count) {
+            return Err(format!(
+                "`count` must be from 1 to {MAX_REPEAT}, not {}",
+                command.count
+            ));
+        }
+        let step = &command.step;
+        let step = placement(
+            step.translate,
+            step.scale.as_ref(),
+            step.rotate,
+            None,
+            step.origin,
+            None,
+            None,
+        )
+        .map_err(|problem| format!("`step`: {problem}"))?
+        .transform;
+        let new = NewFrame {
+            commands: Arc::new(command.commands.clone()),
+            label: "repeat, copy 1".to_owned(),
+            placement: Placement {
+                transform: Transform::IDENTITY,
+                opacity: 1.0,
+                scale_brush: true,
+            },
+            seed_base: Random::mix(self.current_seed, 1),
+            symbol: None,
+            swaps: Vec::new(),
+        };
+        self.push_frame(document, new)?;
+        let frame = self.frames.last_mut().expect("just pushed");
+        frame.copies = Some(Copies {
+            count: command.count,
+            current: 0,
+            step,
+            so_far: Transform::IDENTITY,
+            base_place: frame.place,
+            base_detail: frame.detail,
+            base_brush_scale: frame.brush_scale,
+            seed: self.current_seed,
+        });
+        Ok(())
     }
 
     fn layer(&mut self, document: &mut Document, command: &LayerCmd) -> Result<(), String> {
@@ -1521,8 +1726,20 @@ impl Player {
 
     // ---- Reading values -----------------------------------------------------------------
 
-    /// A colour: "#RRGGBB", "#RRGGBBAA", a palette name, or "transparent".
+    /// A colour: "#RRGGBB", "#RRGGBBAA", a palette name, or "transparent",
+    /// swapped for another if a `use` says so (innermost first).
     fn color(&self, text: &str) -> Result<Rgba, String> {
+        let mut color = self.base_color(text)?;
+        for frame in self.frames.iter().rev() {
+            if let Some(&(_, to)) = frame.swaps.iter().find(|(from, _)| *from == color) {
+                color = to;
+            }
+        }
+        Ok(color)
+    }
+
+    /// A colour as written, without any swaps.
+    fn base_color(&self, text: &str) -> Result<Rgba, String> {
         if text == "transparent" {
             return Ok([0, 0, 0, 0]);
         }
@@ -1800,6 +2017,14 @@ fn placement(
         transform: Transform::about(origin, translate, scale, rotate, mirror_x, mirror_y),
         opacity: unit("opacity", opacity.unwrap_or(1.0))?,
         scale_brush: scale_brush.unwrap_or(true),
+    })
+}
+
+/// Where a symbol's randomness starts: from its name only, so every use
+/// of it looks the same. (A simple, fixed text hash: "FNV-1a".)
+fn name_seed(name: &str) -> u64 {
+    name.bytes().fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01B3)
     })
 }
 
@@ -2418,5 +2643,259 @@ mod tests {
         assert!(message.contains("use \"mirror\""), "{message}");
         let message = error(&small(r#"{ "cmd": "group", "mirror": "left" }"#));
         assert!(message.contains("`commands` is missing"), "{message}");
+    }
+
+    // ---- Symbols and repeat ---------------------------------------------------
+
+    /// A duck-ish drawing: shapes, a stroke, a seeded wobble, a seeded
+    /// scatter, a gradient and two layers.
+    const DUCK: &str = r##"{ "cmd": "define", "name": "duck", "commands": [
+        { "cmd": "layer", "name": "Shadow" },
+        { "cmd": "ellipse", "center": [50, 92], "radius": [30, 6], "fill": "#00000040" },
+        { "cmd": "layer", "name": "Body" },
+        { "cmd": "polygon", "points": [[20, 40], [80, 40], [70, 80], [30, 80]], "fill": "yellow", "outline": "ink", "outline_size": 2 },
+        { "cmd": "rect", "x": 60, "y": 20, "width": 20, "height": 20, "fill": "yellow" },
+        { "cmd": "stroke", "points": [[80, 30], [92, 32]], "size": 4, "color": "beak" },
+        { "cmd": "ellipse", "center": [40, 60], "radius": 12, "fill": "yellow", "jitter": 2, "seed": 3 },
+        { "cmd": "scatter", "area": { "rect": [30, 45, 40, 30] }, "count": 10, "size": 2, "color": "ink", "seed": 4 },
+        { "cmd": "gradient", "from": [0, 40], "to": [0, 80], "colors": ["#FFFFFF40", "transparent"], "area": { "rect": [20, 40, 60, 40] } }
+    ] }"##;
+
+    /// The duck's commands, written out by hand, moved by (dx, dy).
+    fn duck_by_hand(dx: f32, dy: f32) -> String {
+        let p = |x: f32, y: f32| format!("[{}, {}]", x + dx, y + dy);
+        format!(
+            r##"{{ "cmd": "layer", "name": "Shadow" }},
+            {{ "cmd": "ellipse", "center": {}, "radius": [30, 6], "fill": "#00000040" }},
+            {{ "cmd": "layer", "name": "Body" }},
+            {{ "cmd": "polygon", "points": [{}, {}, {}, {}], "fill": "yellow", "outline": "ink", "outline_size": 2 }},
+            {{ "cmd": "rect", "x": {}, "y": {}, "width": 20, "height": 20, "fill": "yellow" }},
+            {{ "cmd": "stroke", "points": [{}, {}], "size": 4, "color": "beak" }},
+            {{ "cmd": "ellipse", "center": {}, "radius": 12, "fill": "yellow", "jitter": 2, "seed": 3 }},
+            {{ "cmd": "scatter", "area": {{ "rect": [{}, {}, 40, 30] }}, "count": 10, "size": 2, "color": "ink", "seed": 4 }},
+            {{ "cmd": "gradient", "from": {}, "to": {}, "colors": ["#FFFFFF40", "transparent"], "area": {{ "rect": [{}, {}, 60, 40] }} }}"##,
+            p(50.0, 92.0),
+            p(20.0, 40.0),
+            p(80.0, 40.0),
+            p(70.0, 80.0),
+            p(30.0, 80.0),
+            60.0 + dx,
+            20.0 + dy,
+            p(80.0, 30.0),
+            p(92.0, 32.0),
+            p(40.0, 60.0),
+            30.0 + dx,
+            45.0 + dy,
+            p(0.0, 40.0),
+            p(0.0, 80.0),
+            20.0 + dx,
+            40.0 + dy,
+        )
+    }
+
+    fn with_duck(commands: &str) -> String {
+        small(&format!(
+            r##"{{ "cmd": "layer", "name": "Back" }}, {DUCK}, {commands}"##
+        ))
+        .replace(
+            r##""red": "#E02020""##,
+            r##""red": "#E02020", "yellow": "#F2C230", "beak": "#E08020""##,
+        )
+    }
+
+    fn layer_names(document: &Document) -> Vec<String> {
+        document
+            .layers()
+            .iter()
+            .map(|l| l.name().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn using_a_symbol_paints_exactly_what_its_commands_would() {
+        for (dx, dy) in [(0.0, 0.0), (64.0, 32.0)] {
+            let used = play(&with_duck(&format!(
+                r##"{{ "cmd": "use", "name": "duck", "translate": [{dx}, {dy}] }}"##
+            )));
+            let by_hand = play(&with_duck(&duck_by_hand(dx, dy)));
+            assert_eq!(png(&used), png(&by_hand), "moved by ({dx}, {dy})");
+            assert_eq!(layer_names(&used), layer_names(&by_hand));
+        }
+    }
+
+    #[test]
+    fn symbols_paint_on_their_layers_then_give_the_layer_back() {
+        let document = play(&with_duck(
+            r##"{ "cmd": "use", "name": "duck" },
+                { "cmd": "use", "name": "duck", "translate": [100, 0] },
+                { "cmd": "rect", "x": 0, "y": 150, "width": 10, "height": 10, "fill": "red" }"##,
+        ));
+        assert_eq!(
+            layer_names(&document),
+            ["Back", "Shadow", "Body"],
+            "both ducks share the layers"
+        );
+        let back = layer_named(&document, "Back").unwrap();
+        assert_eq!(document.active_id(), back);
+        assert!(
+            document.layer(back).unwrap().surface.pixel(5, 155).a > 0,
+            "the rect went on Back"
+        );
+        let body = layer_named(&document, "Body").unwrap();
+        assert!(
+            document.layer(body).unwrap().surface.pixel(170, 70).a > 0,
+            "the second duck"
+        );
+    }
+
+    #[test]
+    fn colours_can_be_swapped_for_one_use() {
+        let document = play(&with_duck(
+            r##"{ "cmd": "use", "name": "duck" },
+                { "cmd": "use", "name": "duck", "translate": [100, 0], "colors": { "yellow": "#C04040", "#E08020": "#2040C0" } }"##,
+        ));
+        assert_eq!(
+            seen(&document, 70, 30),
+            Rgba8::new(0xF2, 0xC2, 0x30, 255),
+            "the first duck"
+        );
+        assert_eq!(
+            seen(&document, 170, 30),
+            Rgba8::new(0xC0, 0x40, 0x40, 255),
+            "red instead of yellow"
+        );
+        let beak = seen(&document, 187, 31);
+        assert_eq!(
+            beak,
+            Rgba8::new(0x20, 0x40, 0xC0, 255),
+            "swapped by its hex code"
+        );
+    }
+
+    #[test]
+    fn symbols_can_use_symbols_but_not_themselves() {
+        let document = play(&with_duck(
+            r##"{ "cmd": "define", "name": "pair", "commands": [
+                    { "cmd": "use", "name": "duck" },
+                    { "cmd": "use", "name": "duck", "translate": [100, 0], "mirror": "x", "origin": [50, 0] }
+                ] },
+                { "cmd": "use", "name": "pair", "translate": [0, 90], "colors": { "yellow": "#40A040" } }"##,
+        ));
+        assert_eq!(
+            seen(&document, 70, 120),
+            Rgba8::new(0x40, 0xA0, 0x40, 255),
+            "the outer swap reaches inside"
+        );
+
+        let message = error(&with_duck(
+            r##"{ "cmd": "define", "name": "a", "commands": [ { "cmd": "use", "name": "b" } ] },
+                { "cmd": "define", "name": "b", "commands": [ { "cmd": "use", "name": "a" } ] },
+                { "cmd": "use", "name": "a" }"##,
+        ));
+        assert!(
+            message.starts_with(
+                "command 6 (use \"a\") > 1 (use \"b\") > 1 (use \"a\"): symbol \"a\" uses itself (a > b > a)"
+            ),
+            "{message}"
+        );
+        let message = error(&with_duck(r##"{ "cmd": "use", "name": "goose" }"##));
+        assert!(
+            message.contains("no symbol called \"goose\" (defined so far: duck)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn define_mistakes_are_found_while_reading() {
+        let message = error(&with_duck(
+            r##"{ "cmd": "define", "name": "duck", "commands": [] }"##,
+        ));
+        assert!(
+            message.contains("already defined by command 3"),
+            "{message}"
+        );
+        let message = error(&small(
+            r##"{ "cmd": "group", "commands": [ { "cmd": "define", "name": "x", "commands": [] } ] }"##,
+        ));
+        assert!(
+            message.contains("> 1 (define \"x\"): `define` only works at the top level"),
+            "{message}"
+        );
+        // A mistake inside a symbol names the symbol's command.
+        let message = error(&small(
+            r##"{ "cmd": "define", "name": "x", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "nope" } ] },
+                { "cmd": "use", "name": "x" }"##,
+        ));
+        assert!(
+            message.starts_with("command 3 (use \"x\") > 1 (rect): unknown colour"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn repeat_draws_copies_with_the_step_added_each_time() {
+        let repeated = play(&small(
+            r##"{ "cmd": "repeat", "count": 4, "step": { "translate": [40, 0] }, "commands": [
+                { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 30, "fill": "red" }
+            ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 30, "fill": "red" },
+                { "cmd": "rect", "x": 50, "y": 10, "width": 20, "height": 30, "fill": "red" },
+                { "cmd": "rect", "x": 90, "y": 10, "width": 20, "height": 30, "fill": "red" },
+                { "cmd": "rect", "x": 130, "y": 10, "width": 20, "height": 30, "fill": "red" }"##,
+        ));
+        assert_eq!(png(&repeated), png(&by_hand));
+
+        // Petals: turned around the middle, a quarter turn each.
+        let petals = play(&small(
+            r##"{ "cmd": "repeat", "count": 4, "step": { "rotate": 90, "origin": [100, 100] }, "commands": [
+                { "cmd": "ellipse", "center": [100, 60], "radius": [10, 30], "fill": "red" }
+            ] }"##,
+        ));
+        let red = Rgba8::new(0xE0, 0x20, 0x20, 255);
+        for (x, y) in [(100, 50), (150, 100), (100, 150), (50, 100)] {
+            assert_eq!(seen(&petals, x, y), red, "a petal at {x},{y}");
+        }
+        assert_eq!(
+            seen(&petals, 140, 60),
+            Rgba8::WHITE,
+            "nothing between the petals"
+        );
+
+        let message = error(&small(
+            r#"{ "cmd": "repeat", "count": 0, "step": {}, "commands": [] }"#,
+        ));
+        assert!(message.contains("`count` must be from 1"), "{message}");
+    }
+
+    #[test]
+    fn random_patterns_differ_between_copies_but_not_between_uses() {
+        let scatter = r##"{ "cmd": "scatter", "area": { "rect": [0, 0, 40, 40] }, "count": 20, "size": 3, "color": "ink" }"##;
+        // Two uses of the same symbol: the same pattern, moved.
+        let document = play(&small(&format!(
+            r##"{{ "cmd": "define", "name": "dots", "commands": [ {scatter} ] }},
+                {{ "cmd": "use", "name": "dots" }},
+                {{ "cmd": "use", "name": "dots", "translate": [100, 0] }},
+                {{ "cmd": "repeat", "count": 2, "step": {{ "translate": [100, 0] }}, "commands": [
+                    {{ "cmd": "group", "translate": [0, 100], "commands": [ {scatter} ] }}
+                ] }}"##
+        )));
+        let region = |left: i32, top: i32| -> Vec<Rgba8> {
+            (0..40)
+                .flat_map(|y| (0..40).map(move |x| (x, y)))
+                .map(|(x, y)| seen(&document, left + x, top + y))
+                .collect()
+        };
+        assert_eq!(
+            region(0, 0),
+            region(100, 0),
+            "uses of a symbol look the same"
+        );
+        assert_ne!(
+            region(0, 100),
+            region(100, 100),
+            "copies of a repeat differ"
+        );
     }
 }

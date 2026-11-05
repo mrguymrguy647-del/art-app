@@ -433,3 +433,35 @@ two examples and a script that uses every older command, and compares
 every pixel with pictures made before groups were added. (Previews of
 old scripts can differ by an invisible rounding step, because curves
 are now worked out before shrinking instead of after.)
+
+## 40. Symbols and repeat
+`define` stores a drawing under a name; `use` paints it, placed like a
+group. A `use` is played as one more frame (see 39), so everything that
+works in groups works in symbols, and symbols can use other symbols. A
+symbol that uses itself, even through others, would never end, so it's
+an error that shows the chain (`a > b > a`). Symbols are defined only at
+the top level and each name once: then there's never a question of
+which definition a `use` means.
+
+Choices, kept simple on purpose:
+- **Layer names in symbols are the picture's own layers.** A character
+  symbol that paints on `Body` and `Shadow` paints on the same two layers
+  every time it's used. There are no hidden prefixes to remember. After
+  the `use`, the layer selected before it is selected again.
+- **Colour swaps go by colour.** `"colors": {"yellow": "#C04040"}`
+  looks up what `yellow` is and paints red wherever the symbol would
+  paint that colour. Matching by the colour itself (not the name) means
+  swaps also work for hex codes, and keep working in scripts exported
+  from the app, where palette names are written out as hex codes. Swaps
+  from an outer `use` apply on top of an inner one's.
+- **Randomness:** a symbol's random patterns depend only on its name,
+  so every use of it looks the same (a symbol is "the same drawing").
+  `repeat` copies each mix in their copy number, so a row of jittered
+  fence posts isn't a row of identical twins.
+
+`repeat` is one frame that rewinds for each copy, with its step applied
+once more each time. Building all the copies at once would have put
+waiting copies into each other's error messages.
+
+A test checks that `use` paints exactly the same pixels as writing the
+symbol's commands out by hand.

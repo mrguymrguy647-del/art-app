@@ -287,6 +287,29 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                 for_each_color(inner, f);
             }
         }
+        Command::Define(c) => {
+            for inner in &mut c.commands {
+                for_each_color(inner, f);
+            }
+        }
+        Command::Repeat(c) => {
+            for inner in &mut c.commands {
+                for_each_color(inner, f);
+            }
+        }
+        Command::Use(c) => {
+            // Both sides of a colour swap are colours.
+            if let Some(swaps) = &mut c.colors {
+                *swaps = std::mem::take(swaps)
+                    .into_iter()
+                    .map(|(mut from, mut to)| {
+                        f(&mut from);
+                        f(&mut to);
+                        (from, to)
+                    })
+                    .collect();
+            }
+        }
         Command::Layer(_)
         | Command::DeleteLayer(_)
         | Command::MoveLayer(_)

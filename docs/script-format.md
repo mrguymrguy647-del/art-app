@@ -347,6 +347,57 @@ group, so a group's pattern doesn't change when you add commands before the grou
 
 Round gradients stay round when a group is stretched more one way than the other.
 
+## Symbols: define once, use many times
+
+```json
+{ "cmd": "define", "name": "duck", "commands": [
+  { "cmd": "ellipse", "center": [0, 0], "radius": [34, 24], "fill": "yellow", "outline": "ink", "outline_size": 3 },
+  { "cmd": "ellipse", "center": [26, -26], "radius": 16, "fill": "yellow", "outline": "ink", "outline_size": 3 },
+  { "cmd": "polygon", "points": [[38, -28], [56, -24], [38, -20]], "fill": "beak" }
+] }
+{ "cmd": "use", "name": "duck", "translate": [110, 110] }
+{ "cmd": "use", "name": "duck", "translate": [250, 110], "mirror": "x", "colors": { "yellow": "#C04040" } }
+```
+
+`define` stores a drawing as a **symbol** without painting anything. `use` paints it, placed with the
+same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `opacity`,
+`scale_brush`). Draw symbols around `[0, 0]`, so `translate` says where they go.
+
+| | |
+|---|---|
+| `define` | `name` and `commands`. Only at the top level of the script (not inside a group, symbol or repeat), each name once, and before it's used. |
+| `use` | `name`, the group fields above, and `colors`. |
+| `colors` | Colours to swap for this use: `{ "yellow": "#C04040" }` paints red wherever the symbol paints the palette colour `yellow`. The left side can also be a hex code (`"#F2C230"`). For enemy variants, team colours and so on. |
+
+- **Symbols can use other symbols.** A symbol using itself, even through others, is an error:
+  `symbol "a" uses itself (a > b > a)`. Colour swaps reach into the symbols inside, and the inner
+  `use`'s own swaps come first.
+- **Layers:** a symbol can switch layers with `layer` commands. Layer names are the picture's
+  layers, the same as anywhere else: two uses of a character symbol paint onto the same `Body` and
+  `Shadow` layers (created if missing). A symbol without `layer` commands paints on the layer
+  selected when it's used. After a `use`, the brush and the selected layer are back to what they
+  were before it.
+- **Random patterns** (jitter, scatter, hatch) in a symbol are the same every time it's used.
+- Mistakes inside a symbol name the `use` and the symbol's command:
+  `command 9 (use "duck") > 2 (ellipse): unknown colour "yelow"`.
+
+## `repeat` — copies with a step
+
+```json
+{ "cmd": "repeat", "count": 9, "step": { "translate": [52, 0] }, "commands": [
+  { "cmd": "rect", "x": 14, "y": 150, "width": 12, "height": 70, "fill": "wood" }
+] }
+{ "cmd": "repeat", "count": 8, "step": { "rotate": 45, "origin": [410, 70] }, "commands": [
+  { "cmd": "ellipse", "center": [410, 45], "radius": [8, 22], "fill": "petal" }
+] }
+```
+
+Draws its `commands` `count` times (1 to 10000). The first copy is drawn as written; each next copy
+has the `step` applied once more: `translate`, `rotate` (degrees, around `origin`) and `scale`
+(around `origin`). A row of fence posts, an arc of coins (translate and rotate together), petals
+around a centre (rotate around it). Each copy is like a group: afterwards the brush and layer are
+as before, and random patterns differ from copy to copy.
+
 ## Areas
 
 `gradient`, `hatch` and `scatter` take an `area`:
@@ -376,6 +427,7 @@ Every error says where it is and what's wrong:
 line 14: expected `,` or `}` (column 52)
 command 7 (stroke): unknown field `colour`, expected one of `points`, `color`, `size`, ...
 command 12 (group "duck") > 3 (ellipse): unknown colour "yelow"; the palette has: ink, yellow
+command 20 (use "pair") > 1 (use "duck"): symbol "duck" uses itself (duck > pair > duck)
 command 9 (layer): unknown blend mode "multipy"; use one of: normal, multiply, screen, ...
 command 12 (fill): unknown colour "skyblue"; the palette has: sea, sky, sun
 command 15 (delete_layer): there's no layer called "Sketch" (the layers are: Sky, Sea)
