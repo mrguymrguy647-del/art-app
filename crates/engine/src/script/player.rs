@@ -38,8 +38,8 @@ use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
 use crate::file;
 use crate::fill::{
-    self, FloodFill, Gradient, GradientShape, GradientStop, Paint, Rgba, SampleFrom, paint_mask,
-    paint_rect,
+    self, FloodFill, Gradient, GradientShape, GradientStop, Mask, Paint, Rgba, SampleFrom,
+    paint_mask_within, paint_rect_within,
 };
 use crate::history::{Command as UndoStep, TileCommand};
 use crate::layer::{BlendMode, LayerId, LayerProps};
@@ -218,6 +218,8 @@ struct RunningStroke {
     stroke: Stroke,
     points: Vec<StrokePoint>,
     next: usize,
+    /// Painting a symbol's silhouette for a mask, not the picture.
+    capture: bool,
 }
 
 /// Commands being played: the script itself, or the inside of a group,
@@ -264,6 +266,13 @@ struct Frame {
     /// For a `use`: the symbol's parameters, with the values this use
     /// gave (defaults for the rest). `"$name"` inside looks them up.
     params: Option<Arc<BTreeMap<String, Value>>>,
+    /// Where this frame's commands may paint (a group's mask, combined
+    /// with the masks around it), in painted pixels. `None`: anywhere.
+    mask: Option<Arc<Mask>>,
+    /// This frame paints a symbol's silhouette to make a mask (on a
+    /// scratch picture, see `Player::capture`), not the picture itself.
+    /// `Some(true)`: the mask is everything but the silhouette.
+    capture: Option<bool>,
 }
 
 /// A symbol: what `define` stored.
@@ -316,6 +325,10 @@ struct NewFrame {
     params: Option<Arc<BTreeMap<String, Value>>>,
     /// Not turned by the frames around it.
     upright: bool,
+    /// The group's `mask`, worked out once the frame has started.
+    mask: Option<Value>,
+    /// See `Frame::capture`.
+    capture: Option<bool>,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -389,6 +402,9 @@ pub struct Player {
     /// How many painted pixels one canvas pixel is: the preview scale
     /// times the pixel canvas's supersample.
     paint_scale: f32,
+    /// Scratch pictures a symbol's silhouette is painted on, to become a
+    /// mask: one per capture frame being played, innermost last.
+    capture: Vec<Document>,
 }
 
 impl Player {
@@ -497,6 +513,7 @@ impl Player {
             animation,
             pending_animation: None,
             options,
+            capture: Vec::new(),
         })
     }
 
@@ -623,6 +640,8 @@ impl Player {
             part: None,
             animation: None,
             params: None,
+            mask: None,
+            capture: None,
         }];
         self.pending_animation = self.animation.as_ref().map(|(_, c)| Arc::clone(c));
     }
@@ -686,6 +705,8 @@ impl Player {
                     part: None,
                     animation: name,
                     params: None,
+                    mask: None,
+                    capture: None,
                 });
             } else {
                 self.flush_tiles();
@@ -815,6 +836,12 @@ impl Player {
                 .then(Transform::rotate(-turned))
                 .then(Transform::translate(x, y));
         }
+        // A silhouette is painted on its own, so the masks around it
+        // don't apply while it's captured: they're applied to the mask.
+        let mask = match new.capture {
+            Some(_) => None,
+            None => parent.mask.clone(),
+        };
         let frame = Frame {
             commands: new.commands,
             next: 0,
@@ -842,9 +869,93 @@ impl Player {
             part,
             animation: None,
             params: new.params,
+            mask,
+            capture: new.capture,
         };
         self.frames.push(frame);
+        if new.capture.is_some() {
+            self.capture
+                .push(Document::new(document.width(), document.height()));
+        }
+        if let Some(mask) = new.mask {
+            self.start_mask(document, &mask)
+                .map_err(|problem| format!("`mask`: {problem}"))?;
+        }
         Ok(())
+    }
+
+    /// Works out a group's mask, now that the group's frame has started
+    /// (so it's placed by the group's transform): an area, a layer's
+    /// paint, or `not` one of those, straight away; a symbol's
+    /// silhouette by playing the symbol onto a scratch picture first.
+    fn start_mask(&mut self, document: &Document, written: &Value) -> Result<(), String> {
+        let help = "a mask is an area ({\"ellipse\": [...]}, {\"polygon\": [...]}, ...), \
+                    {\"symbol\": \"name\", ...placed like a use}, {\"layer\": \"name\"} \
+                    or {\"not\": any of those}";
+        let value = self.value(written)?;
+        let mut object = value.as_object().ok_or(help)?.clone();
+        let mut invert = false;
+        if object.len() == 1
+            && let Some(inner) = object.get("not")
+        {
+            invert = true;
+            object = inner.as_object().ok_or(help)?.clone();
+            if object.contains_key("not") {
+                return Err("`not` inside `not`: just leave both out".into());
+            }
+        }
+        let limits = document.bounds();
+        let mask = if let Some(symbol) = object.remove("symbol") {
+            // Played like a use, named by `symbol` instead of `name`.
+            object.insert("name".to_owned(), symbol);
+            let using: UseCmd =
+                serde_json::from_value(Value::Object(object)).map_err(|problem| {
+                    format!("{problem} (a symbol mask takes the fields of a use)")
+                })?;
+            return self.use_symbol(document, &using, Some(invert));
+        } else if let Some(name) = object.get("layer").filter(|_| object.len() == 1) {
+            let name = name
+                .as_str()
+                .ok_or("`layer` must be a layer's name in quotes")?;
+            let id = find_layer(document, name)?;
+            let layer = document.layer(id).ok_or("no such layer")?;
+            Mask::from_alpha(&layer.surface, limits)
+        } else {
+            let polygon = self.area(&Value::Object(object)).map_err(|_| help)?;
+            let placed = self.place_polygon(polygon);
+            geometry::polygons_mask(&[placed], limits)
+        };
+        self.finish_mask(limits, mask, invert);
+        Ok(())
+    }
+
+    /// Makes `mask` the innermost frame's: hard-edged on a pixel canvas,
+    /// turned inside out if `invert`, and combined with the masks around.
+    fn finish_mask(&mut self, limits: PixelRect, mut mask: Mask, invert: bool) {
+        if invert {
+            mask = mask.inverted(limits);
+        }
+        if self.pixel.is_some() {
+            mask.threshold();
+        }
+        let frame = self.frames.last_mut().expect("a mask belongs to a frame");
+        if let Some(outer) = &frame.mask {
+            mask = mask.intersect(outer);
+        }
+        if mask.is_empty()
+            && !self.options.dry_run
+            && let Some(path) = &frame.path
+        {
+            self.warnings.push(format!(
+                "{path}: its mask covers nothing, so it paints nothing"
+            ));
+        }
+        frame.mask = Some(Arc::new(mask));
+    }
+
+    /// True while a symbol's silhouette is being painted for a mask.
+    fn capturing(&self) -> bool {
+        !self.capture.is_empty()
     }
 
     /// The innermost frame has played all its commands: start its next
@@ -888,6 +999,17 @@ impl Player {
     fn end_frame(&mut self, document: &mut Document, frame: Frame) {
         if let Some(saved) = frame.restore {
             self.restore(document, saved.layer, saved.brush, saved.brush_alpha);
+        }
+        if let Some(invert) = frame.capture {
+            // The silhouette is complete: it's the mask of the group below.
+            let scratch = self
+                .capture
+                .pop()
+                .expect("a capture frame has a scratch picture");
+            let limits = scratch.bounds();
+            let mask = Mask::from_alpha(&scratch.active_layer().surface, limits);
+            self.finish_mask(limits, mask, invert);
+            return;
         }
         // For the report: hand what it drew to the frame around it.
         if let Some(index) = frame.part {
@@ -999,6 +1121,9 @@ impl Player {
     /// After a command has started: adds the box around what it queued to
     /// its frame's, and warns if all of it is outside the canvas.
     fn note_drawn(&mut self, document: &Document, index: usize, command: &Command, queued: usize) {
+        if self.capturing() {
+            return; // a silhouette for a mask isn't drawing
+        }
         let mut drawn = None;
         // The number of the script's own command this is part of.
         let top = self.frames.first().map_or(0, |script| script.next);
@@ -1072,10 +1197,29 @@ impl Player {
 
     /// Feeds the running stroke points until the budget is used up.
     /// Returns what's left of the budget.
-    fn continue_stroke(&mut self, document: &mut Document, mut budget: f32) -> f32 {
-        let Some(mut running) = self.running.take() else {
+    fn continue_stroke(&mut self, document: &mut Document, budget: f32) -> f32 {
+        let Some(running) = self.running.take() else {
             return budget;
         };
+        if running.capture {
+            // The stroke is part of a silhouette: it goes on the scratch picture.
+            let mut scratch = self
+                .capture
+                .pop()
+                .expect("a stroke is captured on a scratch");
+            let left = self.feed_stroke(&mut scratch, running, budget);
+            self.capture.push(scratch);
+            return left;
+        }
+        self.feed_stroke(document, running, budget)
+    }
+
+    fn feed_stroke(
+        &mut self,
+        document: &mut Document,
+        mut running: RunningStroke,
+        mut budget: f32,
+    ) -> f32 {
         let Some(layer) = document.layer_mut(running.layer) else {
             return budget;
         };
@@ -1097,12 +1241,21 @@ impl Player {
     }
 
     fn finish_stroke(&mut self, running: RunningStroke, document: &mut Document) {
-        let RunningStroke { layer, stroke, .. } = running;
+        let RunningStroke {
+            layer,
+            stroke,
+            capture,
+            ..
+        } = running;
         if let Some(target) = document.layer_mut(layer) {
             let before = stroke.finish(&mut target.surface);
-            self.remember_tiles(layer, before);
+            if !capture {
+                self.remember_tiles(layer, before);
+            }
         }
-        self.mark_painted(document, layer);
+        if !capture {
+            self.mark_painted(document, layer);
+        }
     }
 
     /// Starts or does one job. Returns how much of the budget it used.
@@ -1110,17 +1263,38 @@ impl Player {
         if self.options.dry_run {
             return 0.0;
         }
+        if self.capturing() {
+            // A silhouette for a mask: painted on the scratch picture's
+            // one layer, whatever layer the symbol asked for.
+            let mut scratch = self.capture.pop().expect("capturing");
+            let cost = self.do_job(&mut scratch, job, true);
+            self.capture.push(scratch);
+            return cost;
+        }
+        self.do_job(document, job, false)
+    }
+
+    /// Does `job` on `document`: the picture, or a scratch picture if
+    /// `capture` (then nothing is remembered for undo or the report).
+    fn do_job(&mut self, document: &mut Document, job: Job, capture: bool) -> f32 {
+        let clip = self.frame().mask.clone();
+        let target_layer = |layer| if capture { document.active_id() } else { layer };
         match job {
             Job::Stroke {
                 layer,
                 brush,
                 points,
             } => {
+                let mut stroke = Stroke::new(brush, document.bounds());
+                if let Some(clip) = clip {
+                    stroke = stroke.clipped(clip);
+                }
                 self.running = Some(RunningStroke {
-                    layer,
-                    stroke: Stroke::new(brush, document.bounds()),
+                    layer: target_layer(layer),
+                    stroke,
                     points,
                     next: 0,
+                    capture,
                 });
                 0.0
             }
@@ -1131,19 +1305,33 @@ impl Player {
                 opacity,
                 mode,
             } => {
+                let layer = target_layer(layer);
                 let limits = document.bounds();
                 let Some(target) = document.layer_mut(layer) else {
                     return 0.0;
                 };
+                let clip = clip.as_deref();
                 let before = match shape {
                     Some(rings) => {
                         let mask = geometry::polygons_mask(&rings, limits);
-                        paint_mask(&mut target.surface, &mask, &paint, opacity, mode, limits)
+                        paint_mask_within(
+                            &mut target.surface,
+                            &mask,
+                            &paint,
+                            opacity,
+                            mode,
+                            limits,
+                            clip,
+                        )
                     }
-                    None => paint_rect(&mut target.surface, limits, &paint, opacity, mode),
+                    None => {
+                        paint_rect_within(&mut target.surface, limits, &paint, opacity, mode, clip)
+                    }
                 };
-                self.remember_tiles(layer, before);
-                self.mark_painted(document, layer);
+                if !capture {
+                    self.remember_tiles(layer, before);
+                    self.mark_painted(document, layer);
+                }
                 AREA_COST
             }
             Job::Bucket {
@@ -1152,9 +1340,19 @@ impl Player {
                 paint,
                 opacity,
             } => {
-                let before = fill::flood_fill(document, layer, &fill, &paint, opacity);
-                self.remember_tiles(layer, before);
-                self.mark_painted(document, layer);
+                let layer = target_layer(layer);
+                let before = fill::flood_fill_within(
+                    document,
+                    layer,
+                    &fill,
+                    &paint,
+                    opacity,
+                    clip.as_deref(),
+                );
+                if !capture {
+                    self.remember_tiles(layer, before);
+                    self.mark_painted(document, layer);
+                }
                 AREA_COST
             }
         }
@@ -1210,6 +1408,11 @@ impl Player {
     // ---- Commands -------------------------------------------------------------------
 
     fn start_command(&mut self, document: &mut Document, command: &Command) -> Result<(), String> {
+        if self.capturing() && !paints_or_structures(command) {
+            // While a symbol is painted for a mask, its layer commands
+            // (and the like) are skipped: only its silhouette matters.
+            return Ok(());
+        }
         match command {
             Command::Canvas(_) => Err("only the first command can be `canvas`".into()),
             Command::Paper(paper) => {
@@ -1321,7 +1524,7 @@ impl Player {
                 self.defined.push((define.name.clone(), self.current + 1));
                 Ok(())
             }
-            Command::Use(using) => self.use_symbol(document, using),
+            Command::Use(using) => self.use_symbol(document, using, None),
             Command::Repeat(repeat) => self.repeat(document, repeat),
         }
     }
@@ -1350,13 +1553,22 @@ impl Player {
             part: command.name.is_some(),
             params: None,
             upright: command.upright.unwrap_or(false),
+            mask: command.mask.clone(),
+            capture: None,
         };
         self.push_frame(document, new)
     }
 
     /// `use`: plays a symbol's commands, placed like a group, with some
     /// colours swapped.
-    fn use_symbol(&mut self, document: &Document, command: &UseCmd) -> Result<(), String> {
+    /// With `capture`, the symbol is painted on a scratch picture to become
+    /// the mask of the frame being played (`Some(true)`: its opposite).
+    fn use_symbol(
+        &mut self,
+        document: &Document,
+        command: &UseCmd,
+        capture: Option<bool>,
+    ) -> Result<(), String> {
         let name = &self.string(&Value::String(command.name.clone()), "name")?;
         let Some(symbol) = self.symbols.get(name) else {
             let mut names: Vec<&str> = self.symbols.keys().map(String::as_str).collect();
@@ -1438,9 +1650,11 @@ impl Player {
             seed_base: name_seed(name),
             symbol: Some(name.clone()),
             swaps,
-            part: true,
+            part: capture.is_none(),
             params: Some(Arc::new(params)),
             upright: command.upright.unwrap_or(false),
+            mask: command.mask.clone(),
+            capture,
         };
         self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
@@ -1482,6 +1696,8 @@ impl Player {
             part: false,
             params: None,
             upright: false,
+            mask: None,
+            capture: None,
         };
         let each = command.each.clone().unwrap_or_default();
         for (name, values) in &each {
@@ -1593,6 +1809,12 @@ impl Player {
         }
         if let Some(visible) = command.visible {
             props.visible = visible;
+        }
+        if let Some(clip) = command.clip {
+            props.clip = clip;
+        }
+        if let Some(lock) = command.lock {
+            props.lock = lock;
         }
         if let Some(step) = LayerPropsCommand::apply(document, id, props) {
             self.record(step);
@@ -2459,6 +2681,13 @@ impl Player {
                 .map(|item| self.value(item))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
+            // Any other object (an area, a mask...) may hold keyframes or
+            // parameters inside.
+            Value::Object(fields) => fields
+                .iter()
+                .map(|(key, item)| self.value(item).map(|v| (key.clone(), v)))
+                .collect::<Result<serde_json::Map<_, _>, _>>()
+                .map(Value::Object),
             other => Ok(other.clone()),
         }
     }
@@ -2991,16 +3220,29 @@ fn layer_index(document: &Document, name: &str) -> Result<usize, String> {
     Ok(document.layer_index(id).unwrap_or(0))
 }
 
+/// True for the commands that matter while a symbol is painted for a
+/// mask: those that paint, and those that hold other commands.
+fn paints_or_structures(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Canvas(_)
+            | Command::Paper(_)
+            | Command::Layer(_)
+            | Command::DeleteLayer(_)
+            | Command::MoveLayer(_)
+            | Command::RenameLayer(_)
+            | Command::ClearLayer(_)
+            | Command::TransformLayer(_)
+            | Command::Pixels(_)
+            | Command::Snapshot(_)
+    )
+}
+
 fn layer_props(document: &Document, id: LayerId) -> LayerProps {
     document
         .layer(id)
         .map(|layer| layer.props())
-        .unwrap_or_else(|| LayerProps {
-            name: String::new(),
-            visible: true,
-            opacity: 1.0,
-            blend: BlendMode::Normal,
-        })
+        .unwrap_or_else(|| LayerProps::named(""))
 }
 
 fn is_empty(document: &Document, id: LayerId) -> bool {
@@ -4816,6 +5058,306 @@ mod tests {
         assert!(
             problem.contains("\"$paint\" must be a colour, not 5"),
             "{problem}"
+        );
+    }
+
+    // ---- Clipping, the alpha lock and masks (phase 3, step 1) ----------------
+
+    #[test]
+    fn a_clipping_layer_shows_only_on_its_base() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Base" },
+              { "cmd": "rect", "x": 20, "y": 20, "width": 40, "height": 40, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Shade", "clip": true },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" },
+              { "cmd": "layer", "name": "Light", "clip": true, "blend": "screen" },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 50, "fill": "#00FF00" }
+            ] }"##,
+        );
+        assert!(document.layers()[1].clip() && document.layers()[2].clip());
+        assert!(!document.layers()[0].clip());
+        // Inside the base: red, and lighter green up top; outside: paper.
+        assert_eq!(seen(&document, 40, 55), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(seen(&document, 40, 30), Rgba8::new(255, 255, 0, 255));
+        assert_eq!(seen(&document, 80, 80), Rgba8::WHITE);
+        assert_eq!(seen(&document, 80, 30), Rgba8::WHITE);
+        // The paint itself isn't limited: it's there, just not shown.
+        assert_eq!(
+            document.layers()[1].surface.pixel(80, 80),
+            Rgba8::new(255, 0, 0, 255)
+        );
+    }
+
+    #[test]
+    fn a_locked_layer_only_recolours_what_is_there() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Duck" },
+              { "cmd": "rect", "x": 20, "y": 20, "width": 40, "height": 40, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Duck", "lock": true },
+              { "cmd": "gradient", "from": [0, 0], "to": [100, 0], "colors": ["#FF0000", "#FF0000"] },
+              { "cmd": "erase", "points": [[20, 40], [60, 40]], "size": 10 },
+              { "cmd": "layer", "name": "Duck", "lock": false },
+              { "cmd": "stroke", "points": [[0, 90], [100, 90]], "size": 4, "color": "#00FF00" }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 40, 40),
+            Rgba8::new(255, 0, 0, 255),
+            "recoloured"
+        );
+        assert_eq!(seen(&document, 80, 80), Rgba8::WHITE, "no new paint");
+        assert_eq!(
+            seen(&document, 50, 90),
+            Rgba8::new(0, 255, 0, 255),
+            "unlocked again"
+        );
+        assert!(!document.layers()[0].lock());
+    }
+
+    #[test]
+    fn a_group_mask_limits_painting_and_moves_with_the_group() {
+        let masked = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "group", "name": "spot", "translate": [50, 0],
+                "mask": { "circle": [0, 50, 20] }, "commands": [
+                { "cmd": "rect", "x": -100, "y": 0, "width": 200, "height": 100, "fill": "#FF0000" },
+                { "cmd": "stroke", "points": [[-50, 50], [50, 50]], "size": 6, "color": "#0000FF" },
+                { "cmd": "fill", "at": [0, 50], "color": "#00FF00", "opacity": 0.5 }
+              ] }
+            ] }"##,
+        );
+        // The circle landed at (50, 50): painted inside, paper outside.
+        let inside = seen(&masked, 50, 40);
+        assert_eq!(inside, Rgba8::new(255, 0, 0, 255), "{inside:?}");
+        let centre = seen(&masked, 50, 50);
+        assert!(
+            centre.b > 0 && centre.g > 0,
+            "the stroke, then the half fill: {centre:?}"
+        );
+        assert_eq!(
+            seen(&masked, 0, 50),
+            Rgba8::WHITE,
+            "where the mask was written"
+        );
+        assert_eq!(seen(&masked, 90, 50), Rgba8::WHITE);
+        assert_eq!(seen(&masked, 50, 80), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn masks_nest_and_apply_on_whichever_layer_is_painted() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "A" },
+              { "cmd": "group", "mask": { "rect": [0, 0, 60, 100] }, "commands": [
+                { "cmd": "group", "mask": { "rect": [40, 0, 60, 100] }, "commands": [
+                  { "cmd": "layer", "name": "B" },
+                  { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" }
+                ] },
+                { "cmd": "rect", "x": 0, "y": 80, "width": 100, "height": 20, "fill": "#0000FF" }
+              ] }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 50, 50),
+            Rgba8::new(255, 0, 0, 255),
+            "in both"
+        );
+        assert_eq!(seen(&document, 20, 50), Rgba8::WHITE, "in the outer only");
+        assert_eq!(seen(&document, 80, 50), Rgba8::WHITE, "in the inner only");
+        assert_eq!(seen(&document, 20, 90), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(seen(&document, 80, 90), Rgba8::WHITE);
+        assert_eq!(
+            document.layers()[1].name(),
+            "B",
+            "the layer command still worked"
+        );
+    }
+
+    #[test]
+    fn a_mask_moves_with_keyframes_like_everything_else() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": [20, 12], "fill": "#000000" } ] }
+          ],
+          "animations": { "go": { "frames": 5, "commands": [
+            { "cmd": "group", "name": "shadow", "translate": { "keys": [[0, [20, 50]], [4, [80, 50]]] },
+              "mask": { "symbol": "blob", "rotate": 30 }, "commands": [
+              { "cmd": "gradient", "from": [-30, 0], "to": [30, 0], "colors": ["#FF0000", "#0000FF"] }
+            ] }
+          ] } }
+        }"##;
+        let frame = play_frame(script, Some("go"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": [20, 12], "fill": "#000000" } ] },
+            { "cmd": "group", "name": "shadow", "translate": [50, 50],
+              "mask": { "symbol": "blob", "rotate": 30 }, "commands": [
+              { "cmd": "gradient", "from": [-30, 0], "to": [30, 0], "colors": ["#FF0000", "#0000FF"] }
+            ] }
+          ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_ne!(seen(&by_hand, 50, 50), Rgba8::WHITE, "inside the blob");
+        assert_eq!(seen(&by_hand, 50, 85), Rgba8::WHITE, "outside it");
+        assert_eq!(by_hand.layers().len(), 1, "the silhouette made no layers");
+    }
+
+    #[test]
+    fn a_symbols_silhouette_makes_a_mask_without_painting() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "define", "name": "duck", "params": { "size": 10 }, "commands": [
+                { "cmd": "layer", "name": "Duck layer" },
+                { "cmd": "group", "scale": "$size", "commands": [
+                  { "cmd": "ellipse", "center": [0, 0], "radius": 1, "fill": "#FFFF00" } ] },
+                { "cmd": "group", "mask": { "circle": [0, 0, 5] }, "commands": [
+                  { "cmd": "rect", "x": -50, "y": -50, "width": 100, "height": 100, "fill": "#FF00FF" } ] }
+              ] },
+              { "cmd": "layer", "name": "Shadow" },
+              { "cmd": "group", "mask": { "symbol": "duck", "translate": [50, 50], "with": { "size": 20 } }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#0000FF" }
+              ] }
+            ] }"##,
+        );
+        assert_eq!(document.layers().len(), 1, "no layer from the silhouette");
+        assert_eq!(document.layers()[0].name(), "Shadow");
+        assert_eq!(seen(&document, 50, 50), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(
+            seen(&document, 65, 50),
+            Rgba8::new(0, 0, 255, 255),
+            "the size the use gave"
+        );
+        assert_eq!(seen(&document, 80, 50), Rgba8::WHITE);
+        assert_eq!(
+            seen(&document, 10, 10),
+            Rgba8::WHITE,
+            "nothing from the symbol itself"
+        );
+    }
+
+    #[test]
+    fn not_and_layer_masks() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Water" },
+              { "cmd": "rect", "x": 0, "y": 50, "width": 100, "height": 50, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Reflection" },
+              { "cmd": "group", "mask": { "layer": "Water" }, "commands": [
+                { "cmd": "rect", "x": 40, "y": 0, "width": 20, "height": 100, "fill": "#FF0000" } ] },
+              { "cmd": "layer", "name": "Sky" },
+              { "cmd": "group", "mask": { "not": { "circle": [20, 20, 10] } }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 40, "fill": "#00FF00" } ] }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 50, 75),
+            Rgba8::new(255, 0, 0, 255),
+            "on the water"
+        );
+        assert_eq!(seen(&document, 50, 25), Rgba8::WHITE, "not above it");
+        assert_eq!(seen(&document, 20, 20), Rgba8::WHITE, "the hole");
+        assert_eq!(
+            seen(&document, 5, 5),
+            Rgba8::new(0, 255, 0, 255),
+            "around it"
+        );
+    }
+
+    #[test]
+    fn a_use_takes_a_mask_and_mask_numbers_may_be_keyframes() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "wall", "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" } ] }
+          ],
+          "animations": { "grow": { "frames": 5, "commands": [
+            { "cmd": "use", "name": "wall", "mask": { "circle": [50, 50, { "keys": [[0, 10], [4, 50]] }] } }
+          ] } } }"##;
+        let frame = play_frame(script, Some("grow"), 2).unwrap();
+        assert_eq!(seen(&frame, 50, 50), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(
+            seen(&frame, 50, 25),
+            Rgba8::new(255, 0, 0, 255),
+            "radius 30 by frame 2"
+        );
+        assert_eq!(seen(&frame, 50, 10), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn on_a_pixel_canvas_a_mask_has_hard_edges() {
+        let document = play(
+            r##"{ "palette": { "red": "#FF0000" }, "commands": [
+              { "cmd": "canvas", "width": 16, "height": 16, "pixel": { "supersample": 1 } },
+              { "cmd": "group", "mask": { "circle": [8, 8, 5] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 16, "height": 16, "fill": "red" } ] }
+            ] }"##,
+        );
+        let (mut painted, mut partly) = (0, 0);
+        for y in 0..16 {
+            for x in 0..16 {
+                match document.layers()[0].surface.pixel(x, y).a {
+                    255 => painted += 1,
+                    0 => {}
+                    _ => partly += 1,
+                }
+            }
+        }
+        assert_eq!(partly, 0, "no half pixels");
+        assert!((60..=90).contains(&painted), "{painted}");
+    }
+
+    #[test]
+    fn mask_mistakes_are_explained() {
+        let base = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100 },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "#000000" } ] },
+            { "cmd": "group", "name": "g", "mask": MASK, "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" } ] }
+          ] }"##;
+        let error_with = |mask: &str| error(&base.replace("MASK", mask));
+        let bad = error_with("5");
+        assert!(
+            bad.contains("(group \"g\")") && bad.contains("`mask`: a mask is an area"),
+            "{bad}"
+        );
+        let unknown = error_with(r##"{ "symbol": "duck" }"##);
+        assert!(
+            unknown.contains("there's no symbol called \"duck\""),
+            "{unknown}"
+        );
+        let field = error_with(r##"{ "symbol": "blob", "radius": 3 }"##);
+        assert!(
+            field.contains("unknown field `radius`") && field.contains("fields of a use"),
+            "{field}"
+        );
+        let double = error_with(r##"{ "not": { "not": { "circle": [0, 0, 5] } } }"##);
+        assert!(double.contains("`not` inside `not`"), "{double}");
+        let layer = error_with(r##"{ "layer": "Nope" }"##);
+        assert!(layer.contains("Nope"), "{layer}");
+        // A mask that covers nothing is a warning, not an error.
+        let script =
+            Script::parse(&base.replace("MASK", r##"{ "circle": [500, 500, 5] }"##)).unwrap();
+        let mut player = Player::new(script, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let warnings = player.report().warnings;
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("(group \"g\")") && w.contains("covers nothing")),
+            "{warnings:?}"
         );
     }
 }

@@ -167,6 +167,9 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 
 - Block in big shapes back to front first; details last, mostly at the focal point.
 - Shadows: a `multiply` layer in a dark cool colour; glows: `screen` or `add`.
+- Shading inside a shape: a `"clip": true` layer above the shape's layer (shows only on its
+  paint); `"lock": true` recolours a layer without changing its edges; a group's `mask` (an
+  area, `{"symbol": ...}` or `{"layer": ...}`) keeps a reflection on the water.
 - `jitter` (2–6) on shapes gives a hand-made edge; give random commands a `seed` once you like them.
 - Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not detail.
 

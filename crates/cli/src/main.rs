@@ -1793,7 +1793,7 @@ fn info(path: &Path) -> Result<(), Problem> {
             painted += &format!(", by {}", command_list(numbers));
         }
         say!(
-            "  {:>3}. {}{}  [{}, opacity {:.0}%, {}]  {painted}",
+            "  {:>3}. {}{}  [{}, opacity {:.0}%, {}{}{}]  {painted}",
             i + 1,
             layer.name(),
             if layer.id() == active {
@@ -1804,6 +1804,8 @@ fn info(path: &Path) -> Result<(), Problem> {
             if layer.visible() { "visible" } else { "hidden" },
             layer.opacity() * 100.0,
             layer.blend().name(),
+            if layer.clip() { ", clip" } else { "" },
+            if layer.lock() { ", lock" } else { "" },
         );
     }
     Ok(())

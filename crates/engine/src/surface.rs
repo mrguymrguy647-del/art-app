@@ -91,6 +91,9 @@ impl PixelRect {
 pub struct Surface<P: Pixel = Rgba8> {
     tiles: HashMap<TileCoord, Box<Tile<P>>>,
     dirty: HashSet<TileCoord>,
+    /// Alpha lock: painting only changes pixels that already have paint
+    /// (new paint is weakened by how see-through a pixel is).
+    pub locked: bool,
 }
 
 impl<P: Pixel> Surface<P> {
@@ -99,6 +102,7 @@ impl<P: Pixel> Surface<P> {
         Self {
             tiles: HashMap::new(),
             dirty: HashSet::new(),
+            locked: false,
         }
     }
 

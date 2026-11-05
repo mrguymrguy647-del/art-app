@@ -935,3 +935,41 @@ What was still slow or uncomfortable as an agent, for phase 3:
   not for sharing. (MP4 is 66 KB.)
 Rendering was never the slow part: the title's 72 frames take about
 2 seconds; the sprites, hundredths of a second.
+
+## 59. Clipping, the alpha lock and masks (phase 3, step 1)
+
+Three ways to keep paint inside a shape, each where a painting app would
+put it:
+- **Clipping is decided when the picture is shown**, not when it's
+  painted. A clipping layer's pixels are multiplied by the opacity of its
+  base (the nearest unclipped layer below) while compositing, so the base
+  can be repainted or moved and the shading follows, and the app's
+  layers panel can switch it on and off. A base that's hidden hides its
+  clipping layers; a clipping layer with no base shows nothing. The
+  flag lives on the layer, is saved in the `.artapp` (old files simply
+  have it off), and is written by Export strokes.
+- **The alpha lock is decided when painting.** It's a flag on the
+  `Surface`, so every way of painting (strokes, fills, gradients, the
+  bucket, the app's own tools) sees it in one place. Paint recolours a
+  pixel by its strength times the paint's opacity, and the pixel's own
+  opacity never changes; the eraser does nothing. Painting a see-through
+  colour is scaled by the pixel's opacity, not added to it, so a locked
+  soft edge stays exactly as soft.
+- **A group's mask is a `Mask` in painted pixels**, worked out once when
+  the group starts (so it's placed by the group's transform and moves
+  with keyframes), multiplied by the masks of the groups around it, and
+  handed to every job the group queues: strokes get it through
+  `Stroke::clipped`, fills and the bucket through the `_within`
+  functions. Nothing in the engine knows "a group" at paint time: just a
+  coverage mask.
+- **A symbol's silhouette is painted, not computed.** The symbol is
+  played onto a scratch `Document` of the same size (a stack of them,
+  since masks can nest), with its layer commands skipped and nothing
+  recorded for undo or the report; the scratch layer's opacity becomes
+  the mask. That way everything a symbol can draw, including jitter,
+  text and nested groups, has the right silhouette, for the cost of
+  painting it once more. On a pixel canvas, masks are thresholded at
+  half so edges stay crisp.
+- `value()` now resolves `$params` and keyframes inside any object, not
+  only keyed ones, so mask numbers can animate without a special case.
+

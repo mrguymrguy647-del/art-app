@@ -239,6 +239,12 @@ pub struct LayerCmd {
     pub blend: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible: Option<bool>,
+    /// `true`: shown only where the nearest unclipped layer below has paint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<bool>,
+    /// `true`: the alpha lock, so painting only recolours what's there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub above: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -648,6 +654,11 @@ pub struct GroupCmd {
     /// while the leg turns). It still moves and mirrors with them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
+    /// Paint only inside this: an area, `{"symbol": ..}` (a symbol's
+    /// silhouette, placed like a use), `{"layer": ..}` (where a layer has
+    /// paint) or `{"not": ..}` (everything but one of those).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Value>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -691,6 +702,9 @@ pub struct UseCmd {
     pub scale_brush: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
+    /// As on a group: paint only inside this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Value>,
     /// Colours to paint instead of the symbol's: `{"yellow": "#C04040"}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<BTreeMap<String, Value>>,

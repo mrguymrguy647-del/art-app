@@ -109,7 +109,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | Command | Use it for |
 |---|---|
 | `canvas` | First command: `width`, `height`, `paper`; or `open` an `.artapp` to continue a picture. |
-| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`. |
+| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only). |
 | `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings. |
 | `stroke` / `erase` | Pen-like line through `points` (`[x, y]` or `[x, y, pressure]`). |
 | `line` | Straight line, `from` → `to`, tapered (default `taper` 0.25). |
@@ -121,7 +121,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
-| `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
+| `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
@@ -162,6 +162,23 @@ Drawing commands can change the brush just for themselves: `color`, `size`, `opa
 ```json
 { "cmd": "gradient", "from": [0, 0], "to": [0, 620],
   "stops": [[0, "#2A1E48"], [0.35, "#6B3A6E"], [0.7, "#E0704A"], [0.88, "#F7B25A"], [1, "#FFDCA0"]] }
+```
+
+**Shading that stays inside a shape:** paint the shape on its own layer, then put the shading
+on a clipping layer above it (`"clip": true`, usually `multiply`), and the light on another
+(`screen`). Paint across the whole shape without care; only the shape's part shows. To keep a
+group's paint inside something instead, give it a `mask`: an area, `{"symbol": "duck", ...}`
+(the duck's silhouette, placed like a `use`) or `{"layer": "Water"}` (a reflection only on the
+water).
+
+```json
+{ "cmd": "layer", "name": "Duck" },
+{ "cmd": "use", "name": "duck", "translate": [300, 400] },
+{ "cmd": "layer", "name": "Duck shade", "clip": true, "blend": "multiply", "opacity": 0.6 },
+{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] },
+{ "cmd": "layer", "name": "Water" },
+{ "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "opacity": 0.4, "commands": [
+  { "cmd": "use", "name": "duck", "translate": [300, 560], "mirror": "y" } ] }
 ```
 
 **A glow** (sun, moon, lamp): a radial gradient fading to transparent on a `screen` layer, under

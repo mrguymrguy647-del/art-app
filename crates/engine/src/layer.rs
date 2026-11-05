@@ -20,6 +20,25 @@ pub struct LayerProps {
     pub visible: bool,
     pub opacity: f32,
     pub blend: BlendMode,
+    /// Shows only where the nearest unclipped layer below has paint
+    /// (a clipping mask, as in other painting apps).
+    pub clip: bool,
+    /// Alpha lock: painting changes colour only where there's paint.
+    pub lock: bool,
+}
+
+impl LayerProps {
+    /// Settings for a new layer called `name`: visible, opaque, normal.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            visible: true,
+            opacity: 1.0,
+            blend: BlendMode::Normal,
+            clip: false,
+            lock: false,
+        }
+    }
 }
 
 /// One layer.
@@ -30,7 +49,9 @@ pub struct Layer {
     visible: bool,
     opacity: f32,
     blend: BlendMode,
-    /// The pixels. Painting changes them directly.
+    clip: bool,
+    /// The pixels. Painting changes them directly. (Its `locked` flag is
+    /// the alpha lock.)
     pub surface: Surface,
 }
 
@@ -43,6 +64,7 @@ impl Layer {
             visible: true,
             opacity: 1.0,
             blend: BlendMode::Normal,
+            clip: false,
             surface: Surface::new(),
         }
     }
@@ -68,14 +90,26 @@ impl Layer {
         self.blend
     }
 
+    /// True for a clipping layer: shown only where the layer below has paint.
+    pub fn clip(&self) -> bool {
+        self.clip
+    }
+
+    /// True with the alpha lock on: painting can't reach see-through pixels.
+    pub fn lock(&self) -> bool {
+        self.surface.locked
+    }
+
     /// A layer rebuilt from saved settings (used when opening a file).
-    pub(crate) fn from_saved(id: LayerId, props: LayerProps, surface: Surface) -> Self {
+    pub(crate) fn from_saved(id: LayerId, props: LayerProps, mut surface: Surface) -> Self {
+        surface.locked = props.lock;
         Self {
             id,
             name: props.name,
             visible: props.visible,
             opacity: props.opacity.clamp(0.0, 1.0),
             blend: props.blend,
+            clip: props.clip,
             surface,
         }
     }
@@ -86,6 +120,8 @@ impl Layer {
             visible: self.visible,
             opacity: self.opacity,
             blend: self.blend,
+            clip: self.clip,
+            lock: self.surface.locked,
         }
     }
 
@@ -95,11 +131,14 @@ impl Layer {
     pub fn set_props(&mut self, props: LayerProps) {
         let looks_different = props.visible != self.visible
             || props.opacity != self.opacity
-            || props.blend != self.blend;
+            || props.blend != self.blend
+            || props.clip != self.clip;
         self.name = props.name;
         self.visible = props.visible;
         self.opacity = props.opacity.clamp(0.0, 1.0);
         self.blend = props.blend;
+        self.clip = props.clip;
+        self.surface.locked = props.lock;
         if looks_different {
             self.surface.mark_all_dirty();
         }

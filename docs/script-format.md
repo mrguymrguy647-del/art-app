@@ -117,6 +117,8 @@ another layer). Then applies any settings given:
 | `opacity` | 0 to 1. |
 | `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. |
 | `visible` | `true` / `false`. |
+| `clip` | `true`: a clipping layer, shown only where the nearest unclipped layer below it has paint. See [Clipping and masks](#clipping-and-masks). |
+| `lock` | `true`: the alpha lock. Painting only recolours what's already on the layer; the eraser does nothing. |
 | `above` / `below` | Put the layer just above / below another layer (also moves an existing layer). |
 
 ### `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`
@@ -381,6 +383,7 @@ of `hatch` and `scatter`.
 | `origin` | The point the group mirrors, resizes and turns around, in the group's own coordinates. Default `[0, 0]`. |
 | `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
+| `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
 
 The order is always the same: around `origin`, first **mirror**, then **scale**, then **rotate**;
 then **translate**. So `"mirror": "x", "origin": [64, 0]` flips a drawing left to right around
@@ -413,7 +416,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 | | |
 |---|---|
 | `define` | `name` and `commands`. Only at the top level of the script (not inside a group, symbol or repeat), each name once, and before it's used. |
-| `use` | `name`, the group fields above, and `colors`. |
+| `use` | `name`, the group fields above (`mask` too), and `colors`. |
 | `colors` | Colours to swap for this use: `{ "yellow": "#C04040" }` paints red wherever the symbol paints the palette colour `yellow`. The left side can also be a hex code (`"#F2C230"`). For enemy variants, team colours and so on. |
 
 - **Symbols can use other symbols.** A symbol using itself, even through others, is an error:
@@ -465,6 +468,62 @@ parameter, round and round if there are more copies than values:
   { "cmd": "rect", "x": 100, "y": 350, "width": 24, "height": 24, "fill": "$paint", "outline": "ink" }
 ] }
 ```
+
+## Clipping and masks
+
+Three ways to keep paint where it belongs, so shading, light and texture stay inside a shape.
+
+**A clipping layer** (`"clip": true`) is shown only where the nearest layer below it that isn't
+itself clipped (its *base*) has paint. Several clipping layers can sit on one base. The paint
+isn't limited, only what's shown: the hatch below covers the whole canvas, but only the duck's
+part of it is seen, and if the duck is repainted or moved later, the shading follows.
+
+```json
+{ "cmd": "layer", "name": "Duck" }
+{ "cmd": "use", "name": "duck", "translate": [64, 96] }
+{ "cmd": "layer", "name": "Duck shading", "clip": true, "blend": "multiply" }
+{ "cmd": "hatch", "area": { "rect": [0, 0, 128, 128] }, "color": "shade", "angle": 40, "opacity": 0.4 }
+{ "cmd": "layer", "name": "Duck light", "clip": true, "blend": "screen" }
+{ "cmd": "gradient", "from": [90, 40], "to": [40, 100], "colors": ["#FFFFFF80", "transparent"] }
+```
+
+**The alpha lock** (`"lock": true`) makes painting change only the colour of what's already on
+the layer: new paint lands as strongly as the pixel is opaque, the pixel's opacity never changes,
+and the eraser does nothing. For recolouring a line, or shading a sprite that's all on one layer.
+`"lock": false` turns it off again.
+
+```json
+{ "cmd": "layer", "name": "Lines", "lock": true }
+{ "cmd": "gradient", "from": [0, 0], "to": [0, 300], "colors": ["#402010", "#A06030"] }
+{ "cmd": "layer", "name": "Lines", "lock": false }
+```
+
+**A mask on a group or `use`** limits where its commands paint: every stroke, shape, gradient,
+fill and dab inside is multiplied by the mask. A mask is one of:
+
+| Mask | |
+|---|---|
+| an [area](#areas) | `{ "circle": [64, 96, 40] }`, `{ "polygon": [...] }`... in the group's own coordinates. |
+| `{ "symbol": "duck", ... }` | The silhouette of a symbol: everywhere it would paint, placed with the fields of a `use` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `with`). Nothing is painted; its `layer` commands are ignored. |
+| `{ "layer": "Water" }` | Where a layer already has paint (as it is when the group starts). |
+| `{ "not": ... }` | Everything but one of the above: a hole. |
+
+```json
+{ "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "commands": [
+  { "cmd": "use", "name": "duck", "translate": [64, 150], "mirror": "y", "opacity": 0.4 } ] }
+{ "cmd": "group", "name": "shadow", "mask": { "symbol": "duck", "translate": [64, 96] }, "commands": [
+  { "cmd": "gradient", "from": [64, 60], "to": [64, 116], "colors": ["transparent", "#00000060"] } ] }
+{ "cmd": "use", "name": "wall", "mask": { "not": { "circle": [320, 180, 60] } } }
+```
+
+- A mask is worked out when the group starts, in the group's coordinates, and placed by the
+  group's transform like everything else: with keyframes it moves along (a shadow clipped to a
+  walking duck). Its numbers may be keyframes or parameters.
+- Masks nest: a group inside a masked group paints only where both masks are. A `layer` command
+  inside still selects its layer; the mask applies on whichever layer is painted.
+- On a pixel canvas, a mask has hard edges (a pixel is in or out).
+- A mask that covers nothing (off the canvas, an empty layer) is a warning: the group paints
+  nothing.
 
 ## Animations: frames and timing
 
@@ -603,7 +662,7 @@ and `fill` already come out crisp on a pixel canvas.
 
 ## Areas
 
-`gradient`, `hatch` and `scatter` take an `area`:
+`gradient`, `hatch` and `scatter` take an `area`, and a group's `mask` can be one:
 
 ```json
 { "rect": [x, y, width, height] }

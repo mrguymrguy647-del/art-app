@@ -204,9 +204,16 @@ pub fn layer_changes(before: &LayerProps, after: &LayerProps) -> Vec<Command> {
         opacity: (before.opacity != after.opacity).then(|| round(after.opacity, 3)),
         blend: (before.blend != after.blend).then(|| after.blend.name().to_owned()),
         visible: (before.visible != after.visible).then_some(after.visible),
+        clip: (before.clip != after.clip).then_some(after.clip),
+        lock: (before.lock != after.lock).then_some(after.lock),
         ..LayerCmd::default()
     };
-    if settings.opacity.is_some() || settings.blend.is_some() || settings.visible.is_some() {
+    if settings.opacity.is_some()
+        || settings.blend.is_some()
+        || settings.visible.is_some()
+        || settings.clip.is_some()
+        || settings.lock.is_some()
+    {
         commands.push(Command::Layer(settings));
     }
     commands
@@ -900,5 +907,23 @@ mod tests {
         );
         assert!(exported.to_json().contains("\"transform_layer\""));
         assert_eq!(png(&replay(&exported)), png(&document));
+    }
+
+    #[test]
+    fn clip_and_lock_changes_are_written() {
+        let before = LayerProps::named("Shade");
+        let after = LayerProps {
+            clip: true,
+            lock: true,
+            ..before.clone()
+        };
+        let commands = layer_changes(&before, &after);
+        assert_eq!(commands.len(), 1);
+        let json = serde_json::to_string(&commands[0]).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"layer","name":"Shade","clip":true,"lock":true}"#
+        );
+        assert!(layer_changes(&after, &after).is_empty());
     }
 }
