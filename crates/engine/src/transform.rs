@@ -138,6 +138,24 @@ impl Transform {
     pub fn mirrors(&self) -> bool {
         self.a * self.d - self.b * self.c < 0.0
     }
+
+    /// The transform that undoes this one: it takes each point back to
+    /// where it came from. `None` if this one squashes everything flat
+    /// (a scale of 0), which can't be undone.
+    pub fn inverse(&self) -> Option<Transform> {
+        let det = self.a * self.d - self.b * self.c;
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        Some(Transform {
+            a: self.d / det,
+            b: -self.b / det,
+            c: -self.c / det,
+            d: self.a / det,
+            e: (self.c * self.f - self.d * self.e) / det,
+            f: (self.b * self.e - self.a * self.f) / det,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -189,6 +207,19 @@ mod tests {
         // Then moved.
         let moved = Transform::about((0.0, 0.0), (100.0, 5.0), (2.0, 2.0), 0.0, false, false);
         close(moved.apply((1.0, 1.0)), (102.0, 7.0));
+    }
+
+    #[test]
+    fn the_inverse_takes_points_back() {
+        let t = Transform::about((30.0, 40.0), (5.0, -7.0), (2.0, 0.5), 33.0, true, false);
+        let back = t.inverse().unwrap();
+        for p in [(0.0, 0.0), (12.5, -3.0), (100.0, 80.0)] {
+            close(back.apply(t.apply(p)), p);
+        }
+        // Mirroring is its own inverse, exactly.
+        let flip = Transform::about((50.0, 0.0), (0.0, 0.0), (1.0, 1.0), 0.0, true, false);
+        assert_eq!(flip.inverse().unwrap(), flip);
+        assert!(Transform::scale(0.0, 1.0).inverse().is_none());
     }
 
     #[test]

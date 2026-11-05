@@ -133,6 +133,20 @@ another layer). Then applies any settings given:
 `move_layer` takes one of `above`, `below` or `index` (0 = bottom). `clear_layer` empties the
 named layer, or the selected one.
 
+### `transform_layer` — move, turn, resize or mirror what's on a layer
+
+```json
+{ "cmd": "transform_layer", "name": "Duck", "mirror": "x", "origin": [800, 500] }
+{ "cmd": "transform_layer", "name": "Duck", "translate": [40, -10], "scale": 1.5, "rotate": 15, "origin": [620, 410] }
+```
+
+Moves everything already painted on a layer (`name`, or the selected one), with the same fields as
+a [group](#groups-move-turn-resize-and-mirror): `translate`, `scale`, `rotate` and `mirror`, around
+`origin` (default `[0, 0]`), in canvas pixels. Mirroring around the canvas's middle and moving by
+whole pixels copy pixels exactly; turning and resizing blend neighbouring pixels. What ends up off
+the canvas is cut off. A group around it doesn't change it: it always works on the whole layer.
+The app's **Layer → Flip** and **Layer → Transform…** are written down as this command.
+
 ### `brush`
 
 ```json

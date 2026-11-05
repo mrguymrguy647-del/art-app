@@ -31,7 +31,7 @@ use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
     MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError,
-    StrokeCmd, TextCmd, UseCmd, parse_hex,
+    StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
@@ -45,6 +45,7 @@ use crate::layer::{BlendMode, LayerId, LayerProps};
 use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
 };
+use crate::layer_transform::transform_layer;
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
 use crate::surface::PixelRect;
@@ -1052,6 +1053,31 @@ impl Player {
                         self.record(TileCommand::new("Clear layer", id, before));
                     }
                 }
+                Ok(())
+            }
+            Command::TransformLayer(command) => {
+                self.flush_tiles();
+                let id = match &command.name {
+                    Some(name) => find_layer(document, name)?,
+                    None => document.active_id(),
+                };
+                // In canvas pixels, whatever group it's in; in a preview,
+                // shrunk like everything else.
+                let scale = self.options.scale;
+                let mut transform = command.transform()?;
+                if scale != 1.0 {
+                    transform = Transform::scale(1.0 / scale, 1.0 / scale)
+                        .then(transform)
+                        .then(Transform::scale(scale, scale));
+                }
+                if !self.options.dry_run {
+                    let before = transform_layer(document, id, transform);
+                    if !before.is_empty() {
+                        self.record(TileCommand::new("Transform layer", id, before));
+                    }
+                }
+                let top = self.frames.first().map_or(0, |script| script.next);
+                self.painted_by.entry(id).or_default().insert(top);
                 Ok(())
             }
             Command::Brush(brush) => self.set_brush(brush),
@@ -2334,6 +2360,23 @@ struct GradientFill {
 
 /// Checks a group's (or symbol's) transform settings and makes the
 /// transform: around `origin`, mirror, then scale, then rotate; then move.
+impl TransformLayerCmd {
+    /// What it does to the layer's pixels, in canvas pixels. The app uses
+    /// this too, so what it does and what its script replays are the same.
+    pub fn transform(&self) -> Result<Transform, String> {
+        Ok(placement(
+            self.translate,
+            self.scale.as_ref(),
+            self.rotate,
+            self.mirror.as_deref(),
+            self.origin,
+            None,
+            None,
+        )?
+        .transform)
+    }
+}
+
 fn placement(
     translate: Option<[f32; 2]>,
     scale: Option<&Value>,
@@ -3658,5 +3701,47 @@ mod tests {
         assert_eq!(on("B"), [5, 6]);
         // Commands 3 and 5 painted on A, but it was cleared by command 7.
         assert_eq!(on("A"), [9]);
+    }
+
+    #[test]
+    fn transform_layer_moves_what_is_already_painted() {
+        let rect =
+            r##"{ "cmd": "rect", "x": 10, "y": 20, "width": 30, "height": 40, "fill": "red" }"##;
+        let flipped = play(&small(&format!(
+            r##"{rect}, {{ "cmd": "transform_layer", "mirror": "x", "origin": [100, 100] }}"##
+        )));
+        // The same rectangle, drawn where the flip puts it.
+        let by_hand = play(&small(
+            r##"{ "cmd": "rect", "x": 160, "y": 20, "width": 30, "height": 40, "fill": "red" }"##,
+        ));
+        assert_eq!(png(&flipped), png(&by_hand));
+
+        // Named, and in a preview: the same, shrunk.
+        let text = small(&format!(
+            r##"{{ "cmd": "layer", "name": "A" }}, {rect},
+                {{ "cmd": "layer", "name": "B" }},
+                {{ "cmd": "transform_layer", "name": "A", "translate": [100, 0] }}"##
+        ));
+        let half = play_with(
+            &text,
+            PlayOptions {
+                scale: 0.5,
+                ..PlayOptions::default()
+            },
+        )
+        .unwrap();
+        let red = |x, y| seen(&half, x, y).r > 200 && seen(&half, x, y).g < 80;
+        assert!(red(60, 20) && !red(15, 20), "moved 50 preview pixels right");
+
+        for (fields, expected) in [
+            (r#""name": "Nope""#, "no layer called \"Nope\""),
+            (r#""scale": 0"#, "`scale` is a number above 0"),
+            (r#""mirror": "z""#, "`mirror` is"),
+        ] {
+            let problem = error(&small(&format!(
+                r#"{{ "cmd": "transform_layer", {fields} }}"#
+            )));
+            assert!(problem.contains(expected), "{problem}");
+        }
     }
 }

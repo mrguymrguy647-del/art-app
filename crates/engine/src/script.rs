@@ -105,6 +105,7 @@ pub enum Command {
     MoveLayer(MoveLayerCmd),
     RenameLayer(RenameLayerCmd),
     ClearLayer(ClearLayerCmd),
+    TransformLayer(TransformLayerCmd),
     Brush(BrushCmd),
     Stroke(StrokeCmd),
     Erase(StrokeCmd),
@@ -136,6 +137,7 @@ impl Command {
             Command::MoveLayer(_) => "move_layer",
             Command::RenameLayer(_) => "rename_layer",
             Command::ClearLayer(_) => "clear_layer",
+            Command::TransformLayer(_) => "transform_layer",
             Command::Brush(_) => "brush",
             Command::Stroke(_) => "stroke",
             Command::Erase(_) => "erase",
@@ -247,6 +249,28 @@ pub struct RenameLayerCmd {
 pub struct ClearLayerCmd {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+/// `transform_layer`: moves (`translate`), resizes (`scale`), turns
+/// (`rotate`, degrees clockwise) and/or mirrors (`mirror`: "x", "y" or
+/// "xy") everything already on a layer (`name`, or the selected one),
+/// around `origin`, in canvas pixels. What ends up off the canvas is cut
+/// off. The app's Layer menu (flip, transform) writes these.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransformLayerCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translate: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f32; 2]>,
 }
 
 /// `brush`: changes the brush. Only the settings given change.

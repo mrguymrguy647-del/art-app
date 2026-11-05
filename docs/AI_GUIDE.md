@@ -123,6 +123,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
+| `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,
 `{"polygon": [[x, y], ...]}`.

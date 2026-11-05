@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use super::{
     BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, FillCmd, GradientCmd, LayerCmd,
-    MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
+    MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd, TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
@@ -169,6 +169,15 @@ pub fn move_layer(name: &str, index: usize) -> Vec<Command> {
     })]
 }
 
+/// Moving, turning, resizing or mirroring everything on a layer: the
+/// command as given (its `name` set to `name`).
+pub fn transform_layer(name: &str, command: &TransformLayerCmd) -> Vec<Command> {
+    vec![Command::TransformLayer(TransformLayerCmd {
+        name: Some(name.to_owned()),
+        ..command.clone()
+    })]
+}
+
 /// Changing a layer's name, visibility, opacity or blend mode.
 pub fn layer_changes(before: &LayerProps, after: &LayerProps) -> Vec<Command> {
     let mut commands = Vec::new();
@@ -319,6 +328,7 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
         | Command::MoveLayer(_)
         | Command::RenameLayer(_)
         | Command::ClearLayer(_)
+        | Command::TransformLayer(_)
         | Command::Snapshot(_) => {}
     }
 }
@@ -788,5 +798,68 @@ mod tests {
                 "group > use dot 3",
             ]
         );
+    }
+
+    /// Plays an exported script, read back from its JSON text.
+    fn replay(script: &Script) -> Document {
+        let again = Script::parse(&script.to_json()).unwrap();
+        let mut player = Player::new(again, PlayOptions::default()).unwrap();
+        let mut replayed = player.create_document().unwrap();
+        player.run(&mut replayed, |_, _| {}).unwrap();
+        replayed
+    }
+
+    #[test]
+    fn layer_transforms_export_and_replay_exactly() {
+        let mut document = Document::new(400, 300);
+        let mut history = History::default();
+        let red = BrushSettings {
+            color: [200, 30, 30],
+            size: 18.0,
+            ..BrushSettings::default()
+        };
+        paint(
+            &mut document,
+            &mut history,
+            red,
+            &[(40.0, 40.0, 1.0), (200.0, 140.0, 0.6), (300.0, 60.0, 0.9)],
+        );
+        // As the app does it: a flip, then a transform with rounded
+        // numbers, each through the command's own `transform`.
+        let flip = TransformLayerCmd {
+            mirror: Some("x".into()),
+            origin: Some([200.0, 150.0]),
+            ..TransformLayerCmd::default()
+        };
+        let turn = TransformLayerCmd {
+            translate: Some([12.35, -7.5]),
+            scale: Some(serde_json::json!([1.2346, 0.8])),
+            rotate: Some(17.25),
+            origin: Some([171.5, 95.0]),
+            ..TransformLayerCmd::default()
+        };
+        for command in [flip, turn] {
+            let layer = document.active_id();
+            let name = document.active_layer().name().to_owned();
+            let before = crate::layer_transform::transform_layer(
+                &mut document,
+                layer,
+                command.transform().unwrap(),
+            );
+            history.push_recorded(
+                Box::new(TileCommand::new("Transform layer", layer, before)),
+                transform_layer(&name, &command),
+            );
+        }
+        let exported = super::script(
+            400,
+            300,
+            document.paper(),
+            history.recorded_script(),
+            None,
+            None,
+        );
+        assert!(exported.to_json().contains("\"transform_layer\""));
+        assert_eq!(png(&replay(&exported)), png(&document));
     }
 }

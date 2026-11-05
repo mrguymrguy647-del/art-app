@@ -14,6 +14,7 @@ pub mod history;
 pub mod image;
 pub mod layer;
 pub mod layer_commands;
+pub mod layer_transform;
 pub mod pen;
 pub mod random;
 pub mod script;
