@@ -75,6 +75,10 @@ RENDER OPTIONS
                      on previews, crops and snapshots
   --detail           after rendering, list everything `check --detail` does
                      instead of the short summary
+  --frame <n>        for a script with animations: paint frame n (from 0)
+  --frames <a>-<b>   paint frames a to b; --all-frames paints every frame
+  --animation <name> which animation, if the script has more than one
+                     (frames are saved as <name>-<animation>-<frame>.png)
 
   Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
   --grid; <name>.png and <name>.artapp never do. At full size, the picture
@@ -186,6 +190,21 @@ struct RenderOptions {
     grid: Option<u32>,
     /// `--detail`: the full report instead of the short summary.
     detail: bool,
+    /// `--animation`: which animation (default: the first).
+    animation: Option<String>,
+    /// Which frames of it to paint.
+    frames: Frames,
+}
+
+/// Which frames of an animation `render` paints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Frames {
+    /// Nothing asked: frame 0 (and a note saying so).
+    Default,
+    One(u32),
+    /// From one frame to another, both included.
+    Range(u32, u32),
+    All,
 }
 
 fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
@@ -204,6 +223,8 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         bg: None,
         grid: None,
         detail: false,
+        animation: None,
+        frames: Frames::Default,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -220,6 +241,28 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--preview" => options.preview = true,
             "--transparent" => options.transparent = true,
             "--detail" => options.detail = true,
+            "--all-frames" => options.frames = Frames::All,
+            "--animation" => options.animation = Some(value("--animation")?),
+            "--frame" => {
+                let text = value("--frame")?;
+                let frame = text.parse::<u32>().map_err(|_| {
+                    Problem::Usage(format!("--frame is a frame number from 0, not {text}"))
+                })?;
+                options.frames = Frames::One(frame);
+            }
+            "--frames" => {
+                let text = value("--frames")?;
+                let range = text
+                    .split_once('-')
+                    .and_then(|(a, b)| Some((a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?)))
+                    .filter(|(a, b)| a <= b)
+                    .ok_or_else(|| {
+                        Problem::Usage(format!(
+                            "--frames is a range like 0-7 (first and last frame, from 0), not {text}"
+                        ))
+                    })?;
+                options.frames = Frames::Range(range.0, range.1);
+            }
             "--scale" => {
                 let text = value("--scale")?;
                 let scale = text
@@ -309,6 +352,15 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
     if options.layers.is_some() && !options.hide.is_empty() {
         return Err(Problem::Usage("use --layers or --hide, not both".into()));
     }
+    if options.frames != Frames::Default
+        && !matches!(options.frames, Frames::One(_))
+        && (options.snapshots || options.sheet)
+    {
+        return Err(Problem::Usage(
+            "--snapshots and --sheet show the stages of one picture: use them with --frame N"
+                .into(),
+        ));
+    }
     if options.bg.is_some() && !options.transparent {
         return Err(Problem::Usage(
             "--bg is the colour behind see-through parts, so it goes with --transparent \
@@ -353,7 +405,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     let folder = options.script.parent().map(Path::to_path_buf);
 
     // How big to paint.
-    let mut player = Player::new(script.clone(), PlayOptions::default())
+    let player = Player::new(script.clone(), PlayOptions::default())
         .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
     let scale = match (options.preview, options.scale) {
         (true, _) => {
@@ -367,16 +419,8 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         (false, Some(scale)) => scale,
         (false, None) => 1.0,
     };
-    let play = PlayOptions {
-        scale,
-        folder,
-        ..PlayOptions::default()
-    };
-    player = Player::new(script, play)
-        .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-    let mut document = player
-        .create_document()
-        .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+    // Which frames to paint: one picture, or frames of an animation.
+    let (frames, mut notes) = frames_to_paint(&script, options)?;
 
     let snapshot_folder = options.out.join("snapshots");
     std::fs::create_dir_all(if options.snapshots {
@@ -418,52 +462,6 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         zoom: scale,
     };
 
-    // Play, saving a picture at each event if asked.
-    let mut saved: Vec<PathBuf> = Vec::new();
-    let mut snapshot_count = 0;
-    let mut sheet_entries: Vec<Entry> = Vec::new();
-    let mut save_error: Option<String> = None;
-    let mut event_count = 0;
-    player
-        .run(&mut document, |event, document| {
-            if !options.snapshots && !options.sheet {
-                return;
-            }
-            event_count += 1;
-            let label = match event {
-                Event::Snapshot(name) => name.clone(),
-                Event::LayerDone(layer) => format!("after {layer}"),
-            };
-            let image = picture(document, document.bounds());
-            if options.snapshots {
-                let path = snapshot_folder.join(format!("{event_count:02}-{}.png", slug(&label)));
-                match for_looking(image.clone(), whole).save_png(&path, keeps_alpha) {
-                    Ok(()) => snapshot_count += 1,
-                    Err(e) => {
-                        save_error = save_error
-                            .take()
-                            .or(Some(format!("{}: {e}", path.display())))
-                    }
-                }
-            }
-            if options.sheet {
-                let image = match options.bg {
-                    Some(color) => image.on_color(color),
-                    None => image,
-                };
-                sheet_entries.push(Entry {
-                    label,
-                    image: image.fit_within(THUMB_WIDTH, THUMB_HEIGHT),
-                });
-            }
-        })
-        .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-    if let Some(error) = save_error {
-        return Err(failed(format!("couldn't save a snapshot: {error}")));
-    }
-    check_layer_names(options, &document)?;
-
-    // The finished picture.
     let save = |image: &Image,
                 path: PathBuf,
                 with_alpha: bool,
@@ -483,91 +481,166 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         }
     };
     let zoom = options.zoom as f32;
-    let mut notes = Vec::new();
-    if let Some([x, y, w, h]) = options.crop {
-        // The part asked for, even where it goes past the canvas's edges:
-        // what's outside is shown as grey squares.
-        let area = PixelRect::new(x, y, x.saturating_add(w), y.saturating_add(h));
-        let canvas = document.bounds();
-        if area.intersect(&canvas).is_empty() {
-            return Err(failed(format!(
-                "--crop {x},{y},{w},{h} is entirely outside the {} x {} canvas",
-                document.width(),
-                document.height()
-            )));
-        }
-        let mut image = zoomed(picture(&document, area));
-        if area.intersect(&canvas) != area {
-            outside_canvas(&mut image, area, canvas, options.zoom);
-            notes.push("part of the crop is outside the canvas: it's shown as grey squares");
-        }
-        let view = View {
-            left: x as f32,
-            top: y as f32,
-            zoom,
+    let mut saved: Vec<PathBuf> = Vec::new();
+    let mut snapshot_count = 0;
+    let mut last = None;
+    for frame in &frames {
+        let play = PlayOptions {
+            scale,
+            folder: folder.clone(),
+            animation: frame.as_ref().map(|(name, _)| name.clone()),
+            frame: frame.as_ref().map_or(0, |(_, n)| *n),
+            ..PlayOptions::default()
         };
-        let image = for_looking(image, view);
-        let name = format!("{stem}-crop-{x}-{y}-{w}-{h}.png");
-        save(&image, options.out.join(name), keeps_alpha, &mut saved)?;
-    } else {
-        let image = picture(&document, document.bounds());
-        if options.sheet {
-            let image = match options.bg {
-                Some(color) => image.on_color(color),
-                None => image.clone(),
+        let mut player = Player::new(script.clone(), play)
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        let mut document = player
+            .create_document()
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        // One picture is <stem>.png; a frame is <stem>-<animation>-<frame>.png.
+        let name = match frame {
+            Some((animation, n)) => format!("{stem}-{animation}-{n:03}"),
+            None => stem.clone(),
+        };
+
+        // Play, saving a picture at each event if asked.
+        let mut sheet_entries: Vec<Entry> = Vec::new();
+        let mut save_error: Option<String> = None;
+        let mut event_count = 0;
+        player
+            .run(&mut document, |event, document| {
+                if !options.snapshots && !options.sheet {
+                    return;
+                }
+                event_count += 1;
+                let label = match event {
+                    Event::Snapshot(name) => name.clone(),
+                    Event::LayerDone(layer) => format!("after {layer}"),
+                };
+                let image = picture(document, document.bounds());
+                if options.snapshots {
+                    let path =
+                        snapshot_folder.join(format!("{event_count:02}-{}.png", slug(&label)));
+                    match for_looking(image.clone(), whole).save_png(&path, keeps_alpha) {
+                        Ok(()) => snapshot_count += 1,
+                        Err(e) => {
+                            save_error = save_error
+                                .take()
+                                .or(Some(format!("{}: {e}", path.display())))
+                        }
+                    }
+                }
+                if options.sheet {
+                    let image = match options.bg {
+                        Some(color) => image.on_color(color),
+                        None => image,
+                    };
+                    sheet_entries.push(Entry {
+                        label,
+                        image: image.fit_within(THUMB_WIDTH, THUMB_HEIGHT),
+                    });
+                }
+            })
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        if let Some(error) = save_error {
+            return Err(failed(format!("couldn't save a snapshot: {error}")));
+        }
+        check_layer_names(options, &document)?;
+
+        // The finished picture.
+        if let Some([x, y, w, h]) = options.crop {
+            // The part asked for, even where it goes past the canvas's edges:
+            // what's outside is shown as grey squares.
+            let area = PixelRect::new(x, y, x.saturating_add(w), y.saturating_add(h));
+            let canvas = document.bounds();
+            if area.intersect(&canvas).is_empty() {
+                return Err(failed(format!(
+                    "--crop {x},{y},{w},{h} is entirely outside the {} x {} canvas",
+                    document.width(),
+                    document.height()
+                )));
+            }
+            let mut image = zoomed(picture(&document, area));
+            if area.intersect(&canvas) != area {
+                outside_canvas(&mut image, area, canvas, options.zoom);
+                let note = "part of the crop is outside the canvas: it's shown as grey squares";
+                if !notes.contains(&note) {
+                    notes.push(note);
+                }
+            }
+            let view = View {
+                left: x as f32,
+                top: y as f32,
+                zoom,
             };
-            let thumbnail = image.fit_within(THUMB_WIDTH, THUMB_HEIGHT);
-            // Unless the last snapshot already shows the finished picture.
-            if sheet_entries
-                .last()
-                .is_none_or(|last| last.image != thumbnail)
-            {
-                sheet_entries.push(Entry {
-                    label: "final".into(),
-                    image: thumbnail,
-                });
+            let image = for_looking(image, view);
+            let file = format!("{name}-crop-{x}-{y}-{w}-{h}.png");
+            save(&image, options.out.join(file), keeps_alpha, &mut saved)?;
+        } else {
+            let image = picture(&document, document.bounds());
+            if options.sheet {
+                let image = match options.bg {
+                    Some(color) => image.on_color(color),
+                    None => image.clone(),
+                };
+                let thumbnail = image.fit_within(THUMB_WIDTH, THUMB_HEIGHT);
+                // Unless the last snapshot already shows the finished picture.
+                if sheet_entries
+                    .last()
+                    .is_none_or(|last| last.image != thumbnail)
+                {
+                    sheet_entries.push(Entry {
+                        label: "final".into(),
+                        image: thumbnail,
+                    });
+                }
+            }
+            let view = View {
+                zoom: scale * zoom,
+                ..whole
+            };
+            if scale == 1.0 {
+                let image = zoomed(image);
+                save(
+                    &image,
+                    options.out.join(format!("{name}.png")),
+                    options.transparent,
+                    &mut saved,
+                )?;
+                // The layers, for the app (one picture only: frames are flat).
+                if frame.is_none() {
+                    let path = options.out.join(format!("{name}.{FILE_EXTENSION}"));
+                    file::save(&document, &path)
+                        .map_err(|e| failed(format!("couldn't save {}: {e}", path.display())))?;
+                    saved.push(path);
+                }
+                if options.bg.is_some() || options.grid.is_some() {
+                    let path = options.out.join(format!("{name}-view.png"));
+                    save(&for_looking(image, view), path, keeps_alpha, &mut saved)?;
+                }
+            } else {
+                let image = for_looking(zoomed(image), view);
+                let path = options.out.join(format!("{name}-preview.png"));
+                save(&image, path, keeps_alpha, &mut saved)?;
             }
         }
-        let view = View {
-            zoom: scale * zoom,
-            ..whole
-        };
-        if scale == 1.0 {
-            let image = zoomed(image);
+        if options.sheet {
+            let file = options
+                .script
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let title = format!("{file} - {} x {}", document.width(), document.height());
+            let sheet = contact_sheet(&title, &sheet_entries);
             save(
-                &image,
-                options.out.join(format!("{stem}.png")),
-                options.transparent,
+                &sheet,
+                options.out.join(format!("{name}-sheet.png")),
+                false,
                 &mut saved,
             )?;
-            let path = options.out.join(format!("{stem}.{FILE_EXTENSION}"));
-            file::save(&document, &path)
-                .map_err(|e| failed(format!("couldn't save {}: {e}", path.display())))?;
-            saved.push(path);
-            if options.bg.is_some() || options.grid.is_some() {
-                let path = options.out.join(format!("{stem}-view.png"));
-                save(&for_looking(image, view), path, keeps_alpha, &mut saved)?;
-            }
-        } else {
-            let image = for_looking(zoomed(image), view);
-            let path = options.out.join(format!("{stem}-preview.png"));
-            save(&image, path, keeps_alpha, &mut saved)?;
         }
+        last = Some((player, document));
     }
-    if options.sheet {
-        let name = options
-            .script
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        let title = format!("{name} - {} x {}", document.width(), document.height());
-        let sheet = contact_sheet(&title, &sheet_entries);
-        save(
-            &sheet,
-            options.out.join(format!("{stem}-sheet.png")),
-            false,
-            &mut saved,
-        )?;
-    }
+    let (player, document) = last.expect("at least one frame is painted");
 
     // A short summary (or everything): what's where, and what looks wrong.
     let canvas = canvas_size(&document, scale);
@@ -586,6 +659,19 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         canvas.0,
         canvas.1
     );
+    if let Some((animation, _)) = &frames[0] {
+        let numbers: Vec<u32> = frames
+            .iter()
+            .filter_map(|f| f.as_ref().map(|(_, n)| *n))
+            .collect();
+        let total = script.animations[animation].frames;
+        say!(
+            "  animation \"{animation}\": {} of {total} frames painted ({}); the summary below is frame {}",
+            numbers.len(),
+            frame_list(&numbers),
+            numbers[numbers.len() - 1]
+        );
+    }
     let report = player.report();
     let layers = layer_boxes(&document, scale, shown, Some(&report));
     let warnings = warnings(&report, &layers);
@@ -613,7 +699,12 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             }
         }
     }
-    let mut files: Vec<String> = saved.iter().map(|p| p.display().to_string()).collect();
+    let mut files: Vec<String> = if saved.len() > 4 {
+        let folder = options.out.display();
+        vec![format!("{} files in {folder}", saved.len())]
+    } else {
+        saved.iter().map(|p| p.display().to_string()).collect()
+    };
     if snapshot_count > 0 {
         files.push(format!(
             "{snapshot_count} snapshots in {}",
@@ -625,6 +716,80 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         say!("  ({note})");
     }
     Ok(())
+}
+
+/// One picture to paint: `None` for a single picture, otherwise which
+/// animation and which frame.
+type FrameToPaint = Option<(String, u32)>;
+
+/// The frames `render` paints, and notes for the summary.
+fn frames_to_paint(
+    script: &Script,
+    options: &RenderOptions,
+) -> Result<(Vec<FrameToPaint>, Vec<&'static str>), Problem> {
+    if script.animations.is_empty() {
+        if options.frames != Frames::Default || options.animation.is_some() {
+            return Err(failed(
+                "this script has no animations (--frame, --frames, --all-frames and --animation \
+                 are for scripts with an \"animations\" section)",
+            ));
+        }
+        return Ok((vec![None], Vec::new()));
+    }
+    let name = match &options.animation {
+        Some(name) => name.clone(),
+        None => script.animations.keys().next().cloned().expect("not empty"),
+    };
+    let Some(animation) = script.animations.get(&name) else {
+        let names: Vec<&str> = script.animations.keys().map(String::as_str).collect();
+        return Err(failed(format!(
+            "there's no animation called \"{name}\" (animations: {})",
+            names.join(", ")
+        )));
+    };
+    let last = animation.frames - 1;
+    let too_far = |n: u32| {
+        failed(format!(
+            "animation \"{name}\" has {} frames (0 to {last}), so there's no frame {n}",
+            animation.frames
+        ))
+    };
+    let mut notes = Vec::new();
+    let numbers: Vec<u32> = match options.frames {
+        Frames::Default => {
+            notes.push(
+                "this script has animations: frame 0 was painted (--frame N, --frames A-B or \
+                 --all-frames choose frames; --animation chooses which animation)",
+            );
+            vec![0]
+        }
+        Frames::One(n) if n > last => return Err(too_far(n)),
+        Frames::One(n) => vec![n],
+        Frames::Range(_, b) if b > last => return Err(too_far(b)),
+        Frames::Range(a, b) => (a..=b).collect(),
+        Frames::All => (0..=last).collect(),
+    };
+    Ok((
+        numbers
+            .into_iter()
+            .map(|n| Some((name.clone(), n)))
+            .collect(),
+        notes,
+    ))
+}
+
+/// "0-7" or "3" or "0, 2, 4" for the summary.
+fn frame_list(numbers: &[u32]) -> String {
+    match numbers {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [first, .., last] if numbers.len() as u32 == last - first + 1 => format!("{first}-{last}"),
+        _ => numbers
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
 }
 
 /// Grey squares on the part of a crop that's off the canvas. `area` is
@@ -828,16 +993,48 @@ fn layer_names(document: &Document) -> String {
 // ---- check ----------------------------------------------------------------------
 
 /// Plays a script at full size, painting but saving nothing. Returns
-/// the picture, the player's report and the snapshots' names.
+/// the picture, the player's report and the snapshots' names. For a
+/// script with animations: every frame of every animation is played (so
+/// a mistake anywhere is found), and the picture and report are frame 0
+/// of the first animation.
 fn paint(path: &Path) -> Result<(Document, Report, Vec<String>), Problem> {
     let script = load(path)?;
+    let folder = path.parent().map(Path::to_path_buf);
+    for (name, animation) in &script.animations {
+        for frame in 1..animation.frames {
+            let options = PlayOptions {
+                folder: folder.clone(),
+                animation: Some(name.clone()),
+                frame,
+                ..PlayOptions::default()
+            };
+            paint_frame(path, &script, options)?;
+        }
+    }
+    for name in script.animations.keys().skip(1) {
+        let options = PlayOptions {
+            folder: folder.clone(),
+            animation: Some(name.clone()),
+            ..PlayOptions::default()
+        };
+        paint_frame(path, &script, options)?;
+    }
     let options = PlayOptions {
-        folder: path.parent().map(Path::to_path_buf),
+        folder,
         ..PlayOptions::default()
     };
+    paint_frame(path, &script, options)
+}
+
+/// One picture (or frame) of `script`, played at full size.
+fn paint_frame(
+    path: &Path,
+    script: &Script,
+    options: PlayOptions,
+) -> Result<(Document, Report, Vec<String>), Problem> {
     let mut snapshots = Vec::new();
-    let mut player =
-        Player::new(script, options).map_err(|e| failed(format!("{}: {e}", path.display())))?;
+    let mut player = Player::new(script.clone(), options)
+        .map_err(|e| failed(format!("{}: {e}", path.display())))?;
     let mut document = player
         .create_document()
         .map_err(|e| failed(format!("{}: {e}", path.display())))?;
@@ -856,6 +1053,7 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
     let command_count = load(path)?.commands.len();
     // It really paints (at full size), so what it reports is exactly
     // what `render` would make.
+    let script = load(path)?;
     let (document, report, snapshots) = paint(path)?;
     let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));
     let warnings = warnings(&report, &layers);
@@ -877,6 +1075,26 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
     );
     if !snapshots.is_empty() {
         say!("  snapshots: {}", snapshots.join(", "));
+    }
+    if !script.animations.is_empty() {
+        let list: Vec<String> = script
+            .animations
+            .iter()
+            .map(|(name, a)| {
+                format!(
+                    "{name} ({} frames, {} fps{})",
+                    a.frames,
+                    a.fps,
+                    if a.looping { ", loops" } else { "" }
+                )
+            })
+            .collect();
+        say!(
+            "  animations (every frame painted without mistakes): {}",
+            list.join("; ")
+        );
+        let first = script.animations.keys().next().expect("not empty");
+        say!("  (the layers and parts below are frame 0 of \"{first}\")");
     }
     print_findings(&layers, &report, &warnings, detail);
     Ok(())

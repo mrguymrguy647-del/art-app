@@ -456,6 +456,37 @@ as before, and random patterns differ from copy to copy.
 The innermost `repeat` counts, also from inside a group or a symbol used in the repeat. Outside
 any `repeat`, `{i}` is a mistake.
 
+## Animations: frames and timing
+
+```json
+{
+  "commands": [
+    { "cmd": "canvas", "width": 128, "height": 128 },
+    { "cmd": "define", "name": "box", "commands": [
+      { "cmd": "rect", "x": -10, "y": -10, "width": 20, "height": 20, "fill": "#F2C230", "outline": "#202020" } ] }
+  ],
+  "animations": {
+    "idle": { "frames": 4, "fps": 8, "loop": true, "commands": [
+      { "cmd": "use", "name": "box", "translate": [64, 64] } ] },
+    "still": { "frames": 1, "commands": [
+      { "cmd": "use", "name": "box", "translate": [64, 100] } ] }
+  }
+}
+```
+
+A script with an `animations` section is an animation (or several, by name). Each one has
+`frames` (how many, 1 to 100000), `fps` (default 12), `loop` (default false: the last frame leads
+back to the first) and its own `commands`. The canvas is the size of one frame. Each frame plays
+the script's `commands` (the canvas, symbols, a background) and then the animation's. Time is
+the frame number, counting from 0; keyframes (next section) make values change with it. A top
+level `"pivot": [x, y]` is the character's anchor point for sprite sheets (default: the bottom
+centre of the canvas). A script without `animations` is a single picture, exactly as before.
+
+`art-cli render` paints frame 0 of the first animation unless told otherwise: `--frame 3`,
+`--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation. Frames are
+saved as `name-walk-003.png`. `art-cli check` plays every frame of every animation, so a mistake
+in any of them is found. Mistakes say where they are: `animation "walk" > command 2 (use "duck"): ...`.
+
 ## Areas
 
 `gradient`, `hatch` and `scatter` take an `area`:

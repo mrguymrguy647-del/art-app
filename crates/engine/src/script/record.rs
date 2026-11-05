@@ -501,6 +501,8 @@ pub fn script(
         seed: 1,
         palette: BTreeMap::new(),
         commands,
+        animations: BTreeMap::new(),
+        pivot: None,
     }
 }
 

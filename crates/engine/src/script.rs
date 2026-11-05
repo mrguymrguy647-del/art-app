@@ -46,7 +46,28 @@ pub struct Script {
     /// Colour names defined once and used by name in commands.
     pub palette: BTreeMap<String, String>,
     pub commands: Vec<Command>,
+    /// Animations, by name (in alphabetical order). Each plays `commands`
+    /// and then its own, once per frame. Empty for a single picture.
+    pub animations: BTreeMap<String, Animation>,
+    /// The character's anchor point in canvas pixels, for sprite sheets.
+    /// Default: the bottom centre of the canvas.
+    pub pivot: Option<[f32; 2]>,
 }
+
+/// One animation: `frames` frames at `fps`, looping or not, made of the
+/// script's commands followed by these. See `docs/animation-design.md`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Animation {
+    pub frames: u32,
+    pub fps: f32,
+    #[serde(rename = "loop", default)]
+    pub looping: bool,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// The most frames one animation may have.
+pub const MAX_FRAMES: u32 = 100_000;
 
 /// A point: `[x, y]`, or `[x, y, pressure]` with pressure from 0 to 1.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -694,6 +715,8 @@ pub struct ScriptError {
     pub inside: Vec<String>,
     /// The line in the file, for JSON mistakes (like a missing comma).
     pub line: Option<usize>,
+    /// The animation the command is in, if any.
+    pub animation: Option<String>,
     pub message: String,
 }
 
@@ -705,6 +728,7 @@ impl ScriptError {
             kind: None,
             inside: Vec::new(),
             line: None,
+            animation: None,
             message: message.into(),
         }
     }
@@ -716,13 +740,23 @@ impl ScriptError {
             kind: kind.map(str::to_owned),
             inside: Vec::new(),
             line: None,
+            animation: None,
             message: message.into(),
         }
+    }
+
+    /// The same mistake, inside the animation called `name`.
+    pub fn in_animation(mut self, name: &str) -> Self {
+        self.animation = Some(name.to_owned());
+        self
     }
 }
 
 impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(name) = &self.animation {
+            write!(f, "animation \"{name}\" > ")?;
+        }
         match (self.command, &self.kind, self.line) {
             (Some(number), Some(kind), _) => {
                 write!(f, "command {number} ({kind})")?;
@@ -760,6 +794,27 @@ struct RawScript {
     #[serde(default)]
     palette: BTreeMap<String, String>,
     commands: Vec<Value>,
+    #[serde(default)]
+    animations: BTreeMap<String, RawAnimation>,
+    #[serde(default)]
+    pivot: Option<[f32; 2]>,
+}
+
+/// An animation as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAnimation {
+    frames: u32,
+    #[serde(default = "default_fps")]
+    fps: f32,
+    #[serde(rename = "loop", default)]
+    looping: bool,
+    #[serde(default)]
+    commands: Vec<Value>,
+}
+
+fn default_fps() -> f32 {
+    12.0
 }
 
 impl Script {
@@ -773,6 +828,7 @@ impl Script {
             kind: None,
             inside: Vec::new(),
             line: Some(error.line()),
+            animation: None,
             message: describe_json_error(&error),
         })?;
         if let Some(format) = &raw.format
@@ -811,6 +867,7 @@ impl Script {
                 kind: label.clone(),
                 inside: problem.inside,
                 line: None,
+                animation: None,
                 message: problem.message,
             })?;
             if let Command::Define(define) = &command
@@ -831,12 +888,61 @@ impl Script {
             return Err(ScriptError::general("the script has no commands"));
         }
 
+        let mut animations = BTreeMap::new();
+        for (name, raw) in raw.animations {
+            let problem = |message: String| ScriptError::general(message).in_animation(&name);
+            if name.trim().is_empty() {
+                return Err(ScriptError::general("an animation needs a name"));
+            }
+            if !(1..=MAX_FRAMES).contains(&raw.frames) {
+                return Err(problem(format!(
+                    "`frames` must be from 1 to {MAX_FRAMES}, not {}",
+                    raw.frames
+                )));
+            }
+            if !(raw.fps > 0.0 && raw.fps <= 1000.0) {
+                return Err(problem(format!(
+                    "`fps` must be above 0 and at most 1000, not {}",
+                    raw.fps
+                )));
+            }
+            let mut inner = Vec::with_capacity(raw.commands.len());
+            for (index, value) in raw.commands.into_iter().enumerate() {
+                let label = label_of(&value);
+                let command = parse_command(value, true).map_err(|problem| ScriptError {
+                    command: Some(index + 1),
+                    kind: label.clone(),
+                    inside: problem.inside,
+                    line: None,
+                    animation: Some(name.clone()),
+                    message: problem.message,
+                })?;
+                inner.push(command);
+            }
+            animations.insert(
+                name,
+                Animation {
+                    frames: raw.frames,
+                    fps: raw.fps,
+                    looping: raw.looping,
+                    commands: inner,
+                },
+            );
+        }
+        if let Some([x, y]) = raw.pivot
+            && !(x.is_finite() && y.is_finite())
+        {
+            return Err(ScriptError::general("`pivot` must be [x, y] in pixels"));
+        }
+
         Ok(Script {
             title: raw.title,
             notes: raw.notes,
             seed: raw.seed.unwrap_or(1),
             palette: raw.palette,
             commands,
+            animations,
+            pivot: raw.pivot,
         })
     }
 
@@ -853,12 +959,39 @@ impl Script {
         }
         out += &format!("  \"seed\": {},\n", self.seed);
         out += &format!("  \"palette\": {},\n", json(&self.palette));
+        if let Some(pivot) = &self.pivot {
+            out += &format!("  \"pivot\": {},\n", json(pivot));
+        }
         out += "  \"commands\": [\n";
         for (i, command) in self.commands.iter().enumerate() {
             let comma = if i + 1 < self.commands.len() { "," } else { "" };
             out += &format!("    {}{comma}\n", json(command));
         }
-        out += "  ]\n}\n";
+        if self.animations.is_empty() {
+            out += "  ]\n}\n";
+            return out;
+        }
+        out += "  ],\n  \"animations\": {\n";
+        let count = self.animations.len();
+        for (i, (name, animation)) in self.animations.iter().enumerate() {
+            out += &format!(
+                "    {}: {{ \"frames\": {}, \"fps\": {}, \"loop\": {}, \"commands\": [\n",
+                json(name),
+                animation.frames,
+                animation.fps,
+                animation.looping
+            );
+            for (j, command) in animation.commands.iter().enumerate() {
+                let comma = if j + 1 < animation.commands.len() {
+                    ","
+                } else {
+                    ""
+                };
+                out += &format!("      {}{comma}\n", json(command));
+            }
+            out += &format!("    ] }}{}\n", if i + 1 < count { "," } else { "" });
+        }
+        out += "  }\n}\n";
         out
     }
 }
@@ -895,8 +1028,8 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
         .unwrap_or_default();
     if kind == "define" && nested {
         return Err(Problem::here(
-            "`define` only works at the top level of a script, not inside a group, symbol or \
-             repeat",
+            "`define` only works at the top level of a script, not inside a group, symbol, \
+             repeat or animation",
         ));
     }
     let mut inner = Vec::new();

@@ -379,3 +379,82 @@ fn crops_can_go_past_the_edges_and_info_reads_scripts() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+/// A small animation: a box that an animation shows at two places.
+const ANIMATED: &str = r##"{ "commands": [
+    { "cmd": "canvas", "width": 64, "height": 64 },
+    { "cmd": "define", "name": "box", "commands": [
+        { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "#202020" } ] }
+  ], "animations": {
+    "slide": { "frames": 3, "fps": 6, "loop": true, "commands": [
+        { "cmd": "use", "name": "box", "translate": [10, 10] } ] },
+    "still": { "frames": 1, "commands": [ { "cmd": "use", "name": "box" } ] }
+  } }"##;
+
+#[test]
+fn frames_of_an_animation_are_painted_and_checked() {
+    let out = folder("animated");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("anim.json");
+    std::fs::write(&script, ANIMATED).unwrap();
+    let run = |extra: &[&str]| {
+        art_cli()
+            .arg("render")
+            .arg(&script)
+            .args(["--out", out.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let output = run(&[]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("frame 0 was painted"), "{text}");
+    assert!(out.join("anim-slide-000.png").exists());
+    assert!(
+        !out.join("anim-slide-000.artapp").exists(),
+        "frames are flat pictures"
+    );
+
+    assert!(run(&["--all-frames"]).status.success());
+    assert!(out.join("anim-slide-002.png").exists());
+    assert!(
+        run(&["--animation", "still", "--frame", "0"])
+            .status
+            .success()
+    );
+    assert!(out.join("anim-still-000.png").exists());
+    let wrong = run(&["--frames", "1-5"]);
+    assert_eq!(wrong.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("no frame 5"));
+    let usage = run(&["--all-frames", "--sheet"]);
+    assert_eq!(usage.status.code(), Some(2));
+
+    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    assert!(check.status.success());
+    let text = String::from_utf8_lossy(&check.stdout);
+    assert!(
+        text.contains("animations (every frame painted without mistakes): slide (3 frames, 6 fps, loops); still (1 frames, 12 fps)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("animation \"slide\" > command 1 (use \"box\")"),
+        "{text}"
+    );
+    // A mistake in a later frame's... well, in the animation's commands, is found.
+    std::fs::write(
+        &script,
+        ANIMATED.replace(
+            "\"name\": \"box\", \"translate\"",
+            "\"name\": \"bax\", \"translate\"",
+        ),
+    )
+    .unwrap();
+    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    assert_eq!(check.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&check.stderr)
+            .contains("animation \"slide\" > command 1 (use \"bax\")")
+    );
+    std::fs::remove_dir_all(out).ok();
+}

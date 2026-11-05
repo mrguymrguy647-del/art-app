@@ -709,3 +709,24 @@ the script player uses, so Export strokes replays exactly what you saw;
 tests check that for text, flips and transforms. The handles' maths,
 typing and finishing are tested without a screen, and the tools were
 also tried in the real app on a virtual screen.
+
+## 50. Animations: one canvas, one play per frame (phase 2, step 1)
+An animation is the whole script played once per frame, with the frame
+number known to the commands. The plan (`docs/animation-design.md`)
+chose that over a canvas per frame or a timeline: an animated script is
+an ordinary script plus an `animations` section, nothing changes in how
+drawing works, every frame is a function of the script and its number
+(so it's deterministic), and a script without the section is a single
+picture, bit for bit as before (the reference pictures still match).
+
+Each animation has its own `commands`, played after the script's; the
+script's own commands hold what every frame shares (canvas, symbols,
+background). Several animations in one file share one character.
+
+In the player, the animation's commands are one more frame on the
+stack, pushed when the script's own commands end, with its name for
+messages: `animation "walk" > command 2 (use "duck")`. `check` plays
+every frame of every animation, since a mistake can hide in frame 7
+alone, and reports frame 0's layers and parts (the motion summary comes
+in step 3). `render` without a frame option paints frame 0 and says how
+to get the others, rather than painting everything unasked.

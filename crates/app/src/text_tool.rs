@@ -243,6 +243,8 @@ fn paint(document: &mut Document, layer: LayerId, command: &TextCmd) -> Vec<Box<
         notes: None,
         seed: 1,
         palette: BTreeMap::new(),
+        animations: BTreeMap::new(),
+        pivot: None,
         commands: vec![
             Command::Canvas(CanvasCmd::default()),
             Command::Text(command.clone()),

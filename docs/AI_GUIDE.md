@@ -124,6 +124,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
+| `animations` (top level) | Named animations: `frames`, `fps`, `loop`, and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,
 `{"polygon": [[x, y], ...]}`.

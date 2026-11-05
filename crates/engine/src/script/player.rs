@@ -68,6 +68,10 @@ pub struct PlayOptions {
     pub record_undo: bool,
     /// Only check the script: work out every command, but paint nothing.
     pub dry_run: bool,
+    /// Which animation to play (`None`: the first, if the script has any).
+    pub animation: Option<String>,
+    /// Which frame of it, counting from 0.
+    pub frame: u32,
 }
 
 impl Default for PlayOptions {
@@ -77,6 +81,8 @@ impl Default for PlayOptions {
             folder: None,
             record_undo: false,
             dry_run: false,
+            animation: None,
+            frame: 0,
         }
     }
 }
@@ -221,6 +227,8 @@ struct Frame {
     outside: Vec<String>,
     /// For a named group or a `use`: its place in the report's parts.
     part: Option<usize>,
+    /// The animation whose own commands this frame plays, if it's that.
+    animation: Option<String>,
 }
 
 /// A `repeat` plays its commands once per copy, each with the step
@@ -308,6 +316,12 @@ pub struct Player {
     used_symbols: HashSet<String>,
     used_colors: RefCell<HashSet<String>>,
     painted_by: HashMap<LayerId, BTreeSet<usize>>,
+    /// The animation being played: its name and commands.
+    animation: Option<(String, Arc<Vec<Command>>)>,
+    /// Those commands, until they're started (after the script's own).
+    pending_animation: Option<Arc<Vec<Command>>>,
+    /// The frame being painted, counting from 0.
+    frame: u32,
 }
 
 impl Player {
@@ -330,6 +344,38 @@ impl Player {
                 "the scale must be above 0 and at most 16",
             ));
         }
+        let animation = match (&options.animation, script.animations.is_empty()) {
+            (_, true) if options.animation.is_some() => {
+                return Err(ScriptError::general("this script has no animations"));
+            }
+            (_, true) => None,
+            (Some(name), false) => match script.animations.get(name) {
+                Some(animation) => Some((name.clone(), animation)),
+                None => {
+                    let names: Vec<&str> = script.animations.keys().map(String::as_str).collect();
+                    return Err(ScriptError::general(format!(
+                        "there's no animation called \"{name}\" (animations: {})",
+                        names.join(", ")
+                    )));
+                }
+            },
+            (None, false) => script
+                .animations
+                .iter()
+                .next()
+                .map(|(name, animation)| (name.clone(), animation)),
+        };
+        if let Some((name, animation)) = &animation
+            && options.frame >= animation.frames
+        {
+            return Err(ScriptError::general(format!(
+                "animation \"{name}\" has {} frames (0 to {}), so there's no frame {}",
+                animation.frames,
+                animation.frames - 1,
+                options.frame
+            )));
+        }
+        let animation = animation.map(|(name, a)| (name, Arc::new(a.commands.clone())));
         let palette = script
             .palette
             .iter()
@@ -345,7 +391,6 @@ impl Player {
             palette,
             symbols: HashMap::new(),
             seed: script.seed,
-            options,
             frames: Vec::new(),
             current: 0,
             current_seed: 0,
@@ -368,6 +413,10 @@ impl Player {
             used_symbols: HashSet::new(),
             used_colors: RefCell::new(HashSet::new()),
             painted_by: HashMap::new(),
+            frame: options.frame,
+            animation,
+            pending_animation: None,
+            options,
         })
     }
 
@@ -376,6 +425,16 @@ impl Player {
             Command::Canvas(canvas) => canvas,
             _ => unreachable!("checked in `new`"),
         }
+    }
+
+    /// The frame being painted, counting from 0 (0 for a single picture).
+    pub fn frame_number(&self) -> u32 {
+        self.frame
+    }
+
+    /// The animation being played, if any.
+    pub fn animation(&self) -> Option<&str> {
+        self.animation.as_ref().map(|(name, _)| name.as_str())
     }
 
     /// The canvas size the script asks for, if it gives one (at full size).
@@ -474,7 +533,9 @@ impl Player {
             drawn: None,
             outside: Vec::new(),
             part: None,
+            animation: None,
         }];
+        self.pending_animation = self.animation.as_ref().map(|(_, c)| Arc::clone(c));
     }
 
     /// Plays until `budget` is used up (roughly: pixels of brush travel),
@@ -513,6 +574,29 @@ impl Player {
                 } else {
                     self.next_copy_or_end_frame(document);
                 }
+            } else if let Some(commands) = self.pending_animation.take() {
+                // The script's own commands are done: now the animation's.
+                let scale = self.options.scale;
+                let name = self.animation.as_ref().map(|(name, _)| name.clone());
+                self.frames.push(Frame {
+                    commands,
+                    next: 0,
+                    label: None,
+                    place: Transform::scale(scale, scale),
+                    detail: scale,
+                    brush_scale: scale,
+                    opacity: 1.0,
+                    seed_base: None,
+                    restore: None,
+                    symbol: None,
+                    swaps: Vec::new(),
+                    copies: None,
+                    path: None,
+                    drawn: None,
+                    outside: Vec::new(),
+                    part: None,
+                    animation: name,
+                });
             } else {
                 self.flush_tiles();
                 if let Some(name) = self.painted.take() {
@@ -541,8 +625,10 @@ impl Player {
 
     /// How far along the script's own commands: (started, all of them).
     pub fn position(&self) -> (usize, usize) {
-        let total = self.commands.len();
+        let own = self.commands.len();
+        let total = own + self.animation.as_ref().map_or(0, |(_, c)| c.len());
         match self.frames.first() {
+            Some(frame) if frame.animation.is_some() => (own + frame.next, total),
             Some(script) => (script.next, total),
             None if self.finished => (total, total),
             None => (0, total),
@@ -627,6 +713,7 @@ impl Player {
             drawn: None,
             outside: Vec::new(),
             part,
+            animation: None,
         };
         self.frames.push(frame);
         Ok(())
@@ -727,9 +814,12 @@ impl Player {
     fn path_to(&self, index: usize, label: &str) -> String {
         let steps = self.steps_to(index, label);
         let mut path = String::new();
+        if let Some(name) = self.frames.iter().find_map(|f| f.animation.as_ref()) {
+            path = format!("animation \"{name}\" > ");
+        }
         for (i, (number, label)) in steps.iter().enumerate() {
             if i == 0 {
-                path = format!("command {number} ({label})");
+                path.push_str(&format!("command {number} ({label})"));
             } else {
                 path.push_str(&format!(" > {number} ({label})"));
             }
@@ -750,6 +840,7 @@ impl Player {
                 .map(|(number, label)| format!("{number} ({label})"))
                 .collect(),
             line: None,
+            animation: self.frames.iter().find_map(|f| f.animation.clone()),
             message,
         }
     }
@@ -3743,5 +3834,140 @@ mod tests {
             )));
             assert!(problem.contains(expected), "{problem}");
         }
+    }
+
+    // ---- Animations -----------------------------------------------------------
+
+    /// A square that an animation moves across the picture by hand (one
+    /// `use` per frame, until keyframes arrive in step 2).
+    const ANIMATED: &str = r##"{ "palette": { "ink": "#202020", "red": "#E02020" }, "commands": [
+        { "cmd": "canvas", "width": 200, "height": 100 },
+        { "cmd": "define", "name": "box", "commands": [
+            { "cmd": "rect", "x": 0, "y": 0, "width": 20, "height": 20, "fill": "red" } ] },
+        { "cmd": "rect", "x": 0, "y": 80, "width": 200, "height": 20, "fill": "ink" }
+      ], "animations": {
+        "slide": { "frames": 3, "fps": 6, "loop": true, "commands": [
+            { "cmd": "use", "name": "box", "translate": [10, 10] } ] },
+        "still": { "frames": 1, "commands": [] }
+      } }"##;
+
+    fn play_frame(
+        text: &str,
+        animation: Option<&str>,
+        frame: u32,
+    ) -> Result<Document, ScriptError> {
+        play_with(
+            text,
+            PlayOptions {
+                animation: animation.map(str::to_owned),
+                frame,
+                ..PlayOptions::default()
+            },
+        )
+    }
+
+    #[test]
+    fn an_animation_plays_the_scripts_commands_then_its_own() {
+        let script = Script::parse(ANIMATED).unwrap();
+        assert_eq!(script.animations.len(), 2);
+        let slide = &script.animations["slide"];
+        assert_eq!((slide.frames, slide.fps, slide.looping), (3, 6.0, true));
+        assert_eq!(script.animations["still"].fps, 12.0, "the default");
+
+        let frame = play_frame(ANIMATED, Some("slide"), 2).unwrap();
+        let by_hand = play(
+            &small(
+                r##"{ "cmd": "rect", "x": 0, "y": 80, "width": 200, "height": 20, "fill": "ink" },
+                { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "red" }"##,
+            )
+            .replace("\"height\": 200 }", "\"height\": 100 }"),
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        // "still" draws only the script's own commands; so does the first
+        // animation when none is named.
+        let still = play_frame(ANIMATED, Some("still"), 0).unwrap();
+        assert_eq!(seen(&still, 15, 15), seen(&still, 100, 15), "no box");
+        let first = play_frame(ANIMATED, None, 0).unwrap();
+        assert_eq!(
+            png(&first),
+            png(&play_frame(ANIMATED, Some("slide"), 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn animation_mistakes_say_where_they_are() {
+        let problem = |text: &str| Script::parse(text).err().map(|e| e.to_string());
+        assert_eq!(
+            problem(&ANIMATED.replace("\"frames\": 3", "\"frames\": 0")),
+            Some("animation \"slide\" > `frames` must be from 1 to 100000, not 0".into())
+        );
+        assert_eq!(
+            problem(&ANIMATED.replace("\"fps\": 6", "\"fps\": 0")),
+            Some("animation \"slide\" > `fps` must be above 0 and at most 1000, not 0".into())
+        );
+        let define_inside = ANIMATED.replace(
+            r#"{ "cmd": "use", "name": "box", "translate": [10, 10] }"#,
+            r#"{ "cmd": "define", "name": "x", "commands": [] }"#,
+        );
+        assert!(
+            problem(&define_inside)
+                .unwrap()
+                .starts_with("animation \"slide\" > command 1 (define \"x\"): `define` only works"),
+        );
+        // Mistakes while playing, too.
+        let wrong = ANIMATED.replace(
+            "\"name\": \"box\", \"translate\"",
+            "\"name\": \"bix\", \"translate\"",
+        );
+        let error = play_frame(&wrong, Some("slide"), 0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("animation \"slide\" > command 1 (use \"bix\"): there's no symbol"),
+            "{error}"
+        );
+        let error = play_frame(ANIMATED, Some("jump"), 0)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "there's no animation called \"jump\" (animations: slide, still)"
+        );
+        let error = play_frame(ANIMATED, Some("slide"), 3)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "animation \"slide\" has 3 frames (0 to 2), so there's no frame 3"
+        );
+        let plain =
+            small(r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" }"##);
+        let error = play_frame(&plain, Some("slide"), 0)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "this script has no animations");
+    }
+
+    #[test]
+    fn animations_are_written_back_and_read_again() {
+        let script = Script::parse(ANIMATED).unwrap();
+        let again = Script::parse(&script.to_json()).unwrap();
+        assert_eq!(again, script);
+        assert_eq!(again.pivot, None);
+        let with_pivot =
+            ANIMATED.replace("\"animations\"", "\"pivot\": [100, 100], \"animations\"");
+        let script = Script::parse(&with_pivot).unwrap();
+        assert_eq!(script.pivot, Some([100.0, 100.0]));
+        assert_eq!(Script::parse(&script.to_json()).unwrap(), script);
+        // The report says where the animation's parts are.
+        let mut player = Player::new(script, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        assert_eq!(
+            player.report().parts[0].path,
+            "animation \"slide\" > command 1 (use \"box\")"
+        );
+        assert_eq!(player.animation(), Some("slide"));
+        assert_eq!(player.frame_number(), 0);
     }
 }
