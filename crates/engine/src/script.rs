@@ -316,8 +316,10 @@ pub struct TransformLayerCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrushCmd {
+    /// A colour, or a pattern to paint with: `{"noise": {...}}` or
+    /// `{"texture": ...}` (see `fill`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
+    pub color: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -599,8 +601,15 @@ pub struct GradientCmd {
     /// "linear" (the default) or "radial".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    pub from: [f32; 2],
-    pub to: [f32; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<[f32; 2]>,
+    /// Instead of `from`/`to`/`colors`: any fill (a colour, a gradient
+    /// object, `{"noise": ...}` or `{"texture": ...}`) over the area or
+    /// the whole layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

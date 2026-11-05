@@ -16,6 +16,7 @@ pub mod image;
 pub mod layer;
 pub mod layer_commands;
 pub mod layer_transform;
+pub mod noise;
 pub mod pen;
 pub mod pixels;
 pub mod random;

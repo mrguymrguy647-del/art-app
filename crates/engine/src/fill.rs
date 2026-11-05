@@ -15,6 +15,7 @@ use crate::brush::BrushMode;
 use crate::color::over_paper;
 use crate::document::{Background, Document};
 use crate::layer::LayerId;
+use crate::noise::{Noise, Texture};
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
@@ -384,11 +385,47 @@ fn sampled_pixels(
 
 // ---- What to paint with ----------------------------------------------------
 
-/// What fills an area: one colour, or a gradient.
+/// What fills an area: one colour, a gradient, noise or a texture.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Paint {
     Color(Rgba),
     Gradient(Gradient),
+    Noise(Noise),
+    Texture(Texture),
+}
+
+impl Paint {
+    /// The premultiplied colour (each 0..255) this paint has at a canvas
+    /// point. For many pixels, `Prepared` is quicker.
+    pub fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+        Prepared::new(self).color_at(x, y)
+    }
+}
+
+/// The colour at position `t` (0..1) through `stops` (sorted, at least
+/// one), premultiplied: the two nearest stops blended.
+pub fn color_through_stops(stops: &[GradientStop], t: f32) -> [f32; 4] {
+    let after = stops.partition_point(|stop| stop.position <= t);
+    if after == 0 {
+        return premultiplied(stops[0].color);
+    }
+    if after == stops.len() {
+        return premultiplied(stops[after - 1].color);
+    }
+    let (before, next) = (&stops[after - 1], &stops[after]);
+    let span = next.position - before.position;
+    let w = if span <= 0.0 {
+        1.0
+    } else {
+        ((t - before.position) / span).clamp(0.0, 1.0)
+    };
+    let (a, b) = (premultiplied(before.color), premultiplied(next.color));
+    [
+        a[0] + (b[0] - a[0]) * w,
+        a[1] + (b[1] - a[1]) * w,
+        a[2] + (b[2] - a[2]) * w,
+        a[3] + (b[3] - a[3]) * w,
+    ]
 }
 
 /// The shape of a gradient.
@@ -544,21 +581,20 @@ fn dither_offset(x: i32, y: i32) -> f32 {
 const GRADIENT_STEPS: usize = 4096;
 
 /// A paint, prepared for painting many pixels quickly.
-enum Prepared<'a> {
+pub(crate) enum Prepared {
     /// One colour, premultiplied (as floats and as a pixel).
     Color([f32; 4], Rgba8),
+    /// Noise, with its colours worked out in advance at `GRADIENT_STEPS`.
+    Noise(Noise, Vec<[f32; 4]>),
+    Texture(Texture, Option<Vec<[f32; 4]>>),
     /// The gradient's colours worked out in advance at `GRADIENT_STEPS`
     /// positions, so each pixel only has to look its colour up.
-    Gradient(
-        Positions,
-        Vec<[f32; 4]>,
-        std::marker::PhantomData<&'a Gradient>,
-    ),
+    Gradient(Positions, Vec<[f32; 4]>),
 }
 
 /// Works out positions along a gradient quickly: the sums that are the
 /// same for every pixel are done once, in advance.
-struct Positions {
+pub(crate) struct Positions {
     shape: GradientShape,
     start: (f32, f32),
     /// Linear: the direction divided by its length squared.
@@ -601,9 +637,18 @@ impl Positions {
     }
 }
 
-impl<'a> Prepared<'a> {
-    fn new(paint: &'a Paint) -> Self {
+impl Prepared {
+    pub(crate) fn new(paint: &Paint) -> Self {
+        let table = |stops: &[GradientStop]| -> Vec<[f32; 4]> {
+            (0..GRADIENT_STEPS)
+                .map(|i| color_through_stops(stops, i as f32 / (GRADIENT_STEPS - 1) as f32))
+                .collect()
+        };
         match paint {
+            Paint::Noise(noise) => Prepared::Noise(noise.clone(), table(&noise.stops)),
+            Paint::Texture(texture) => {
+                Prepared::Texture(texture.clone(), texture.tint.as_deref().map(table))
+            }
             Paint::Color(color) => {
                 let [r, g, b, a] = *color;
                 Prepared::Color(premultiplied(*color), Rgba8::from_straight(r, g, b, a))
@@ -612,17 +657,35 @@ impl<'a> Prepared<'a> {
                 let colors = (0..GRADIENT_STEPS)
                     .map(|i| gradient.color_at_position(i as f32 / (GRADIENT_STEPS - 1) as f32))
                     .collect();
-                Prepared::Gradient(Positions::new(gradient), colors, std::marker::PhantomData)
+                Prepared::Gradient(Positions::new(gradient), colors)
             }
         }
     }
 
-    fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+    pub(crate) fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+        let step = |t: f32| (t.clamp(0.0, 1.0) * (GRADIENT_STEPS - 1) as f32 + 0.5) as usize;
         match self {
             Prepared::Color(color, _) => *color,
-            Prepared::Gradient(positions, colors, _) => {
-                let t = positions.at(x, y);
-                colors[(t * (GRADIENT_STEPS - 1) as f32 + 0.5) as usize]
+            Prepared::Gradient(positions, colors) => colors[step(positions.at(x, y))],
+            Prepared::Noise(noise, colors) => colors[step(noise.value_at(x, y))],
+            Prepared::Texture(texture, tint) => {
+                let (u, v) = texture.texture_point(x, y);
+                let pixel = texture.image.sample(u, v);
+                match tint {
+                    None => pixel,
+                    Some(colors) => {
+                        // Its lightness picks the colour; its opacity stays.
+                        let alpha = pixel[3];
+                        if alpha <= 0.0 {
+                            return [0.0; 4];
+                        }
+                        let light =
+                            (pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722) / alpha;
+                        let tinted = colors[step(light)];
+                        let a = alpha / 255.0;
+                        [tinted[0] * a, tinted[1] * a, tinted[2] * a, tinted[3] * a]
+                    }
+                }
             }
         }
     }
@@ -733,7 +796,7 @@ fn paint_where(
         }
         _ => None,
     };
-    let dither = matches!(prepared, Prepared::Gradient(..));
+    let dither = !matches!(prepared, Prepared::Color(..));
 
     for coord in rect.tiles() {
         let existing = surface.tile(coord);

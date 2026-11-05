@@ -47,6 +47,7 @@ use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
 };
 use crate::layer_transform::transform_layer;
+use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
@@ -413,6 +414,10 @@ pub struct Player {
     /// which file each came from (so a file is loaded once).
     tips: Vec<Arc<TipShape>>,
     tip_files: HashMap<String, u32>,
+    /// Textures loaded from files, by file name.
+    textures: HashMap<String, Arc<TextureImage>>,
+    /// Patterns a brush paints with, by the number in `BrushSettings::source`.
+    sources: Vec<Arc<Paint>>,
 }
 
 impl Player {
@@ -524,6 +529,8 @@ impl Player {
             capture: Vec::new(),
             tips: Vec::new(),
             tip_files: HashMap::new(),
+            textures: HashMap::new(),
+            sources: Vec::new(),
         })
     }
 
@@ -1312,6 +1319,11 @@ impl Player {
                     && let Some(shape) = self.tips.get(id as usize)
                 {
                     stroke = stroke.with_tip(Arc::clone(shape));
+                }
+                if let Some(id) = brush.source
+                    && let Some(paint) = self.sources.get(id as usize)
+                {
+                    stroke = stroke.with_source(paint);
                 }
                 self.running = Some(RunningStroke {
                     layer: target_layer(layer),
@@ -2181,10 +2193,21 @@ impl Player {
 
     fn set_brush(&mut self, command: &BrushCmd) -> Result<(), String> {
         let mut brush = self.brush;
-        if let Some(color) = &command.color {
-            let [r, g, b, a] = self.color(color)?;
-            brush.color = [r, g, b];
-            self.brush_alpha = a;
+        match &command.color {
+            Some(Value::String(color)) => {
+                let [r, g, b, a] = self.color(color)?;
+                brush.color = [r, g, b];
+                brush.source = None;
+                self.brush_alpha = a;
+            }
+            Some(pattern) => {
+                // A pattern: the strokes get its colour pixel by pixel.
+                let paint = self.paint(pattern).map_err(|p| format!("`color`: {p}"))?;
+                brush.source = Some(self.sources.len() as u32);
+                self.sources.push(Arc::new(paint));
+                self.brush_alpha = 255;
+            }
+            None => {}
         }
         if let Some(size) = command.size {
             brush.size = brush_size(size)?;
@@ -2274,6 +2297,7 @@ impl Player {
         if let Some(color) = changes.color {
             let [r, g, b, a] = self.color(color)?;
             brush.color = [r, g, b];
+            brush.source = None;
             alpha = a;
         }
         if let Some(size) = changes.size {
@@ -2773,13 +2797,25 @@ impl Player {
     }
 
     fn gradient(&mut self, document: &Document, command: &GradientCmd) -> Result<(), String> {
-        let gradient = self.make_gradient(
-            command.kind.as_deref(),
-            command.from,
-            command.to,
-            command.colors.as_deref(),
-            command.stops.as_deref(),
-        )?;
+        let own = command.kind.is_some() || command.colors.is_some() || command.stops.is_some();
+        let paint = match (&command.fill, command.from, command.to) {
+            (Some(fill), None, None) if !own => self.paint(fill)?,
+            (Some(_), _, _) => {
+                return Err("give `fill`, or `from`/`to` with `colors`/`stops`, not both".into());
+            }
+            (None, Some(from), Some(to)) => Paint::Gradient(self.make_gradient(
+                command.kind.as_deref(),
+                from,
+                to,
+                command.colors.as_deref(),
+                command.stops.as_deref(),
+            )?),
+            (None, _, _) => {
+                return Err(
+                    "a gradient needs `from` and `to` (or a `fill` to cover the area with)".into(),
+                );
+            }
+        };
         let shape = match &command.area {
             Some(area) => Some(vec![self.place_polygon(self.area(area)?)]),
             None => None,
@@ -2792,7 +2828,7 @@ impl Player {
         self.jobs.push_back(Job::Area {
             layer: document.active_id(),
             shape,
-            paint: Paint::Gradient(gradient),
+            paint,
             opacity: unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity,
             mode,
         });
@@ -3175,12 +3211,36 @@ impl Player {
     }
 
     /// A `fill`: a colour, or a gradient object.
-    fn paint(&self, value: &Value) -> Result<Paint, String> {
-        match value {
+    fn paint(&mut self, written: &Value) -> Result<Paint, String> {
+        let help = "`fill` is a colour (like \"#FF8800\" or a palette name), a gradient like \
+                    {\"gradient\": \"linear\", \"from\": [0, 0], \"to\": [0, 100], \"colors\": [\"a\", \"b\"]}, \
+                    {\"noise\": {\"scale\": 60, \"colors\": [\"a\", \"b\"]}} or {\"texture\": \"paper\"}";
+        // A colour (or "$name" for one): as it always was.
+        if let Value::String(color) = written {
+            return Ok(Paint::Color(self.color(color)?));
+        }
+        // Keyframes and parameters inside (a noise's offset, say).
+        let value = self.value(written)?;
+        match &value {
             Value::String(color) => Ok(Paint::Color(self.color(color)?)),
+            Value::Object(object) if object.contains_key("noise") => {
+                if object.len() != 1 {
+                    return Err("a noise fill is just {\"noise\": {...}}".into());
+                }
+                let spec: NoiseFill = serde_json::from_value(object["noise"].clone())
+                    .map_err(|e| format!("noise: {e}"))?;
+                self.noise_paint(spec).map_err(|p| format!("noise: {p}"))
+            }
+            Value::Object(object) if object.contains_key("texture") => {
+                if object.len() != 1 {
+                    return Err("a texture fill is just {\"texture\": ...}".into());
+                }
+                self.texture_paint(&object["texture"])
+                    .map_err(|p| format!("texture: {p}"))
+            }
             Value::Object(_) => {
-                let spec: GradientFill = serde_json::from_value(value.clone())
-                    .map_err(|e| format!("fill: {e}"))?;
+                let spec: GradientFill =
+                    serde_json::from_value(value.clone()).map_err(|e| format!("fill: {e}"))?;
                 let gradient = self.make_gradient(
                     Some(&spec.gradient),
                     spec.from,
@@ -3190,9 +3250,126 @@ impl Player {
                 )?;
                 Ok(Paint::Gradient(gradient))
             }
-            _ => Err("`fill` is a colour (like \"#FF8800\" or a palette name) or a gradient like \
-                 {\"gradient\": \"linear\", \"from\": [0, 0], \"to\": [0, 100], \"colors\": [\"a\", \"b\"]}"
-                .into()),
+            _ => Err(help.into()),
+        }
+    }
+
+    /// From canvas pixels back to this frame's drawing units: where a
+    /// pattern is sampled, so it moves, turns and resizes with the group.
+    fn to_source(&self) -> Transform {
+        self.frame().place.inverse().unwrap_or(Transform::IDENTITY)
+    }
+
+    /// Noise as paint, in this frame's coordinates.
+    fn noise_paint(&self, spec: NoiseFill) -> Result<Paint, String> {
+        let scale = spec.scale.unwrap_or(64.0);
+        if scale <= 0.0 || !scale.is_finite() {
+            return Err("`scale` (pixels per wave) must be more than 0".into());
+        }
+        let detail = spec.detail.unwrap_or(3.0).round();
+        if !(1.0..=noise::MAX_DETAIL as f32).contains(&detail) {
+            return Err(format!("`detail` is from 1 to {}", noise::MAX_DETAIL));
+        }
+        let contrast = not_negative("contrast", spec.contrast.unwrap_or(1.0))?;
+        let stops = self.stops_of(spec.colors.as_deref(), spec.stops.as_deref())?;
+        Ok(Paint::Noise(Noise {
+            scale,
+            detail: detail as u32,
+            contrast,
+            offset: pt(spec.offset.unwrap_or([0.0, 0.0]))?,
+            seed: Random::mix(self.seed, spec.seed.unwrap_or(0)),
+            stops,
+            to_source: self.to_source(),
+        }))
+    }
+
+    /// A texture as paint: `"paper"`, or a file (loaded once), in this
+    /// frame's coordinates.
+    fn texture_paint(&mut self, written: &Value) -> Result<Paint, String> {
+        let help = "a texture is \"paper\" or {\"file\": \"textures/canvas.png\", \"scale\": 1, \
+                    \"offset\": [0, 0], \"colors\": [\"dark\", \"light\"]}";
+        let (image, spec) = match written {
+            Value::String(name) if name == "paper" => {
+                (Arc::clone(&noise::PAPER), TextureFill::default())
+            }
+            Value::String(other) => {
+                return Err(format!(
+                    "there's no built-in texture called \"{other}\"; {help}"
+                ));
+            }
+            Value::Object(_) => {
+                let spec: TextureFill =
+                    serde_json::from_value(written.clone()).map_err(|e| e.to_string())?;
+                let Some(file) = &spec.file else {
+                    return Err(format!("`file` is missing; {help}"));
+                };
+                let image = match self.textures.get(file) {
+                    Some(image) => Arc::clone(image),
+                    None => {
+                        let path = match &self.options.folder {
+                            Some(folder) => folder.join(file),
+                            None => PathBuf::from(file),
+                        };
+                        let image = Arc::new(
+                            load_texture(&path)
+                                .map_err(|p| format!("can't load \"{file}\": {p}"))?,
+                        );
+                        self.textures.insert(file.clone(), Arc::clone(&image));
+                        image
+                    }
+                };
+                (image, spec)
+            }
+            _ => return Err(help.into()),
+        };
+        let scale = spec.scale.unwrap_or(1.0);
+        if scale <= 0.0 || !scale.is_finite() {
+            return Err("`scale` must be more than 0".into());
+        }
+        let tint = match (&spec.colors, &spec.stops) {
+            (None, None) => None,
+            (colors, stops) => Some(self.stops_of(colors.as_deref(), stops.as_deref())?),
+        };
+        Ok(Paint::Texture(Texture {
+            image,
+            scale,
+            offset: pt(spec.offset.unwrap_or([0.0, 0.0]))?,
+            tint,
+            to_source: self.to_source(),
+        }))
+    }
+
+    /// Colour stops from `colors` (spread evenly) or `stops`.
+    fn stops_of(
+        &self,
+        colors: Option<&[String]>,
+        stops: Option<&[(f32, String)]>,
+    ) -> Result<Vec<GradientStop>, String> {
+        match (colors, stops) {
+            (Some(colors), None) if !colors.is_empty() => {
+                let last = (colors.len() - 1).max(1) as f32;
+                colors
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        Ok(GradientStop {
+                            position: i as f32 / last,
+                            color: self.color(c)?,
+                        })
+                    })
+                    .collect()
+            }
+            (None, Some(stops)) if !stops.is_empty() => stops
+                .iter()
+                .map(|(position, c)| {
+                    Ok(GradientStop {
+                        position: unit("a stop's position", *position)?,
+                        color: self.color(c)?,
+                    })
+                })
+                .collect(),
+            (Some(_), Some(_)) => Err("give `colors` or `stops`, not both".into()),
+            _ => Err("it needs `colors` (like [\"dark\", \"light\"]) or `stops`".into()),
         }
     }
 
@@ -3351,6 +3528,30 @@ struct ShapeStyle<'a> {
     erase: Option<bool>,
     jitter: Option<f32>,
     seed: Option<u64>,
+}
+
+/// `{"noise": {...}}` as a fill.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoiseFill {
+    scale: Option<f32>,
+    detail: Option<f32>,
+    contrast: Option<f32>,
+    offset: Option<[f32; 2]>,
+    seed: Option<u64>,
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
+}
+
+/// `{"texture": {...}}` as a fill.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextureFill {
+    file: Option<String>,
+    scale: Option<f32>,
+    offset: Option<[f32; 2]>,
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
 }
 
 /// A gradient used as a shape's `fill`.
@@ -3585,23 +3786,10 @@ fn finite(what: &str, value: f32) -> Result<f32, String> {
 /// Loads a brush tip from a PNG: its lightness is the dab's shape (and
 /// a see-through pixel is nothing).
 fn load_tip(path: &std::path::Path) -> Result<TipShape, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-    decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
-    let mut buffer = vec![0; reader.output_buffer_size().unwrap_or(0)];
-    let info = reader.next_frame(&mut buffer).map_err(|e| e.to_string())?;
-    let (width, height) = (info.width as usize, info.height as usize);
-    if width == 0 || height == 0 || width > 1024 || height > 1024 {
+    let (width, height, channels, buffer) = read_png(path)?;
+    if width > 1024 || height > 1024 {
         return Err("a tip picture is at most 1024 x 1024 pixels".into());
     }
-    let channels = match info.color_type {
-        png::ColorType::Grayscale => 1,
-        png::ColorType::GrayscaleAlpha => 2,
-        png::ColorType::Rgb => 3,
-        png::ColorType::Rgba => 4,
-        _ => return Err("the picture's pixels aren't a kind I can read".into()),
-    };
     let lightness: Vec<u8> = buffer[..width * height * channels]
         .chunks(channels)
         .map(|px| {
@@ -3618,6 +3806,51 @@ fn load_tip(path: &std::path::Path) -> Result<TipShape, String> {
         })
         .collect();
     Ok(TipShape::from_lightness(width, height, &lightness))
+}
+
+/// Loads a texture from a PNG, as premultiplied pixels.
+fn load_texture(path: &std::path::Path) -> Result<TextureImage, String> {
+    let (width, height, channels, buffer) = read_png(path)?;
+    if width > 2048 || height > 2048 {
+        return Err("a texture is at most 2048 x 2048 pixels".into());
+    }
+    let pixels = buffer[..width * height * channels]
+        .chunks(channels)
+        .map(|px| match channels {
+            1 => Rgba8::new(px[0], px[0], px[0], 255),
+            2 => Rgba8::from_straight(px[0], px[0], px[0], px[1]),
+            3 => Rgba8::new(px[0], px[1], px[2], 255),
+            _ => Rgba8::from_straight(px[0], px[1], px[2], px[3]),
+        })
+        .collect();
+    Ok(TextureImage {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// Reads a PNG as 8-bit pixels: (width, height, channels per pixel, the
+/// pixels row by row). Channels: 1 grey, 2 grey + alpha, 3 RGB, 4 RGBA.
+fn read_png(path: &std::path::Path) -> Result<(usize, usize, usize, Vec<u8>), String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buffer).map_err(|e| e.to_string())?;
+    let (width, height) = (info.width as usize, info.height as usize);
+    if width == 0 || height == 0 {
+        return Err("the picture is empty".into());
+    }
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        _ => return Err("the picture's pixels aren't a kind I can read".into()),
+    };
+    Ok((width, height, channels, buffer))
 }
 
 /// True for the commands that matter while a symbol is painted for a
@@ -6059,5 +6292,246 @@ mod tests {
             points.contains("`points` is a list of [x, y] points"),
             "{points}"
         );
+    }
+
+    // ---- Noise and textures (phase 3, step 3) ----------------------------------
+
+    fn noise_script(fill: &str) -> String {
+        format!(
+            r##"{{ "seed": 4, "palette": {{ "a": "#2A5A8E", "b": "#6FA8D6" }}, "commands": [
+            {{ "cmd": "canvas", "width": 120, "height": 80, "paper": "#FFFFFF" }},
+            {{ "cmd": "rect", "x": 0, "y": 0, "width": 120, "height": 80, "fill": {fill} }} ] }}"##
+        )
+    }
+
+    #[test]
+    fn noise_fills_are_repeatable_and_vary_with_the_seed() {
+        let noise =
+            r##"{ "noise": { "scale": 20, "detail": 3, "colors": ["a", "b"], "seed": 1 } }"##;
+        let a = play(&noise_script(noise));
+        assert_eq!(png(&a), png(&play(&noise_script(noise))));
+        let b = play(&noise_script(&noise.replace("\"seed\": 1", "\"seed\": 2")));
+        assert_ne!(png(&a), png(&b));
+        let c = play(&noise_script(noise).replace("\"seed\": 4,", "\"seed\": 5,"));
+        assert_ne!(png(&a), png(&c), "the script's seed counts too");
+        // Every pixel is between the two colours, and they're not all the same.
+        let layer = &a.layers()[0].surface;
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..80 {
+            for x in 0..120 {
+                let p = layer.pixel(x, y);
+                assert_eq!(p.a, 255);
+                assert!(p.r >= 0x2A && p.r <= 0x6F && p.b >= 0x8E, "{p:?}");
+                seen.insert(p.r);
+            }
+        }
+        assert!(seen.len() > 20, "{} shades", seen.len());
+        // More contrast: more pixels near the two ends.
+        let sharp = play(&noise_script(
+            &noise.replace("\"detail\": 3", "\"detail\": 3, \"contrast\": 4"),
+        ));
+        let ends = |d: &Document| {
+            let l = &d.layers()[0].surface;
+            (0..80)
+                .flat_map(|y| (0..120).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let r = l.pixel(x, y).r;
+                    !(0x2A + 4..=0x6F - 4).contains(&r)
+                })
+                .count()
+        };
+        assert!(
+            ends(&sharp) > ends(&a) * 2,
+            "{} vs {}",
+            ends(&sharp),
+            ends(&a)
+        );
+    }
+
+    #[test]
+    fn a_pattern_lives_in_the_coordinates_of_its_group() {
+        // A textured symbol moved, resized and turned by a group...
+        let moved = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "rock", "commands": [
+              { "cmd": "rect", "x": -30, "y": -20, "width": 60, "height": 40,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] },
+            { "cmd": "group", "translate": [100, 100], "scale": 2, "rotate": 30, "commands": [
+              { "cmd": "use", "name": "rock" } ] } ] }"##,
+        );
+        // ...is the same as the noise moved, resized and turned by hand.
+        let by_hand = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "group", "translate": [100, 100], "scale": 2, "rotate": 30, "commands": [
+              { "cmd": "rect", "x": -30, "y": -20, "width": 60, "height": 40,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] } ] }"##,
+        );
+        assert_eq!(png(&moved), png(&by_hand));
+        // And differs from the same rock drawn without the group's transform
+        // (the pattern is bigger and turned, not just the shape).
+        let plain = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 40, "y": 60, "width": 120, "height": 80,
+              "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] }"##,
+        );
+        assert_ne!(png(&moved), png(&plain));
+        // Moving by a group equals moving the pattern by its offset.
+        let translated = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "group", "translate": [50, 20], "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] } ] }"##,
+        );
+        let offset = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 50, "y": 20, "width": 100, "height": 100,
+              "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3, "offset": [50, 20] } } } ] }"##,
+        );
+        assert_eq!(png(&translated), png(&offset));
+    }
+
+    #[test]
+    fn noise_offset_and_scale_may_be_keyframes() {
+        let script = r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" } ],
+          "animations": { "drift": { "frames": 5, "commands": [
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60,
+              "fill": { "noise": { "scale": { "keys": [[0, 10], [4, 30]] }, "detail": 2, "colors": ["a", "b"],
+                                   "offset": { "keys": [[0, [0, 0]], [4, [40, 0]]] } } } } ] } } }"##;
+        let frame = play_frame(script, Some("drift"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60,
+              "fill": { "noise": { "scale": 20, "detail": 2, "colors": ["a", "b"], "offset": [20, 0] } } } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+    }
+
+    #[test]
+    fn textures_tile_a_picture_and_paper_is_built_in() {
+        let folder = std::env::temp_dir().join(format!("art-app-texture-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        {
+            // 2 x 2: white, black / black, white.
+            let file = std::fs::File::create(folder.join("check.png")).unwrap();
+            let mut encoder = png::Encoder::new(file, 2, 2);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[255, 0, 0, 255]).unwrap();
+        }
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 40, "height": 40, "paper": "#808080" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 40,
+              "fill": { "texture": { "file": "check.png", "scale": 5 } } },
+            { "cmd": "layer", "name": "Tinted" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 20,
+              "fill": { "texture": { "file": "check.png", "scale": 5, "colors": ["#FF0000", "#0000FF"] } } },
+            { "cmd": "layer", "name": "Paper" },
+            { "cmd": "rect", "x": 0, "y": 20, "width": 40, "height": 20, "fill": { "texture": "paper" } }
+            ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            folder: Some(folder.clone()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        assert_eq!(player.textures.len(), 1, "loaded once");
+        let checks = &document.layers()[0].surface;
+        // Each texture pixel is 5 canvas pixels; the picture repeats every 10.
+        assert_eq!(checks.pixel(2, 2), Rgba8::WHITE);
+        assert_eq!(checks.pixel(7, 2), Rgba8::BLACK);
+        assert_eq!(checks.pixel(12, 2), Rgba8::WHITE, "repeats");
+        assert_eq!(checks.pixel(2, 7), Rgba8::BLACK);
+        let tinted = &document.layers()[1].surface;
+        assert_eq!(
+            tinted.pixel(2, 2),
+            Rgba8::new(0, 0, 255, 255),
+            "white -> the last colour"
+        );
+        assert_eq!(
+            tinted.pixel(7, 2),
+            Rgba8::new(255, 0, 0, 255),
+            "black -> the first"
+        );
+        let paper = &document.layers()[2].surface;
+        let p = paper.pixel(10, 30);
+        assert!(p.a == 255 && p.r > 180 && p.r == p.g && p.g == p.b, "{p:?}");
+        assert!((0..40).any(|x| paper.pixel(x, 30) != p), "it has grain");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_brush_can_paint_with_a_pattern_and_gradient_takes_a_fill() {
+        let document = play(
+            r##"{ "palette": { "a": "#FF0000", "b": "#0000FF" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 20, "hardness": 1,
+              "color": { "noise": { "scale": 10, "detail": 2, "colors": ["a", "b"], "seed": 1 } } },
+            { "cmd": "stroke", "points": [[10, 30], [190, 30]] },
+            { "cmd": "stroke", "points": [[10, 70], [190, 70]], "color": "#00FF00" },
+            { "cmd": "layer", "name": "Fill" },
+            { "cmd": "gradient", "area": { "rect": [0, 90, 200, 10] }, "fill": { "texture": "paper" } }
+            ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        let mut shades = std::collections::HashSet::new();
+        for x in 20..180 {
+            let p = layer.pixel(x, 30);
+            assert_eq!(p.a, 255);
+            assert_eq!(p.g, 0, "between red and blue: {p:?}");
+            shades.insert(p.r);
+        }
+        assert!(
+            shades.len() > 10,
+            "the stroke is patterned: {} shades",
+            shades.len()
+        );
+        assert_eq!(
+            layer.pixel(100, 70),
+            Rgba8::new(0, 255, 0, 255),
+            "a plain colour again"
+        );
+        let fill = &document.layers()[1].surface;
+        assert!(fill.pixel(100, 95).a == 255 && fill.pixel(100, 85).a == 0);
+    }
+
+    #[test]
+    fn pattern_mistakes_are_explained() {
+        let bad = |fill: &str| error(&noise_script(fill));
+        let e = bad(r##"{ "noise": { "scale": 0, "colors": ["a", "b"] } }"##);
+        assert!(e.contains("noise: `scale`"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10, "detail": 9, "colors": ["a", "b"] } }"##);
+        assert!(e.contains("`detail` is from 1 to 6"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10 } }"##);
+        assert!(e.contains("needs `colors`"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10, "colors": ["a", "b"], "wobble": 1 } }"##);
+        assert!(e.contains("unknown field `wobble`"), "{e}");
+        let e = bad(r##"{ "texture": "linen" }"##);
+        assert!(e.contains("no built-in texture called \"linen\""), "{e}");
+        let e = bad(r##"{ "texture": { "file": "nope.png" } }"##);
+        assert!(e.contains("can't load \"nope.png\""), "{e}");
+        let e = bad(r##"{ "texture": { "scale": 2 } }"##);
+        assert!(e.contains("`file` is missing"), "{e}");
+        let e = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "gradient", "from": [0, 0], "fill": "#FF0000" } ] }"##,
+        );
+        assert!(e.contains("give `fill`, or `from`/`to`"), "{e}");
+        let e = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "gradient", "colors": ["#FF0000", "#0000FF"] } ] }"##,
+        );
+        assert!(e.contains("needs `from` and `to`"), "{e}");
     }
 }

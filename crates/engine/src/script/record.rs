@@ -76,7 +76,7 @@ pub fn select_layer(name: &str) -> Command {
 pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
     let [r, g, b] = settings.color;
     Command::Brush(BrushCmd {
-        color: with_color.then(|| hex([r, g, b, 255])),
+        color: with_color.then(|| Value::String(hex([r, g, b, 255]))),
         size: Some(round(settings.size, 2)),
         opacity: Some(round(settings.opacity, 3)),
         flow: Some(round(settings.flow, 3)),
@@ -154,8 +154,9 @@ pub fn gradient(layer: &str, gradient: &Gradient, opacity: f32) -> Vec<Command> 
                 }
                 .to_owned(),
             ),
-            from: point(gradient.start),
-            to: point(gradient.end),
+            from: Some(point(gradient.start)),
+            to: Some(point(gradient.end)),
+            fill: None,
             colors: None,
             stops: Some(
                 gradient
@@ -288,9 +289,10 @@ fn colors_in_value(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
     }
 }
 
-/// Calls `f` on every colour written in `command`.
-fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
-    let paint = |value: &mut Value, f: &mut dyn FnMut(&mut String)| match value {
+/// Calls `f` on every colour in a fill: a colour, or the `colors` or
+/// `stops` of a gradient, noise or texture object.
+fn colors_in_fill(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+    match value {
         Value::String(color) => f(color),
         Value::Object(object) => {
             if let Some(Value::Array(colors)) = object.get_mut("colors") {
@@ -307,9 +309,19 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                     }
                 }
             }
+            for key in ["noise", "texture"] {
+                if let Some(inner) = object.get_mut(key) {
+                    colors_in_fill(inner, f);
+                }
+            }
         }
         _ => {}
-    };
+    }
+}
+
+/// Calls `f` on every colour written in `command`.
+fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
+    let paint = colors_in_fill;
     let option = |color: &mut Option<String>, f: &mut dyn FnMut(&mut String)| {
         if let Some(c) = color {
             f(c);
@@ -318,7 +330,11 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
     match command {
         Command::Canvas(c) => option(&mut c.paper, f),
         Command::Paper(c) => f(&mut c.color),
-        Command::Brush(c) => option(&mut c.color, f),
+        Command::Brush(c) => {
+            if let Some(color) = &mut c.color {
+                paint(color, f);
+            }
+        }
         Command::Stroke(c) | Command::Erase(c) => option(&mut c.color, f),
         Command::Line(c) => option(&mut c.color, f),
         Command::Path(c) => {
@@ -352,6 +368,9 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             }
             for (_, color) in c.stops.iter_mut().flatten() {
                 f(color);
+            }
+            if let Some(fill) = &mut c.fill {
+                paint(fill, f);
             }
         }
         Command::Hatch(c) => option(&mut c.color, f),

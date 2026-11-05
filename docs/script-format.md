@@ -157,7 +157,7 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 
 | Field | |
 |---|---|
-| `color` | Brush colour. A colour's opacity (`#RRGGBBAA`) multiplies the brush opacity. |
+| `color` | Brush colour. A colour's opacity (`#RRGGBBAA`) multiplies the brush opacity. Or a pattern, `{ "noise": {...} }` / `{ "texture": ... }`: strokes get the pattern's colour pixel by pixel (see [Noise and texture](#noise-and-texture)). |
 | `size` | Diameter in pixels at full pressure (above 0, up to 1000). |
 | `opacity` | The most opaque one stroke gets. Going over the same spot within a stroke never gets darker than this. |
 | `flow` | How much paint each dab adds. Below 1, paint builds up where dabs overlap, like an airbrush. |
@@ -224,7 +224,7 @@ A smooth curve through all the points (it never overshoots or loops), drawn with
 | `center` | (`ellipse`) The middle. |
 | `points` | (`polygon`) At least 3 corners. Crossing edges are fine: everything enclosed is filled. |
 | `rotation` | (`rect`, `ellipse`) Degrees, clockwise, around the middle. |
-| `fill` | A colour or a [gradient](#gradients-as-fills). Edges are smooth (anti-aliased). |
+| `fill` | A colour, a [gradient](#gradients-as-fills), [noise or a texture](#noise-and-texture). Edges are smooth (anti-aliased). |
 | `outline` | A colour: draws the edge with the brush (`outline_size` sets its size). |
 | `opacity` | 0 to 1, for both. |
 | `erase` | `true`: cut the shape out of the layer instead of painting it. |
@@ -262,6 +262,7 @@ Fills the area around `at` whose colour is close to the colour there, like the p
 | `colors` | Colours spread evenly from start to end. |
 | `stops` | Or colours at chosen places: `[[position, colour], ...]`, positions 0 to 1. |
 | `area` | Only inside this [area](#areas). Without it, the whole layer is covered. |
+| `fill` | Instead of `from`/`to`/`colors`: any fill (a colour, a gradient object, [noise or a texture](#noise-and-texture)) over the area or the whole layer. |
 | `opacity` | 0 to 1. |
 | `erase` | `true`: fade the layer out instead (the gradient's opacity says how much). |
 
@@ -277,7 +278,7 @@ A shape's (or closed path's) `fill` can be a gradient instead of a colour:
 ```
 
 It takes `gradient` (`"linear"` or `"radial"`), `from`, `to`, and `colors` or `stops`, in canvas
-pixels.
+pixels. A fill can also be [noise or a texture](#noise-and-texture).
 
 ### `hatch` — strokes in one direction
 
@@ -529,6 +530,46 @@ grass, a vine, a string of lights, pebbles along a shore.
 | `opacity` | For tip dabs. |
 | `with` | Values for the symbol's other parameters (the same for every copy). |
 | `seed` | Which random picks. |
+
+## Noise and texture
+
+```json
+{ "cmd": "rect", "x": 0, "y": 200, "width": 640, "height": 160,
+  "fill": { "noise": { "scale": 60, "detail": 3, "contrast": 1.3, "colors": ["water_dark", "water_light"], "offset": [0, 0], "seed": 2 } } }
+{ "cmd": "gradient", "area": { "rect": [0, 0, 640, 200] },
+  "fill": { "noise": { "scale": 180, "detail": 4, "stops": [[0, "sky"], [0.6, "sky"], [1, "cloud"]] } } }
+{ "cmd": "layer", "name": "Grain", "blend": "multiply", "opacity": 0.25 }
+{ "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 360, "fill": { "texture": "paper" } }
+{ "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 360, "fill": { "texture": { "file": "textures/canvas.png", "scale": 0.5 } } }
+{ "cmd": "brush", "size": 30, "color": { "noise": { "scale": 40, "colors": ["grass1", "grass2"] } } }
+```
+
+A **noise** fill is smooth, natural-looking randomness (clouds, water, rock, grass, skin): its
+value at each point, 0 to 1, picks a colour from `colors` (spread evenly) or `stops`.
+
+| | |
+|---|---|
+| `scale` | Pixels per wave of the coarsest layer (default 64). |
+| `detail` | Layers of finer noise, 1 to 6 (default 3): more is rougher. |
+| `contrast` | 1 = as is (default); more pushes values to the two ends, less towards the middle. |
+| `offset` | `[x, y]`: moves the pattern. |
+| `seed` | Which pattern (mixed with the script's `seed`). |
+
+A **texture** is a picture tiled over the area: `"paper"` (built-in, light grain for a paper
+look on a `multiply` or `overlay` layer at low opacity), or a PNG `file` relative to the script
+with `scale` (2 = twice as big), `offset`, and optionally `colors`/`stops` to tint it: the
+picture's lightness picks the colour (its see-through parts stay see-through).
+
+- Noise and textures go anywhere a fill goes (shapes, closed paths, `gradient` with a `fill`,
+  a brush `color`), through clipping and masks like any paint, and on a pixel canvas (the vote
+  snaps them to the palette, which gives a dithered texture for free).
+- **They live in the coordinates of the group they're written in**, like the shapes there: a
+  textured rock placed by a `use` or a `group` keeps its grain as it's moved, resized or turned,
+  and a walking duck doesn't swim through its texture. (`scale` and `offset` are in those
+  coordinates too.) For deliberate drift (clouds, water), give `offset` keyframes; `scale` and
+  `contrast` may be keyframes as well.
+- A brush `color` pattern is sampled where the stroke lands; the next plain `color` (on the
+  brush or on a drawing command) switches back to one colour.
 
 ## Clipping and masks
 

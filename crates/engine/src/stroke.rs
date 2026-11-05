@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use crate::brush::{BrushMode, BrushSettings, TipShape, dab_coverage};
 use crate::color::Hsv;
-use crate::fill::Mask;
+use crate::fill::{Mask, Paint, Prepared};
 use crate::random::Random;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_PIXELS, TILE_SIZE, Tile};
@@ -60,6 +60,8 @@ pub struct Stroke {
     clip: Option<Arc<Mask>>,
     /// The shape of each dab, unless it's simply round.
     tip: Option<Arc<TipShape>>,
+    /// A pattern (noise, a texture) painted instead of the brush colour.
+    source: Option<Prepared>,
     /// Where the dynamics get their variation from.
     random: Random,
     /// The centre of the last dab, and the direction the stroke was going
@@ -86,6 +88,7 @@ impl Stroke {
     pub fn new(brush: BrushSettings, limits: PixelRect) -> Self {
         Self {
             tip: brush.tip.shape(),
+            source: None,
             brush,
             limits,
             clip: None,
@@ -219,6 +222,13 @@ impl Stroke {
         self
     }
 
+    /// Paints with this pattern (noise, a texture, a gradient) instead of
+    /// the brush colour: each pixel gets the pattern's colour there.
+    pub fn with_source(mut self, paint: &Paint) -> Self {
+        self.source = Some(Prepared::new(paint));
+        self
+    }
+
     /// Stamps one dab centred on `at`.
     fn stamp(&mut self, layer: &mut Surface, at: StrokePoint) {
         let dab = self.brush.dab(at.pressure);
@@ -327,10 +337,18 @@ impl Stroke {
                         strength *= f32::from(clip.get(x, y)) / 255.0;
                     }
                     let color = colors.map_or(self.brush.color, |c| c[i]);
-                    let pixel = match self.brush.mode {
-                        BrushMode::Paint if locked => recolor(original, color, strength),
-                        BrushMode::Paint => paint_over(original, color, strength),
-                        BrushMode::Erase => erase(original, strength),
+                    let pixel = match (self.brush.mode, &self.source) {
+                        (BrushMode::Erase, _) => erase(original, strength),
+                        (BrushMode::Paint, Some(source)) => {
+                            let sampled = source.color_at(x as f32 + 0.5, y as f32 + 0.5);
+                            if locked {
+                                recolor(original, straight(sampled), strength * sampled[3] / 255.0)
+                            } else {
+                                paint_source_over(original, sampled, strength)
+                            }
+                        }
+                        (BrushMode::Paint, None) if locked => recolor(original, color, strength),
+                        (BrushMode::Paint, None) => paint_over(original, color, strength),
                     };
                     tile.set_pixel(tile_x, tile_y, pixel);
                 }
@@ -471,6 +489,29 @@ fn paint_over(under: Rgba8, color: [u8; 3], strength: f32) -> Rgba8 {
         mix(f32::from(color[2]), under.b),
         mix(255.0, under.a),
     )
+}
+
+/// A premultiplied pattern colour (each 0..255) laid over `under` with
+/// the given strength: like `paint_over`, with the colour's own opacity.
+fn paint_source_over(under: Rgba8, color: [f32; 4], strength: f32) -> Rgba8 {
+    let keep = 1.0 - strength * color[3] / 255.0;
+    let mix = |paint: f32, under: u8| (paint * strength + f32::from(under) * keep).round() as u8;
+    let a = mix(color[3], under.a);
+    Rgba8::new(
+        mix(color[0], under.r).min(a),
+        mix(color[1], under.g).min(a),
+        mix(color[2], under.b).min(a),
+        a,
+    )
+}
+
+/// The plain colour of a premultiplied one (each 0..255).
+fn straight(color: [f32; 4]) -> [u8; 3] {
+    if color[3] <= 0.0 {
+        return [0, 0, 0];
+    }
+    let un = |c: f32| (c / color[3] * 255.0).round().clamp(0.0, 255.0) as u8;
+    [un(color[0]), un(color[1]), un(color[2])]
 }
 
 /// `under` recoloured towards `color` by `strength` (0..1), keeping its

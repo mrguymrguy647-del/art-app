@@ -115,7 +115,8 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `line` | Straight line, `from` → `to`, tapered (default `taper` 0.25). |
 | `path` | Smooth curve through points; `closed` + `fill` for organic shapes; `line: false` to fill only. |
 | `rect`, `ellipse`, `polygon` | Shapes with `fill` (colour or gradient) and/or `outline`; `rotation`, `radius`, `erase`. |
-| `gradient` | `linear` or `radial`, `colors` or `stops`, whole layer or inside an `area`. |
+| `gradient` | `linear` or `radial`, `colors` or `stops`, whole layer or inside an `area`; or `fill` with any paint (noise, a texture). |
+| noise / texture | A `fill` (or brush `color`) of `{"noise": {"scale", "detail", "contrast", "colors"/"stops", "offset", "seed"}}` or `{"texture": "paper"}` / `{"texture": {"file", "scale", "colors"}}`. They move with the group they're written in. |
 | `fill` | Paint bucket at a point (`tolerance`, `grow`, `sample`). |
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
@@ -231,6 +232,18 @@ light hits. Or `stamp` the `grass` tip along the ground line, which gives real b
 ```json
 { "cmd": "stamp", "tip": "grass", "points": [[0, 900], [800, 880], [1600, 900]], "spacing": 5,
   "size": [30, 60], "angle": [-12, 12], "follow": false, "colors": ["grass1", "grass2", "grass3"] }
+```
+
+**Clouds, water, rock:** a noise fill. Sky: a `gradient` with an `area` and a noise `fill` whose
+stops are mostly sky with cloud at the top end (`[[0, "sky"], [0.6, "sky"], [1, "cloud"]]`),
+big `scale` (150–250), `detail` 4. Water: two blues, `scale` 40–80, `contrast` 1.2. Rock: two
+browns, small `scale` (15–25), `detail` 4, in the rock symbol itself so every rock's grain
+follows its size and turn. Paper: a `multiply` layer at 0.2–0.35 filled with
+`{"texture": "paper"}` on top of everything.
+
+```json
+{ "cmd": "gradient", "area": { "rect": [0, 0, 1600, 620] },
+  "fill": { "noise": { "scale": 220, "detail": 4, "contrast": 1.4, "stops": [[0, "sky"], [0.55, "sky"], [1, "cloud"]], "seed": 5 } } }
 ```
 
 **Texture and a hand-made look:** give the brush a tip and dynamics once, then paint as usual.

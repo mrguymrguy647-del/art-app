@@ -171,6 +171,9 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
   `dynamics` (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); then `stroke`,
   `path`, `hatch` and `scatter` all use it. `stamp` puts a symbol or tip along a path every
   `spacing`: grass, vines, pebbles, lights.
+- Clouds, water, rock, skin: a `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}`;
+  paper grain: `{"texture": "paper"}` on a `multiply` layer at 0.3. Patterns move with the
+  group or symbol they're written in.
 - Shading inside a shape: a `"clip": true` layer above the shape's layer (shows only on its
   paint); `"lock": true` recolours a layer without changing its edges; a group's `mask` (an
   area, `{"symbol": ...}` or `{"layer": ...}`) keeps a reflection on the water.

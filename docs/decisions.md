@@ -1011,3 +1011,34 @@ put it:
   and each pixel samples the shape. Fine for paintings; worth a sampled
   envelope if animations with big textured brushes ever feel slow.
 
+## 61. Noise and textures as paint (phase 3, step 3)
+
+- **A pattern is a `Paint`**, next to colours and gradients, so it goes
+  everywhere a fill goes (shapes, `gradient` with a `fill`, the bucket's
+  paint, a brush `color`) and through clipping, masks and the alpha lock
+  without those knowing. `Prepared` now owns its data, so a stroke can
+  carry one and sample it per pixel.
+- **Value noise, not Perlin.** Random values on a grid, blended with a
+  quintic curve, `detail` layers each twice as fine and half as strong,
+  then stretched (blended random values crowd around the middle). It's
+  simpler to explain and plenty natural for clouds, water and rock. The
+  grid values come from a hash of (seed, x, y), so no table and no
+  state: the same on every computer, and a script's `seed` is mixed in.
+- **Patterns live in the coordinates they're written in**: each paint
+  keeps the inverse of its frame's transform and samples through it, so
+  a rock symbol's grain scales and turns with every use, and the test
+  that a textured symbol moved by a group equals the texture moved by
+  hand passes exactly. Drift is `offset` keyframes, resolved by
+  `value()` inside the fill object like any other keyframe.
+- **Textures are small premultiplied pictures tiled with bilinear
+  wrap-around**; `"paper"` is a 256 x 256 seamless tile made once from
+  periodic noise. Tinting maps the picture's lightness through stops and
+  keeps its opacity.
+- **Cost** (release build). A full 1920 x 1080 fill: one colour 0.10 s,
+  a gradient 0.13 s, noise with detail 1 / 3 / 6: 0.22 / 0.29 / 0.39 s,
+  paper 0.24 s. A 96-frame 640 x 360 animation with a drifting noise
+  fill and a paper layer on every frame, exported as frames: 11.8 s
+  against 3.4 s with plain fills (about 0.09 s a frame for the two
+  patterns; the PNG writing is most of the rest). Nothing here needs
+  caching yet.
+

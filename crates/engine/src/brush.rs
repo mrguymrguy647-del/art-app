@@ -160,6 +160,10 @@ pub struct BrushSettings {
     pub angle: f32,
     /// How dabs vary along the stroke.
     pub dynamics: Dynamics,
+    /// Paint with a pattern (noise or a texture) instead of `color`: a
+    /// number into the list kept by whoever plays the script, which
+    /// hands the pattern to the stroke (see `Stroke::with_source`).
+    pub source: Option<u32>,
 }
 
 impl Default for BrushSettings {
@@ -178,6 +182,7 @@ impl Default for BrushSettings {
             tip: Tip::Round,
             angle: 0.0,
             dynamics: Dynamics::default(),
+            source: None,
         }
     }
 }
