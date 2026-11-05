@@ -54,6 +54,9 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Choose a colour | Colour wheel (ring = hue, square = how vivid / bright), type a hex code like `#FF8800`, or click a recent colour | Same, by tapping |
 | Fill an area (paint bucket) | `F` or the **Fill** button, then click inside the area. **Tolerance** decides how different a colour may be and still be filled; **Grow** tucks the fill under the soft edges of lines; it can stop at lines on all visible layers or only this one | Tap |
 | Gradient | `G` or the **Gradient** button, then drag from where it starts to where it ends (hold `Shift` for straight angles). **Straight** or **Round**, from the colour to transparent or to a second colour. It covers the whole layer, so use a new layer | Drag |
+| Text | `T` or the **Text** button, then click where the text starts and type. Size, alignment and an outline are in the panel on the right, with the colour; you can change them while typing. **Enter** starts a new line; **Enter on an empty line**, or a click outside the box, finishes it (one undo step). **Esc** takes it away | Tap, then type on the keyboard |
+| Flip a layer | **Layer → Flip horizontal** (left and right swap) or **Flip vertical** (top and bottom swap). One undo step | Tap **Layer** |
+| Move, resize, turn a layer | **Layer → Transform…**: drag inside the box to move, a corner to resize (the opposite corner stays put; hold `Shift` to keep the proportions), the round handle to turn. **Apply** (`Enter`) or **Cancel** (`Esc`), in the bar at the bottom. One undo step | Drag with the pen |
 | Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
 | Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, **Blend mode** (Multiply for shadows, Screen for light, …), double-click a name to rename | Same, by tapping |
@@ -147,6 +150,7 @@ art-app/
     │       ├── blend.rs      blend modes (Multiply, Screen, ...)
     │       ├── random.rs     random numbers that repeat exactly (for scripts)
     │       ├── transform.rs  moving, turning, resizing, mirroring (groups, previews)
+    │       ├── layer_transform.rs  moving, turning, resizing, mirroring a layer's pixels
     │       ├── text.rs       text: letter shapes from the built-in font, laid out in lines
     │       ├── image.rs      flat images: crop, shrink, enlarge, save PNG
     │       ├── script.rs     painting scripts: the format, reading, errors
@@ -174,6 +178,8 @@ art-app/
             ├── playback.rs    Play strokes: a script painted bit by bit, with its bar
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
             ├── paint_tool.rs  the tools: pen/mouse input into strokes, fills, gradients
+            ├── text_tool.rs   the Text tool: click, type, finish
+            ├── transform_tool.rs the Layer menu: flip, and Transform with handles
             ├── brush_panel.rs the tool panel (tools, colour, settings)
             ├── color_panel.rs colour wheel, hex code, recent colours
             ├── layers_panel.rs the Layers panel

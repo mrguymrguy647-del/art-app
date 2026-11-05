@@ -15,6 +15,7 @@ mod paint_tool;
 mod pen_input;
 mod pen_test;
 mod playback;
+mod text_tool;
 mod transform_tool;
 
 use art_engine::document::Document;
@@ -195,7 +196,8 @@ impl eframe::App for ArtApp {
         // (as an undo step), so "Save changes?" knows about it.
         if ui.input(|i| i.viewport().close_requested()) {
             self.finish_playback(None);
-            self.canvas.finish_editing(&mut self.document);
+            self.canvas
+                .finish_editing(&mut self.document, &mut self.history);
         }
         let playing = self.playback.is_some();
         // A transform (or other edit on the canvas) must be finished first.
@@ -246,6 +248,13 @@ impl eframe::App for ArtApp {
                 self.files.notice_ui(ui);
             });
         });
+
+        // Text being typed is finished first (it becomes an undo step, and
+        // what's saved or played includes it).
+        if undo || redo || file_action.is_some() || layer_action.is_some() {
+            self.canvas
+                .finish_typing(&mut self.document, &mut self.history);
+        }
 
         // Not in the middle of a stroke: wait until it's finished.
         if self.canvas.is_painting() {

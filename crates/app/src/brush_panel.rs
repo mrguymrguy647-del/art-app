@@ -1,8 +1,9 @@
 //! The tool panel: pick a tool (brush, eraser, eyedropper, paint bucket,
-//! gradient), choose a colour, and adjust the tool's settings.
+//! gradient, text), choose a colour, and adjust the tool's settings.
 
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::fill::GradientShape;
+use art_engine::text::Align;
 use eframe::egui::{self, Slider};
 
 use crate::color_panel::ColorPicker;
@@ -37,6 +38,8 @@ pub fn brush_panel(
             .on_hover_text("Paint bucket: fills the area you click with the colour");
         ui.selectable_value(&mut tools.tool, Tool::Gradient, "Gradient (G)")
             .on_hover_text("Drag across the canvas to fill the layer with a gradient");
+        ui.selectable_value(&mut tools.tool, Tool::Text, "Text (T)")
+            .on_hover_text("Click on the canvas and type");
     });
     ui.add_space(4.0);
 
@@ -50,6 +53,7 @@ pub fn brush_panel(
         match tools.tool {
             Tool::Fill => fill_settings(ui, tools),
             Tool::Gradient => gradient_settings(ui, tools),
+            Tool::Text => text_settings(ui, tools),
             _ => brush_settings(ui, tools),
         }
 
@@ -148,6 +152,43 @@ fn gradient_settings(ui: &mut egui::Ui, tools: &mut PaintTool) {
     ui.weak(
         "Drag across the canvas, from where the gradient starts to where it ends. \
          Hold Shift for straight angles. It covers the whole layer.",
+    );
+}
+
+/// The text tool's settings.
+fn text_settings(ui: &mut egui::Ui, tools: &mut PaintTool) {
+    let text = &mut tools.text;
+    ui.add(
+        Slider::new(&mut text.size, 4.0..=1000.0)
+            .logarithmic(true)
+            .text("Size")
+            .suffix(" px"),
+    );
+    ui.horizontal(|ui| {
+        ui.label("Align:");
+        ui.selectable_value(&mut text.align, Align::Left, "Left");
+        ui.selectable_value(&mut text.align, Align::Center, "Centre");
+        ui.selectable_value(&mut text.align, Align::Right, "Right");
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut text.outline, "Outline");
+        if egui::color_picker::color_edit_button_srgb(ui, &mut text.outline_color).changed() {
+            text.outline = true;
+        }
+    });
+    if text.outline {
+        ui.add(
+            Slider::new(&mut text.outline_size, 0.5..=50.0)
+                .logarithmic(true)
+                .text("Width")
+                .suffix(" px"),
+        );
+    }
+    ui.add_space(4.0);
+    ui.weak(
+        "Click on the canvas and type. Enter starts a new line; Enter on an empty line, \
+         or a click outside the box, finishes the text. Esc takes it away. You can change \
+         the colour and these settings while typing.",
     );
 }
 

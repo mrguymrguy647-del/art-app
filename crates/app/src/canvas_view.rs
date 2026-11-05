@@ -96,6 +96,9 @@ pub struct CanvasView {
     transform: Option<LayerTransform>,
     /// A short message at the top of the canvas, and since when.
     notice: Option<(&'static str, Instant)>,
+    /// Where the tool panel was last frame: clicking there while typing
+    /// text (to change its colour or size) doesn't finish the text.
+    brush_panel_rect: Option<Rect>,
 }
 
 impl Default for CanvasView {
@@ -114,6 +117,7 @@ impl Default for CanvasView {
             layers: LayersPanel::default(),
             transform: None,
             notice: None,
+            brush_panel_rect: None,
         }
     }
 }
@@ -128,6 +132,25 @@ impl CanvasView {
         history: &mut History,
         ink_events: Vec<InkEvent>,
     ) {
+        // Text being typed is finished by a click anywhere but on the
+        // canvas (the text tool sees those) or the tool panel.
+        if self.tools.is_typing() {
+            let pressed = ui.input(|i| {
+                i.pointer
+                    .any_pressed()
+                    .then(|| i.pointer.press_origin())
+                    .flatten()
+            });
+            let keeps_typing = |pos: Pos2| {
+                self.last_rect.is_some_and(|r| r.contains(pos))
+                    || self.brush_panel_rect.is_some_and(|r| r.contains(pos))
+            };
+            if let Some(pos) = pressed
+                && !keeps_typing(pos)
+            {
+                self.tools.finish_typing(document, history);
+            }
+        }
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui, document, history));
         if self.transform.is_some() {
             egui::Panel::bottom("transform_bar").show(ui, |ui| {
@@ -136,7 +159,7 @@ impl CanvasView {
         }
         // While transforming, the panels wait (the layer is hidden meanwhile).
         let panels_enabled = !self.locked && self.transform.is_none();
-        egui::Panel::right("brush_panel")
+        let brush_panel = egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
                 let actions = ui
@@ -145,6 +168,7 @@ impl CanvasView {
                     })
                     .inner;
                 if actions.clear_layer {
+                    self.tools.finish_typing(document, history);
                     let layer = document.active_id();
                     let name = document.active_layer().name().to_owned();
                     let tiles_before = document.clear_active_layer();
@@ -156,6 +180,7 @@ impl CanvasView {
                     }
                 }
             });
+        self.brush_panel_rect = Some(brush_panel.response.rect);
         egui::Panel::left("layers_panel")
             .exact_size(210.0)
             .show(ui, |ui| {
@@ -189,12 +214,19 @@ impl CanvasView {
         self.transform.is_some()
     }
 
-    /// Ends whatever is in progress, for when the window closes: a
-    /// transform that wasn't applied is cancelled.
-    pub fn finish_editing(&mut self, document: &mut Document) {
+    /// Ends whatever is in progress, for when the window closes: text
+    /// being typed is kept (one undo step); a transform that wasn't
+    /// applied is cancelled.
+    pub fn finish_editing(&mut self, document: &mut Document, history: &mut History) {
+        self.tools.finish_typing(document, history);
         if let Some(transform) = self.transform.take() {
             transform.cancel(document);
         }
+    }
+
+    /// Finishes the text being typed, if any (before undo, a menu, ...).
+    pub fn finish_typing(&mut self, document: &mut Document, history: &mut History) {
+        self.tools.finish_typing(document, history);
     }
 
     /// Does what was chosen in the Layer menu.
@@ -293,6 +325,27 @@ impl CanvasView {
             return; // no brush outline while transforming
         }
 
+        // Text being typed: a box around it, and a line where the next letter goes.
+        if let Some((top_left, bottom_right, caret_top, caret_bottom)) = self.tools.text_frame() {
+            let corners = [
+                top_left,
+                Point::new(bottom_right.x, top_left.y),
+                bottom_right,
+                Point::new(top_left.x, bottom_right.y),
+            ]
+            .map(|p| to_pos2(self.view.canvas_to_screen(p)));
+            let caret = [caret_top, caret_bottom].map(|p| to_pos2(self.view.canvas_to_screen(p)));
+            for (width, color) in [(3.0, Color32::from_black_alpha(150)), (1.0, Color32::WHITE)] {
+                painter.add(Shape::closed_line(
+                    corners.to_vec(),
+                    Stroke::new(width, color),
+                ));
+                painter.line_segment(caret, Stroke::new(width + 1.0, color));
+            }
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
+        }
+
         // The brush outline (or, when picking a colour, a preview of the
         // colour underneath) replaces the mouse pointer over the canvas.
         if let Some(position) = self.tools.outline_position(ui, rect) {
@@ -356,6 +409,8 @@ impl CanvasView {
         }
         let centre = to_point(rect.center());
         let line = ctx.options(|o| o.input_options.line_scroll_speed);
+        // While typing text, the keys are for the text.
+        let typing = self.tools.is_typing();
         let (space, shift, wheel_notches, zoom_delta, touch, hover) = ui.input(|i| {
             // Mouse wheel notches since the last frame (a touchpad sends
             // fractions). Ctrl + wheel is left out: egui reports it as
@@ -378,7 +433,7 @@ impl CanvasView {
                 })
                 .sum();
             (
-                i.key_down(Key::Space),
+                i.key_down(Key::Space) && !typing,
                 i.modifiers.shift,
                 wheel_notches,
                 i.zoom_delta(),
@@ -454,7 +509,7 @@ impl CanvasView {
 
         // Keyboard shortcuts (unless you're typing in a text box). While
         // transforming, only the ones that move the view.
-        if !ctx.egui_wants_keyboard_input() {
+        if !ctx.egui_wants_keyboard_input() && !typing {
             let editing = self.is_editing();
             // How many times each key was pressed since the last frame
             // (a slow frame can contain more than one press).
@@ -486,6 +541,7 @@ impl CanvasView {
                 (Key::I, Tool::Eyedropper),
                 (Key::F, Tool::Fill),
                 (Key::G, Tool::Gradient),
+                (Key::T, Tool::Text),
             ] {
                 if !editing && presses(key) > 0 {
                     self.tools.tool = tool;

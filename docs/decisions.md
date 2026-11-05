@@ -674,3 +674,38 @@ pixel when something is turned. So off Linux, up to 0.1% of a picture's
 pixels may differ, and `test.bat` doesn't fail for nothing. A real
 change to old pictures is still caught exactly on Linux, where the
 work is done.
+
+## 49. Text, flip and transform in the app
+Three tools for painting by hand, built on what the engine already
+does, so the app stays small:
+
+- **Text (T).** Click and type; size, colour, alignment and an outline
+  are in the side panel and can change while typing. The text is
+  painted with the engine's own `text` command every time it changes
+  (and taken off again first), so what you see while typing is exactly
+  what you get, in the built-in font. Until it's finished it shows a
+  box and a line where the next letter goes. Enter on an empty line,
+  a click outside the box or outside the canvas and tool panel, another
+  tool, a menu or undo finishes it, as one undo step; Escape takes it
+  away. Export strokes writes the same `text` command.
+- **Layer → Flip horizontal / vertical** mirror the selected layer
+  around the canvas's middle. That puts every pixel exactly on another
+  pixel, so a flip copies pixels without blending, and two flips give
+  back exactly what was there.
+- **Layer → Transform…** puts the layer in a box with handles: inside
+  to move, a corner to resize (the opposite corner stays put, as in
+  other painting apps; Shift keeps the proportions), a round handle to
+  turn. While dragging, the canvas leaves the layer out and draws a
+  picture of it where it's going, which stays smooth on big canvases;
+  the layer's own show/hide setting isn't touched. Enter or Apply
+  paints it there (turning and resizing blend neighbouring pixels),
+  Escape or Cancel leaves it. Menus, undo and the panels wait until
+  it's applied or cancelled.
+
+Flips and transforms are written down as a new script command,
+`transform_layer`. The app builds that command first (numbers rounded
+so the script is easy to read) and paints *it*, using the same code
+the script player uses, so Export strokes replays exactly what you saw;
+tests check that for text, flips and transforms. The handles' maths,
+typing and finishing are tested without a screen, and the tools were
+also tried in the real app on a virtual screen.

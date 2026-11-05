@@ -13,7 +13,8 @@
 //! a colour while using any tool.
 //!
 //! The paint bucket fills where you click. The gradient tool is dragged:
-//! from where the gradient starts to where it ends.
+//! from where the gradient starts to where it ends. The text tool places
+//! text where you click, to type (see `text_tool.rs`).
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,7 @@ use eframe::egui::{self, PointerButton, Pos2, Rect, pos2};
 
 use crate::color_panel::MAX_RECENT_COLORS;
 use crate::pen_input::InkEvent;
+use crate::text_tool::{TextEdit, TextSettings, Typing};
 
 /// After the pen or a finger was used, ignore the mouse for this long.
 /// (Windows also moves the mouse pointer when you use the pen or a finger.)
@@ -53,6 +55,7 @@ pub enum Tool {
     /// The paint bucket.
     Fill,
     Gradient,
+    Text,
 }
 
 /// The paint bucket's settings.
@@ -192,6 +195,9 @@ pub struct PaintTool {
     pub smoothing: f32,
     pub fill: FillSettings,
     pub gradient: GradientSettings,
+    pub text: TextSettings,
+    /// Text being typed (it stays editable until it's finished).
+    typing: Option<TextEdit>,
     /// Colours recently painted with, newest first.
     pub recent_colors: Vec<[u8; 3]>,
     /// While the pen is turned round to its eraser end: the tool that was
@@ -222,6 +228,8 @@ impl Default for PaintTool {
             smoothing: 0.25,
             fill: FillSettings::default(),
             gradient: GradientSettings::default(),
+            text: TextSettings::default(),
+            typing: None,
             recent_colors: Vec::new(),
             tool_before_pen_flip: None,
             stroke: None,
@@ -256,7 +264,59 @@ impl PaintTool {
     /// True for the tools that work at one point (paint bucket, gradient)
     /// rather than with a round brush: they show a cross as the pointer.
     pub fn uses_crosshair(&self) -> bool {
-        matches!(self.tool, Tool::Fill | Tool::Gradient)
+        matches!(self.tool, Tool::Fill | Tool::Gradient | Tool::Text)
+    }
+
+    /// True while text is being typed.
+    pub fn is_typing(&self) -> bool {
+        self.typing.is_some()
+    }
+
+    /// Finishes the text being typed, if any: it becomes one undo step.
+    pub fn finish_typing(&mut self, document: &mut Document, history: &mut History) {
+        if let Some(edit) = self.typing.take()
+            && edit.finish(document, history)
+        {
+            self.remember_color(self.brush.color);
+        }
+    }
+
+    /// The box around the text being typed and the line where the next
+    /// letter goes (canvas pixels): top left, bottom right, caret top,
+    /// caret bottom.
+    pub fn text_frame(&self) -> Option<(Point, Point, Point, Point)> {
+        self.typing.as_ref().map(|edit| edit.frame(&self.text))
+    }
+
+    /// The keys typed into the text, and painting it again if it changed.
+    fn update_typing(&mut self, ui: &egui::Ui, document: &mut Document, history: &mut History) {
+        let Some(edit) = &mut self.typing else {
+            return;
+        };
+        // Another tool was chosen (or the pen turned round): done.
+        if self.tool != Tool::Text {
+            self.finish_typing(document, history);
+            return;
+        }
+        // Keys typed into a box elsewhere (like the colour code) aren't for the text.
+        let typing = if ui.ctx().egui_wants_keyboard_input() {
+            Typing::Editing
+        } else {
+            let events = ui.input(|i| i.events.clone());
+            edit.type_keys(&events)
+        };
+        match typing {
+            Typing::Editing => edit.update(document, &self.text, self.brush.color),
+            Typing::Finish => {
+                edit.update(document, &self.text, self.brush.color);
+                self.finish_typing(document, history);
+            }
+            Typing::Cancel => {
+                if let Some(edit) = self.typing.take() {
+                    edit.cancel(document);
+                }
+            }
+        }
     }
 
     /// The gradient being dragged out, in canvas pixels, to show on screen.
@@ -302,6 +362,7 @@ impl PaintTool {
             StrokePoint::new(point.x, point.y, pressure)
         };
         let (alt_held, shift_held) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+        self.update_typing(ui, document, history);
 
         // 1. The pen.
         for event in ink_events {
@@ -462,6 +523,20 @@ impl PaintTool {
                     start: at,
                     end: at,
                 });
+            }
+            Tool::Text => {
+                let at = Point::new(point.x, point.y);
+                match self.typing.take() {
+                    // A click inside the box: keep typing.
+                    Some(edit) if edit.contains(&self.text, at) => self.typing = Some(edit),
+                    // A click elsewhere: the text is done.
+                    Some(edit) => {
+                        self.typing = Some(edit);
+                        self.finish_typing(document, history);
+                    }
+                    None => self.typing = Some(TextEdit::new(document.active_id(), at)),
+                }
+                self.waiting_for_lift = Some(source);
             }
             _ => self.start_stroke(source, view, document, point),
         }
