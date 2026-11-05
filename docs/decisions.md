@@ -554,3 +554,20 @@ gets the colour but not the grid: its pictures are too small for
 labels). The real picture, `<name>.png`, and the `.artapp` never get
 them; at full size the picture with them is saved next to it as
 `<name>-view.png`.
+
+## 43. Short lists by default, and copy numbers in text
+A sheet of four frames, each a `use` of a duck that uses an eye, made
+`check` list every one of them: 17 lines that mostly said the same
+thing. Now `check` lists only the **outermost** named groups and uses,
+each with how many others are inside it, and `--detail` (on `check`
+and `render`) lists all of them, indented by how deep they are. The
+player notes, for each group or use, which one it's inside, so the
+counting is simple.
+
+Inside a `repeat`, a `text` can say which copy it's in: `{i}` (1, 2,
+3...) and `{i0}` (0, 1, 2...). Four labels "frame 1" to "frame 4" are
+one command instead of four. Only the innermost `repeat` counts, to
+keep it obvious, and it works from inside groups and symbols too (a
+symbol with a label can be used in a repeat). Outside any repeat,
+`{i}` is reported as a mistake rather than written out as-is, because
+it's almost certainly one.

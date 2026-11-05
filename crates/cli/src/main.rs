@@ -46,8 +46,10 @@ art-cli: render Art App painting scripts, without a window.
 
 USAGE
   art-cli render <script.json> [options]   paint the script, save the picture
-  art-cli check <script.json>              paint without saving: where everything
+  art-cli check <script.json> [--detail]   paint without saving: where everything
                                            went, and what looks like a mistake
+                                           (--detail: every group and use, also
+                                           the ones inside others)
   art-cli info <picture.artapp>            describe a saved picture
   art-cli help                             show this
 
@@ -67,6 +69,8 @@ RENDER OPTIONS
                      parts of previews, crops, snapshots and sheets
   --grid <n>         a light grid every n canvas pixels, with coordinates,
                      on previews, crops and snapshots
+  --detail           after rendering, list everything `check --detail` does
+                     instead of the short summary
 
   Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
   --grid; <name>.png and <name>.artapp never do. At full size, the picture
@@ -88,8 +92,13 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("render") => parse_render(&args[1..]).and_then(|options| render(&options)),
         Some("check") => match &args[1..] {
-            [script] => check(Path::new(script)),
-            _ => Err(Problem::Usage("check needs one script file".into())),
+            [script] if !script.starts_with("--") => check(Path::new(script), false),
+            [script, flag] | [flag, script] if flag == "--detail" && !script.starts_with("--") => {
+                check(Path::new(script), true)
+            }
+            _ => Err(Problem::Usage(
+                "check needs one script file (and maybe --detail)".into(),
+            )),
         },
         Some("info") => match &args[1..] {
             [picture] => info(Path::new(picture)),
@@ -168,6 +177,8 @@ struct RenderOptions {
     hide: Vec<String>,
     bg: Option<Color>,
     grid: Option<u32>,
+    /// `--detail`: the full report instead of the short summary.
+    detail: bool,
 }
 
 fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
@@ -185,6 +196,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         hide: Vec::new(),
         bg: None,
         grid: None,
+        detail: false,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -200,6 +212,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--sheet" => options.sheet = true,
             "--preview" => options.preview = true,
             "--transparent" => options.transparent = true,
+            "--detail" => options.detail = true,
             "--scale" => {
                 let text = value("--scale")?;
                 let scale = text
@@ -551,7 +564,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         )?;
     }
 
-    // A short summary: what's where, and what looks wrong.
+    // A short summary (or everything): what's where, and what looks wrong.
     let canvas = canvas_size(&document, scale);
     say!(
         "Rendered {} in {:.2} s{}",
@@ -569,25 +582,30 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         canvas.1
     );
     let layers = layer_boxes(&document, scale, shown);
-    say!("  layers, bottom to top:");
-    let entries: Vec<String> = layers
-        .iter()
-        .map(|layer| format!("{}: {}", layer.title(), describe_box(layer.area)))
-        .collect();
-    for line in packed(&entries, SUMMARY_WIDTH, SUMMARY_LAYER_LINES) {
-        say!("    {line}");
-    }
-    let warnings = warnings(&player.report(), &layers);
-    if !warnings.is_empty() {
-        say!("  warnings ({}):", warnings.len());
-        for warning in warnings.iter().take(SUMMARY_WARNINGS) {
-            say!("    {warning}");
+    let report = player.report();
+    let warnings = warnings(&report, &layers);
+    if options.detail {
+        print_findings(&layers, &report, &warnings, true);
+    } else {
+        say!("  layers, bottom to top:");
+        let entries: Vec<String> = layers
+            .iter()
+            .map(|layer| format!("{}: {}", layer.title(), describe_box(layer.area)))
+            .collect();
+        for line in packed(&entries, SUMMARY_WIDTH, SUMMARY_LAYER_LINES) {
+            say!("    {line}");
         }
-        if warnings.len() > SUMMARY_WARNINGS {
-            say!(
-                "    ...and {} more: `art-cli check` lists them all",
-                warnings.len() - SUMMARY_WARNINGS
-            );
+        if !warnings.is_empty() {
+            say!("  warnings ({}):", warnings.len());
+            for warning in warnings.iter().take(SUMMARY_WARNINGS) {
+                say!("    {warning}");
+            }
+            if warnings.len() > SUMMARY_WARNINGS {
+                say!(
+                    "    ...and {} more: `art-cli check` lists them all",
+                    warnings.len() - SUMMARY_WARNINGS
+                );
+            }
         }
     }
     let mut files: Vec<String> = saved.iter().map(|p| p.display().to_string()).collect();
@@ -746,7 +764,7 @@ fn layer_names(document: &Document) -> String {
 
 // ---- check ----------------------------------------------------------------------
 
-fn check(path: &Path) -> Result<(), Problem> {
+fn check(path: &Path, detail: bool) -> Result<(), Problem> {
     let started = Instant::now();
     let script = load(path)?;
     let command_count = script.commands.len();
@@ -788,37 +806,76 @@ fn check(path: &Path) -> Result<(), Problem> {
         document.width(),
         document.height()
     );
-    say!("  layers, bottom to top:");
-    for layer in &layers {
-        say!("    {}: {}", layer.title(), describe_box(layer.area));
-    }
-    if !report.parts.is_empty() {
-        say!("  named groups and uses:");
-        for part in report.parts.iter().take(CHECK_PARTS) {
-            say!("    {}: {}", part.path, describe_box(part.area));
-        }
-        if report.parts.len() > CHECK_PARTS {
-            say!("    ...and {} more", report.parts.len() - CHECK_PARTS);
-        }
-    }
     if !snapshots.is_empty() {
         say!("  snapshots: {}", snapshots.join(", "));
     }
-    if !warnings.is_empty() {
-        say!("  warnings:");
-        for warning in warnings.iter().take(CHECK_WARNINGS) {
-            say!("    {warning}");
-        }
-        if warnings.len() > CHECK_WARNINGS {
-            say!("    ...and {} more", warnings.len() - CHECK_WARNINGS);
-        }
-    }
+    print_findings(&layers, &report, &warnings, detail);
     Ok(())
 }
 
-/// `check` lists at most this many groups and uses, and warnings.
+/// Without `--detail`, at most this many groups and uses, and warnings.
 const CHECK_PARTS: usize = 60;
 const CHECK_WARNINGS: usize = 40;
+
+/// Every layer with its box; the named groups and uses (only the
+/// outermost ones, unless `detail`); and the warnings.
+fn print_findings(layers: &[LayerBox], report: &Report, warnings: &[String], detail: bool) {
+    say!("  layers, bottom to top:");
+    for layer in layers {
+        say!("    {}: {}", layer.title(), describe_box(layer.area));
+    }
+    let parts = &report.parts;
+    if !parts.is_empty() {
+        // How deep each one is, and how many others are inside it.
+        let mut depth = vec![0; parts.len()];
+        let mut inside = vec![0; parts.len()];
+        for (i, part) in parts.iter().enumerate() {
+            let mut around = part.inside;
+            while let Some(outer) = around {
+                depth[i] += 1;
+                inside[outer] += 1;
+                around = parts[outer].inside;
+            }
+        }
+        let listed: Vec<usize> = (0..parts.len())
+            .filter(|&i| detail || depth[i] == 0)
+            .collect();
+        let limit = if detail { usize::MAX } else { CHECK_PARTS };
+        say!(
+            "  named groups and uses{}:",
+            if detail { "" } else { " (outermost)" }
+        );
+        for &i in listed.iter().take(limit) {
+            let indent = "  ".repeat(depth[i]);
+            let count = match (detail, inside[i]) {
+                (false, n) if n > 0 => format!(" ({n} inside)"),
+                _ => String::new(),
+            };
+            say!(
+                "    {indent}{}: {}{count}",
+                parts[i].path,
+                describe_box(parts[i].area)
+            );
+        }
+        if listed.len() > limit {
+            say!("    ...and {} more", listed.len() - limit);
+        }
+        let hidden = parts.len() - listed.len();
+        if hidden > 0 {
+            say!("    (--detail lists the {hidden} inside these too)");
+        }
+    }
+    if !warnings.is_empty() {
+        say!("  warnings:");
+        let limit = if detail { usize::MAX } else { CHECK_WARNINGS };
+        for warning in warnings.iter().take(limit) {
+            say!("    {warning}");
+        }
+        if warnings.len() > limit {
+            say!("    ...and {} more", warnings.len() - limit);
+        }
+    }
+}
 
 // ---- info -----------------------------------------------------------------------
 

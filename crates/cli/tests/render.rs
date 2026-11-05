@@ -295,3 +295,44 @@ fn seeing_options_and_the_short_summary() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn check_lists_the_outermost_groups_unless_asked_for_detail() {
+    let out = folder("check-nested");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sheet.json");
+    std::fs::write(
+        &script,
+        r##"{ "commands": [
+            { "cmd": "canvas", "width": 512, "height": 128 },
+            { "cmd": "define", "name": "dot", "commands": [
+                { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "#202020" } ] },
+            { "cmd": "group", "name": "sheet", "commands": [
+                { "cmd": "repeat", "count": 4, "step": { "translate": [128, 0] }, "commands": [
+                    { "cmd": "use", "name": "dot", "translate": [64, 64] } ] } ] }
+        ] }"##,
+    )
+    .unwrap();
+    let check = |detail: bool| {
+        let mut command = art_cli();
+        command.arg("check");
+        if detail {
+            command.arg("--detail");
+        }
+        let output = command.arg(&script).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let short = check(false);
+    assert!(
+        short.contains("    command 3 (group \"sheet\"): x 54..458, y 54..74 (4 inside)"),
+        "{short}"
+    );
+    assert!(!short.contains("use \"dot\""), "{short}");
+    let full = check(true);
+    assert!(
+        full.contains("      command 3 (group \"sheet\") > 1 (repeat, copy 4) > 1 (use \"dot\"): x 438..458, y 54..74"),
+        "{full}"
+    );
+    std::fs::remove_dir_all(out).ok();
+}

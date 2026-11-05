@@ -323,6 +323,9 @@ filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-an
 | `rotate` | Degrees clockwise, around `at`. |
 | `opacity` | Default 1. |
 
+Inside a [`repeat`](#repeat--copies-with-a-step), `{i}` in the text becomes the copy number (1, 2,
+3...) and `{i0}` the same counted from 0.
+
 Sizes, for placing text without guessing: each line is **1.21 × `size`** high. Capital letters
 start **0.24 × `size`** below the top of their line and are **0.73 × `size`** tall, so they sit on
 a baseline 0.97 × `size` below it. For `"size": 100` at `[x, 0]`: capitals from y = 24 to 97, the
@@ -426,6 +429,18 @@ has the `step` applied once more: `translate`, `rotate` (degrees, around `origin
 (around `origin`). A row of fence posts, an arc of coins (translate and rotate together), petals
 around a centre (rotate around it). Each copy is like a group: afterwards the brush and layer are
 as before, and random patterns differ from copy to copy.
+
+**Copy numbers in text:** inside a `repeat`, a `text` can say which copy it's in: `{i}` becomes
+1, 2, 3... and `{i0}` becomes 0, 1, 2.... So four frame labels are one command:
+
+```json
+{ "cmd": "repeat", "count": 4, "step": { "translate": [128, 0] }, "commands": [
+  { "cmd": "text", "text": "frame {i}", "at": [64, 108], "size": 14, "color": "ink", "align": "center" }
+] }
+```
+
+The innermost `repeat` counts, also from inside a group or a symbol used in the repeat. Outside
+any `repeat`, `{i}` is a mistake.
 
 ## Areas
 

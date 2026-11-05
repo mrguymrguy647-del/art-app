@@ -110,6 +110,9 @@ pub struct Part {
     /// width included). `None` if it drew nothing. It isn't cut to the
     /// canvas, so it shows what sticks out.
     pub area: Option<PixelRect>,
+    /// The named group or `use` it's inside (its place in
+    /// [`Report::parts`]), or `None` if it isn't inside one.
+    pub inside: Option<usize>,
 }
 
 /// A box around something drawn: left, top, right, bottom, in the pixels
@@ -581,10 +584,12 @@ impl Player {
             ));
         }
         let path = self.path_to(self.current, &new.label);
+        let inside = self.frames.iter().rev().find_map(|frame| frame.part);
         let part = new.part.then(|| {
             self.parts.push(Part {
                 path: path.clone(),
                 area: None,
+                inside,
             });
             self.parts.len() - 1
         });
@@ -1710,8 +1715,9 @@ impl Player {
             }
         };
         let (x, y) = pt(command.at)?;
+        let words = self.with_copy_number(&command.text)?;
 
-        let shape = text::layout(&command.text, size, align, self.detail());
+        let shape = text::layout(&words, size, align, self.detail());
         let place = Transform::rotate(rotate)
             .then(Transform::translate(x, y))
             .then(self.frame().place);
@@ -1766,6 +1772,29 @@ impl Player {
             });
         }
         Ok(())
+    }
+
+    /// `text` with "{i}" replaced by the copy number of the `repeat` it's
+    /// in (1, 2, 3...) and "{i0}" by the same counted from 0 (0, 1, 2...).
+    /// The innermost `repeat` counts, even from inside a group or symbol.
+    fn with_copy_number(&self, text: &str) -> Result<String, String> {
+        if !text.contains("{i}") && !text.contains("{i0}") {
+            return Ok(text.to_owned());
+        }
+        let Some(copy) = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| frame.copies.as_ref())
+            .map(|copies| copies.current)
+        else {
+            return Err(
+                "\"{i}\" and \"{i0}\" are copy numbers, so they only work inside a `repeat`".into(),
+            );
+        };
+        Ok(text
+            .replace("{i0}", &copy.to_string())
+            .replace("{i}", &(copy + 1).to_string()))
     }
 
     fn bucket(&mut self, document: &Document, command: &FillCmd) -> Result<(), String> {
@@ -3475,5 +3504,52 @@ mod tests {
                 r#"palette colour "red" is never used"#,
             ]
         );
+    }
+
+    #[test]
+    fn text_in_a_repeat_can_use_the_copy_number() {
+        let repeated = play(&small(
+            r##"{ "cmd": "repeat", "count": 3, "step": { "translate": [60, 0] }, "commands": [
+                { "cmd": "text", "text": "f{i}/{i0}", "at": [10, 10], "size": 20, "color": "ink" } ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "text", "text": "f1/0", "at": [10, 10], "size": 20, "color": "ink" },
+                { "cmd": "text", "text": "f2/1", "at": [70, 10], "size": 20, "color": "ink" },
+                { "cmd": "text", "text": "f3/2", "at": [130, 10], "size": 20, "color": "ink" }"##,
+        ));
+        assert_eq!(png(&repeated), png(&by_hand));
+
+        // From a symbol used in a repeat, too.
+        let used = play(&small(
+            r##"{ "cmd": "define", "name": "label", "commands": [
+                    { "cmd": "text", "text": "frame {i}", "at": [0, 0], "size": 20, "color": "ink" } ] },
+                { "cmd": "repeat", "count": 2, "step": { "translate": [0, 50] }, "commands": [
+                    { "cmd": "use", "name": "label", "translate": [10, 10] } ] }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "text", "text": "frame 1", "at": [10, 10], "size": 20, "color": "ink" },
+                { "cmd": "text", "text": "frame 2", "at": [10, 60], "size": 20, "color": "ink" }"##,
+        ));
+        assert_eq!(png(&used), png(&by_hand));
+
+        let problem = error(&small(
+            r##"{ "cmd": "text", "text": "frame {i}", "at": [0, 0] }"##,
+        ));
+        assert!(problem.contains("only work inside a `repeat`"), "{problem}");
+    }
+
+    #[test]
+    fn parts_know_what_they_are_inside() {
+        let report = report_of(&small(
+            r##"{ "cmd": "define", "name": "dot", "commands": [
+                    { "cmd": "ellipse", "center": [0, 0], "radius": 5, "fill": "red" } ] },
+                { "cmd": "group", "name": "row", "commands": [
+                    { "cmd": "use", "name": "dot" },
+                    { "cmd": "group", "commands": [ { "cmd": "use", "name": "dot" } ] } ] },
+                { "cmd": "use", "name": "dot" }"##,
+        ));
+        let inside: Vec<Option<usize>> = report.parts.iter().map(|p| p.inside).collect();
+        // The row; two dots in it (one through a group without a name); a dot alone.
+        assert_eq!(inside, [None, Some(0), Some(0), None]);
     }
 }

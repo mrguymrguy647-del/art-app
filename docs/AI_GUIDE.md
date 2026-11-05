@@ -53,9 +53,10 @@ Rendered sprite.json in 0.01 s
   saved: out/sprite.png, out/sprite.artapp
 ```
 
-`check` paints the same way without saving, and lists every layer, every named `group` and every
-`use` of a symbol with the box around what it drew (`x left..right, y top..bottom`, in canvas
-pixels), then all the warnings. That answers "did the duck land where I meant?" without opening a
+`check` paints the same way without saving, and lists every layer, the outermost named `group`s
+and `use`s of symbols with the box around what they drew (`x left..right, y top..bottom`, in
+canvas pixels) and how many others are inside each, then all the warnings. `check --detail` (and
+`render --detail`) lists every group and use, also the ones inside others, indented. That answers "did the duck land where I meant?" without opening a
 picture. Warnings are things that are probably mistakes: something drawn entirely off the canvas,
 a layer left empty, a symbol never used, a palette colour never used.
 
@@ -114,7 +115,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
-| `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. |
+| `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,

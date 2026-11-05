@@ -94,6 +94,7 @@ art-cli render examples/sunset.json --preview --grid 100   # with a grid and coo
 art-cli render examples/sunset.json --preview --layers "Sky,Sun"   # only some layers (or --hide)
 art-cli render sprite.json --transparent --bg "#4080A0"  # see-through PNG, also shown on a colour
 art-cli check examples/sunset.json                       # mistakes, and where everything was drawn
+art-cli check examples/sunset.json --detail              # ...including groups inside groups
 art-cli info out/sunset.artapp                           # size, paper and layers of a picture
 ```
 
