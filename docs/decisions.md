@@ -571,3 +571,32 @@ keep it obvious, and it works from inside groups and symbols too (a
 symbol with a label can be used in a repeat). Outside any repeat,
 `{i}` is reported as a mistake rather than written out as-is, because
 it's almost certainly one.
+
+## 44. Papercuts
+- **Thin lines in previews.** Brush dabs are never smaller than one
+  pixel. So in a preview, a line that ended up thinner than a pixel was
+  drawn as dark as a one-pixel line: a 1-pixel line at a quarter size
+  looked almost black, much bolder than the full picture shrunk down.
+  Now, only in previews, such a line is drawn one pixel wide and as much
+  fainter as it's thinner (a quarter as dark at a quarter size), so it
+  looks like the shrunk picture. Full-size pictures don't change.
+- **`--crop` past the canvas's edges.** A close-up near an edge or a
+  corner keeps the size asked for, and x and y may be below 0. What's
+  outside the canvas shows as grey squares, so it can't be mistaken for
+  see-through paint, and the grid's coordinates still line up. A crop
+  entirely outside the canvas is an error that says the canvas's size.
+- **Which commands painted each layer.** The player notes, for every
+  layer, the numbers of the script's own commands that painted on it (a
+  group, `use` or `repeat` counts as one; clearing a layer starts again).
+  `art-cli check` shows them next to each layer, and `art-cli info` now
+  also takes a script: the same layer table as for an `.artapp`, plus
+  "by commands 11-19". To fix the clouds, look at commands 11 to 19.
+- **Play strokes and Export strokes with the new commands.** Playing
+  already went through the same player, so groups, symbols, repeats and
+  text play in the app like anywhere else. Exporting needed one fix:
+  playing two scripts that define the same symbol (or one script twice)
+  wrote two `define`s with one name, which a script doesn't allow. Now
+  an identical definition is left out, and a different one gets a new
+  name ("duck 2") that the `use`s after it use. A test plays a script
+  with all of them twice, the way the app does, exports it, and checks
+  that the export paints the same picture.

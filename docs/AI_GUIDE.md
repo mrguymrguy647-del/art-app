@@ -34,6 +34,7 @@ art-cli render picture.json --snapshots             # full size, plus a PNG per 
 art-cli render picture.json --preview --layers "Duck"   # one layer on its own (or --hide "Sketch")
 art-cli render sprite.json --transparent --bg "#4080A0" # see-through PNG; previews on a colour
 art-cli info out/picture.artapp                     # layers, blend modes, what's painted where
+art-cli info picture.json                           # the same, plus which commands painted each layer
 ```
 
 Files go to `out/` (or `--out folder`): `picture.png`, `picture.artapp`, `picture-preview.png`,
@@ -281,8 +282,10 @@ Write down what's wrong, change only that, and render again.
 - **Too many tiny strokes.** Use shapes, `scatter` and `hatch` instead of hundreds of `stroke`s.
 - **Random patterns change when you insert a command** (they depend on the command's number).
   Give `scatter`, `hatch` and jittered shapes their own `"seed"` once you like them.
-- **Previews scale everything**, including brush sizes, so a 1 px line can vanish in a preview.
-  Check fine lines with `--crop`, which is always full size.
+- **Previews scale everything**, including brush sizes. A line that would be thinner than a pixel
+  is drawn a pixel wide and fainter, like in the full picture shrunk, so fine lines look light in
+  previews. Check them with `--crop`, which is always full size (and may go past the canvas's
+  edges: what's outside shows as grey squares).
 - **Shapes stopping at the canvas edge leave slivers.** Run backgrounds and land past the edges.
 - **The paper must be opaque.** For a transparent PNG use `--transparent` instead.
 - **Mirror and rotate work around `origin`**, which is `[0, 0]` unless you give it. To flip or

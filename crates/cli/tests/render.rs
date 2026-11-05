@@ -336,3 +336,46 @@ fn check_lists_the_outermost_groups_unless_asked_for_detail() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn crops_can_go_past_the_edges_and_info_reads_scripts() {
+    let out = folder("edges");
+    let crop = art_cli()
+        .args([
+            "render",
+            example().to_str().unwrap(),
+            "--crop",
+            "-20,-10,100,60",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(crop.status.success());
+    assert!(out.join("sunset-crop--20--10-100-60.png").exists());
+    assert!(String::from_utf8_lossy(&crop.stdout).contains("outside the canvas"));
+    let outside = art_cli()
+        .args([
+            "render",
+            example().to_str().unwrap(),
+            "--crop",
+            "5000,0,10,10",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(outside.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&outside.stderr)
+            .contains("entirely outside the 1600 x 1000 canvas")
+    );
+
+    let info = art_cli().arg("info").arg(example()).output().unwrap();
+    let text = String::from_utf8_lossy(&info.stdout);
+    assert!(
+        text.contains("Clouds  [visible, opacity 100%, normal]  painted x 0..1600, y 51..486, by commands 11-19"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(out).ok();
+}

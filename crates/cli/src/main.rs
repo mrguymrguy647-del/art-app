@@ -50,7 +50,10 @@ USAGE
                                            went, and what looks like a mistake
                                            (--detail: every group and use, also
                                            the ones inside others)
-  art-cli info <picture.artapp>            describe a saved picture
+  art-cli info <picture.artapp>            describe a saved picture: its layers
+  art-cli info <script.json>               the same for the picture a script
+                                           paints, with the commands that
+                                           painted on each layer
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -61,6 +64,7 @@ RENDER OPTIONS
   --preview          paint smaller, for a quick look (longest side 800 px)
   --scale <s>        paint at this size, e.g. 0.5 for half (instead of --preview)
   --crop x,y,w,h     save only this part, at full size, to check details
+                     (it may go past the edges: outside shows as grey squares)
   --zoom <n>         enlarge the saved picture n times (pixels become squares)
   --transparent      leave the paper out of the PNG (see-through background)
   --layers \"A,B\"     show only these layers (the .artapp keeps them all)
@@ -102,7 +106,9 @@ fn main() -> ExitCode {
         },
         Some("info") => match &args[1..] {
             [picture] => info(Path::new(picture)),
-            _ => Err(Problem::Usage("info needs one .artapp file".into())),
+            _ => Err(Problem::Usage(
+                "info needs one .artapp file or painting script".into(),
+            )),
         },
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
@@ -168,7 +174,8 @@ struct RenderOptions {
     sheet: bool,
     preview: bool,
     scale: Option<f32>,
-    crop: Option<[u32; 4]>,
+    /// x, y, width, height (x and y may be below 0: off the canvas).
+    crop: Option<[i32; 4]>,
     zoom: u32,
     transparent: bool,
     /// `--layers`: show only these.
@@ -268,12 +275,10 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             }
             "--crop" => {
                 let text = value("--crop")?;
-                let numbers: Vec<u32> = text
-                    .split(',')
-                    .filter_map(|n| n.trim().parse().ok())
-                    .collect();
-                match numbers[..] {
-                    [x, y, w, h] if w > 0 && h > 0 => options.crop = Some([x, y, w, h]),
+                let numbers: Result<Vec<i32>, _> =
+                    text.split(',').map(|n| n.trim().parse::<i32>()).collect();
+                match numbers.as_deref() {
+                    Ok(&[x, y, w, h]) if w > 0 && h > 0 => options.crop = Some([x, y, w, h]),
                     _ => {
                         return Err(Problem::Usage(format!(
                             "--crop is x,y,width,height in whole pixels, like 100,200,300,150 (not {text})"
@@ -478,31 +483,31 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         }
     };
     let zoom = options.zoom as f32;
+    let mut notes = Vec::new();
     if let Some([x, y, w, h]) = options.crop {
-        if x >= document.width() || y >= document.height() {
+        // The part asked for, even where it goes past the canvas's edges:
+        // what's outside is shown as grey squares.
+        let area = PixelRect::new(x, y, x.saturating_add(w), y.saturating_add(h));
+        let canvas = document.bounds();
+        if area.intersect(&canvas).is_empty() {
             return Err(failed(format!(
-                "--crop starts at {x},{y}, outside the {} x {} canvas",
+                "--crop {x},{y},{w},{h} is entirely outside the {} x {} canvas",
                 document.width(),
                 document.height()
             )));
         }
-        let area = PixelRect::new(
-            x as i32,
-            y as i32,
-            (x + w).min(document.width()) as i32,
-            (y + h).min(document.height()) as i32,
-        );
+        let mut image = zoomed(picture(&document, area));
+        if area.intersect(&canvas) != area {
+            outside_canvas(&mut image, area, canvas, options.zoom);
+            notes.push("part of the crop is outside the canvas: it's shown as grey squares");
+        }
         let view = View {
             left: x as f32,
             top: y as f32,
             zoom,
         };
-        let image = for_looking(zoomed(picture(&document, area)), view);
-        let name = format!(
-            "{stem}-crop-{x}-{y}-{}-{}.png",
-            area.right - area.left,
-            area.bottom - area.top
-        );
+        let image = for_looking(image, view);
+        let name = format!("{stem}-crop-{x}-{y}-{w}-{h}.png");
         save(&image, options.out.join(name), keeps_alpha, &mut saved)?;
     } else {
         let image = picture(&document, document.bounds());
@@ -581,8 +586,8 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         canvas.0,
         canvas.1
     );
-    let layers = layer_boxes(&document, scale, shown);
     let report = player.report();
+    let layers = layer_boxes(&document, scale, shown, Some(&report));
     let warnings = warnings(&report, &layers);
     if options.detail {
         print_findings(&layers, &report, &warnings, true);
@@ -616,7 +621,29 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         ));
     }
     say!("  saved: {}", files.join(", "));
+    for note in notes {
+        say!("  ({note})");
+    }
     Ok(())
+}
+
+/// Grey squares on the part of a crop that's off the canvas. `area` is
+/// the crop, in canvas pixels; `image` is it enlarged `zoom` times.
+fn outside_canvas(image: &mut Image, area: PixelRect, canvas: PixelRect, zoom: u32) {
+    const SQUARE: u32 = 8;
+    for py in 0..image.height() {
+        for px in 0..image.width() {
+            let x = area.left + (px / zoom) as i32;
+            let y = area.top + (py / zoom) as i32;
+            let outside =
+                x < canvas.left || x >= canvas.right || y < canvas.top || y >= canvas.bottom;
+            if outside {
+                let light = (px / SQUARE + py / SQUARE).is_multiple_of(2);
+                let grey = if light { 200 } else { 160 };
+                image.set_pixel(px as i32, py as i32, [grey, grey, grey, 255]);
+            }
+        }
+    }
 }
 
 /// The summary after `render` shows this many warnings at most...
@@ -647,12 +674,14 @@ fn canvas_size(document: &Document, scale: f32) -> (u32, u32) {
     )
 }
 
-/// One layer, for summaries: its name, whether it's shown, and the box
-/// around what's painted on it (in canvas pixels).
+/// One layer, for summaries: its name, whether it's shown, the box
+/// around what's painted on it (in canvas pixels), and the script's
+/// commands that painted on it.
 struct LayerBox {
     name: String,
     shown: bool,
     area: Option<PixelRect>,
+    commands: Vec<usize>,
 }
 
 impl LayerBox {
@@ -665,7 +694,12 @@ impl LayerBox {
     }
 }
 
-fn layer_boxes(document: &Document, scale: f32, shown: impl Fn(&Layer) -> bool) -> Vec<LayerBox> {
+fn layer_boxes(
+    document: &Document,
+    scale: f32,
+    shown: impl Fn(&Layer) -> bool,
+    report: Option<&Report>,
+) -> Vec<LayerBox> {
     let (width, height) = canvas_size(document, scale);
     document
         .layers()
@@ -673,6 +707,10 @@ fn layer_boxes(document: &Document, scale: f32, shown: impl Fn(&Layer) -> bool) 
         .map(|layer| LayerBox {
             name: layer.name().to_owned(),
             shown: shown(layer),
+            commands: report
+                .and_then(|report| report.painted_by.get(&layer.id()))
+                .cloned()
+                .unwrap_or_default(),
             area: layer.surface.painted_area().map(|area| {
                 // In canvas pixels, and on the canvas.
                 PixelRect::new(
@@ -684,6 +722,31 @@ fn layer_boxes(document: &Document, scale: f32, shown: impl Fn(&Layer) -> bool) 
             }),
         })
         .collect()
+}
+
+/// "commands 3-5, 12" or "command 4" (runs of numbers shortened).
+fn command_list(numbers: &[usize]) -> String {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for &n in numbers {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == n => *end = n,
+            _ => runs.push((n, n)),
+        }
+    }
+    let parts: Vec<String> = runs
+        .iter()
+        .map(|&(start, end)| match end - start {
+            0 => start.to_string(),
+            1 => format!("{start}, {end}"),
+            _ => format!("{start}-{end}"),
+        })
+        .collect();
+    let word = if numbers.len() == 1 {
+        "command"
+    } else {
+        "commands"
+    };
+    format!("{word} {}", parts.join(", "))
 }
 
 /// "x 10..118, y 20..120", or "empty".
@@ -764,12 +827,10 @@ fn layer_names(document: &Document) -> String {
 
 // ---- check ----------------------------------------------------------------------
 
-fn check(path: &Path, detail: bool) -> Result<(), Problem> {
-    let started = Instant::now();
+/// Plays a script at full size, painting but saving nothing. Returns
+/// the picture, the player's report and the snapshots' names.
+fn paint(path: &Path) -> Result<(Document, Report, Vec<String>), Problem> {
     let script = load(path)?;
-    let command_count = script.commands.len();
-    // It really paints (at full size), so what it reports is exactly
-    // what `render` would make.
     let options = PlayOptions {
         folder: path.parent().map(Path::to_path_buf),
         ..PlayOptions::default()
@@ -787,8 +848,16 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
             }
         })
         .map_err(|e| failed(format!("{}: {e}", path.display())))?;
-    let report = player.report();
-    let layers = layer_boxes(&document, 1.0, Layer::visible);
+    Ok((document, player.report(), snapshots))
+}
+
+fn check(path: &Path, detail: bool) -> Result<(), Problem> {
+    let started = Instant::now();
+    let command_count = load(path)?.commands.len();
+    // It really paints (at full size), so what it reports is exactly
+    // what `render` would make.
+    let (document, report, snapshots) = paint(path)?;
+    let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));
     let warnings = warnings(&report, &layers);
 
     say!(
@@ -822,7 +891,12 @@ const CHECK_WARNINGS: usize = 40;
 fn print_findings(layers: &[LayerBox], report: &Report, warnings: &[String], detail: bool) {
     say!("  layers, bottom to top:");
     for layer in layers {
-        say!("    {}: {}", layer.title(), describe_box(layer.area));
+        let by = if layer.commands.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", command_list(&layer.commands))
+        };
+        say!("    {}: {}{by}", layer.title(), describe_box(layer.area));
     }
     let parts = &report.parts;
     if !parts.is_empty() {
@@ -880,7 +954,16 @@ fn print_findings(layers: &[LayerBox], report: &Report, warnings: &[String], det
 // ---- info -----------------------------------------------------------------------
 
 fn info(path: &Path) -> Result<(), Problem> {
-    let document = file::open(path).map_err(|e| failed(format!("{}: {e}", path.display())))?;
+    let is_script = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    let (document, report) = if is_script {
+        let (document, report, _) = paint(path)?;
+        (document, Some(report))
+    } else {
+        let document = file::open(path).map_err(|e| failed(format!("{}: {e}", path.display())))?;
+        (document, None)
+    };
     let [r, g, b, _] = unpremultiply(document.paper());
     say!("{}", path.display());
     say!(
@@ -891,10 +974,13 @@ fn info(path: &Path) -> Result<(), Problem> {
     say!("  {} layer(s), bottom to top:", document.layers().len());
     let active = document.active_id();
     for (i, layer) in document.layers().iter().enumerate() {
-        let painted = match layer.surface.painted_area() {
+        let mut painted = match layer.surface.painted_area() {
             Some(area) => format!("painted {}", describe_box(Some(area))),
             None => "empty".to_owned(),
         };
+        if let Some(numbers) = report.as_ref().and_then(|r| r.painted_by.get(&layer.id())) {
+            painted += &format!(", by {}", command_list(numbers));
+        }
         say!(
             "  {:>3}. {}{}  [{}, opacity {:.0}%, {}]  {painted}",
             i + 1,
@@ -987,6 +1073,16 @@ mod tests {
         assert_eq!(
             packed(&entries[..2], 100, 3),
             ["Layer 1: empty | Layer 2: empty"]
+        );
+    }
+
+    #[test]
+    fn command_numbers_are_shortened_into_runs() {
+        assert_eq!(command_list(&[4]), "command 4");
+        assert_eq!(command_list(&[3, 4, 5, 12]), "commands 3-5, 12");
+        assert_eq!(
+            command_list(&[2, 3, 7, 9, 10, 11]),
+            "commands 2, 3, 7, 9-11"
         );
     }
 

@@ -96,6 +96,7 @@ art-cli render sprite.json --transparent --bg "#4080A0"  # see-through PNG, also
 art-cli check examples/sunset.json                       # mistakes, and where everything was drawn
 art-cli check examples/sunset.json --detail              # ...including groups inside groups
 art-cli info out/sunset.artapp                           # size, paper and layers of a picture
+art-cli info examples/sunset.json                        # ...and which commands painted each layer
 ```
 
 After a render it prints a short summary: the canvas, the box around each layer's paint, the time

@@ -20,7 +20,7 @@
 //! the way to it).
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -98,6 +98,10 @@ pub struct Report {
     pub parts: Vec<Part>,
     /// Things that are probably mistakes, in plain words.
     pub warnings: Vec<String>,
+    /// For each layer, the numbers of the script's own commands that
+    /// painted (or erased) on it, in order. A group, `use` or `repeat`
+    /// counts as one command. Clearing a layer starts its list again.
+    pub painted_by: HashMap<LayerId, Vec<usize>>,
 }
 
 /// A named group or a `use`, and where its drawing went.
@@ -302,6 +306,7 @@ pub struct Player {
     defined: Vec<(String, usize)>,
     used_symbols: HashSet<String>,
     used_colors: RefCell<HashSet<String>>,
+    painted_by: HashMap<LayerId, BTreeSet<usize>>,
 }
 
 impl Player {
@@ -361,6 +366,7 @@ impl Player {
             defined: Vec::new(),
             used_symbols: HashSet::new(),
             used_colors: RefCell::new(HashSet::new()),
+            painted_by: HashMap::new(),
         })
     }
 
@@ -774,6 +780,11 @@ impl Player {
         Report {
             parts: self.parts.clone(),
             warnings,
+            painted_by: self
+                .painted_by
+                .iter()
+                .map(|(&layer, numbers)| (layer, numbers.iter().copied().collect()))
+                .collect(),
         }
     }
 
@@ -781,8 +792,13 @@ impl Player {
     /// its frame's, and warns if all of it is outside the canvas.
     fn note_drawn(&mut self, document: &Document, index: usize, command: &Command, queued: usize) {
         let mut drawn = None;
+        // The number of the script's own command this is part of.
+        let top = self.frames.first().map_or(0, |script| script.next);
         for job in self.jobs.iter().skip(queued) {
             drawn = Some(union(drawn, job_extent(job, document)));
+            let (Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. }) =
+                job;
+            self.painted_by.entry(*layer).or_default().insert(top);
         }
         let Some(drawn) = drawn else {
             return;
@@ -1029,6 +1045,7 @@ impl Player {
                     Some(name) => find_layer(document, name)?,
                     None => document.active_id(),
                 };
+                self.painted_by.remove(&id);
                 if !self.options.dry_run {
                     let before = document.clear_layer(id);
                     if !before.is_empty() {
@@ -1422,11 +1439,34 @@ impl Player {
             brush.flow = unit("flow", flow)?.max(0.01);
         }
         let frame = self.frame();
+        let (size, fade) = self.sized(brush.size, frame.brush_scale);
         brush.opacity *= f32::from(alpha) / 255.0;
-        brush.opacity *= frame.opacity;
-        brush.size = (brush.size * frame.brush_scale).max(0.25);
+        brush.opacity *= frame.opacity * fade;
+        brush.size = size;
         brush.mode = mode;
         Ok(brush)
+    }
+
+    /// A brush size made `brush_scale` times bigger, and how much fainter
+    /// to make it (1 = not at all).
+    ///
+    /// Dabs are never smaller than one pixel. In a preview (painting
+    /// smaller than full size), a line that ends up thinner than a pixel
+    /// would therefore look as dark as a one-pixel line, much bolder than
+    /// the full picture shrunk down. So it's drawn one pixel wide and
+    /// fainter, as much as it's thinner: it fades like in a shrunk
+    /// picture. At full size nothing changes.
+    fn sized(&self, size: f32, brush_scale: f32) -> (f32, f32) {
+        let scaled = size * brush_scale;
+        let preview = self.options.scale;
+        if preview < 1.0 {
+            // As wide as it is at full size (at least a pixel), shrunk.
+            let wide = (scaled / preview).max(1.0) * preview;
+            if wide < 1.0 {
+                return (1.0, wide);
+            }
+        }
+        (scaled.max(0.25), 1.0)
     }
 
     fn stroke(
@@ -1983,7 +2023,7 @@ impl Player {
             None => self.brush.hardness,
         };
 
-        let (brush_scale, fade, detail) = {
+        let (brush_scale, frame_fade, detail) = {
             let frame = self.frame();
             (frame.brush_scale, frame.opacity, frame.detail)
         };
@@ -2002,15 +2042,19 @@ impl Player {
             }
             let Some((x, y)) = spot else { continue };
             let [r, g, b, a] = colors[random.index(colors.len())];
+            let (dab_size, fade) = self.sized(
+                random.range(size.0, size.1.max(size.0 + f32::EPSILON)),
+                brush_scale,
+            );
             let brush = BrushSettings {
                 color: [r, g, b],
-                size: (random.range(size.0, size.1.max(size.0 + f32::EPSILON)) * brush_scale)
-                    .max(0.25),
+                size: dab_size,
                 opacity: random
                     .range(opacity.0, opacity.1.max(opacity.0 + f32::EPSILON))
                     .min(1.0)
                     * f32::from(a)
                     / 255.0
+                    * frame_fade
                     * fade,
                 hardness,
                 mode: BrushMode::Paint,
@@ -3551,5 +3595,68 @@ mod tests {
         let inside: Vec<Option<usize>> = report.parts.iter().map(|p| p.inside).collect();
         // The row; two dots in it (one through a group without a name); a dot alone.
         assert_eq!(inside, [None, Some(0), Some(0), None]);
+    }
+
+    #[test]
+    fn thin_lines_fade_instead_of_vanishing_in_previews() {
+        // How dark a straight 1-pixel line is at its darkest, in a preview
+        // at `scale` (0 = paper, 255 = black).
+        let darkest = |scale: f32, size: f32| {
+            let text = format!(
+                r##"{{ "commands": [
+                    {{ "cmd": "canvas", "width": 800, "height": 400, "paper": "#FFFFFF" }},
+                    {{ "cmd": "line", "from": [100, 101], "to": [700, 101], "size": {size}, "color": "#000000", "taper": 0 }}
+                ] }}"##
+            );
+            let document = play_with(
+                &text,
+                PlayOptions {
+                    scale,
+                    ..PlayOptions::default()
+                },
+            )
+            .unwrap();
+            let x = (400.0 * scale) as i32;
+            (0..document.height() as i32)
+                .map(|y| 255 - seen(&document, x, y).r)
+                .max()
+                .unwrap()
+        };
+        let full = darkest(1.0, 1.0);
+        // Shrunk 4 times, a 1-pixel line covers about a quarter of a pixel:
+        // it should look about a quarter as dark, not disappear.
+        let quarter = darkest(0.25, 1.0);
+        assert!(
+            (40..=100).contains(&quarter),
+            "{quarter} (full size: {full})"
+        );
+        let half = darkest(0.5, 1.0);
+        assert!((90..=170).contains(&half), "{half} (full size: {full})");
+    }
+
+    #[test]
+    fn the_report_says_which_commands_painted_each_layer() {
+        let text = small(
+            r##"{ "cmd": "layer", "name": "A" },
+                { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" },
+                { "cmd": "layer", "name": "B" },
+                { "cmd": "group", "commands": [
+                    { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" },
+                    { "cmd": "layer", "name": "A" },
+                    { "cmd": "ellipse", "center": [50, 50], "radius": 5, "fill": "red" } ] },
+                { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" },
+                { "cmd": "clear_layer", "name": "A" },
+                { "cmd": "layer", "name": "A" },
+                { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" }"##,
+        );
+        let mut player =
+            Player::new(Script::parse(&text).unwrap(), PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let on = |name: &str| report.painted_by[&layer_named(&document, name).unwrap()].clone();
+        assert_eq!(on("B"), [5, 6]);
+        // Commands 3 and 5 painted on A, but it was cleared by command 7.
+        assert_eq!(on("A"), [9]);
     }
 }

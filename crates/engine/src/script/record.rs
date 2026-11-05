@@ -7,7 +7,7 @@
 //! recorded with its layer and brush, but the exported script only says
 //! "change layer" or "change brush" when they actually change.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::Value;
 
@@ -400,6 +400,62 @@ fn changed_brush_settings(known: &mut BrushCmd, new: BrushCmd) -> BrushCmd {
     }
 }
 
+/// Played scripts can each define a symbol with the same name (playing
+/// one script twice, say), but a script defines each name only once. So
+/// a definition the same as the one before it is left out, and a
+/// different one gets a new name ("duck 2"), used by the `use`s after it.
+pub fn unique_symbols(commands: Vec<Command>) -> Vec<Command> {
+    // Each name as written, and what it's called from here on.
+    let mut called: HashMap<String, String> = HashMap::new();
+    // What each name in the output stands for.
+    let mut bodies: HashMap<String, Vec<Command>> = HashMap::new();
+    let mut out = Vec::with_capacity(commands.len());
+    for mut command in commands {
+        rename_uses(&mut command, &called);
+        if let Command::Define(define) = &mut command {
+            let written = define.name.clone();
+            if let Some(now) = called.get(&written) {
+                if bodies.get(now) == Some(&define.commands) {
+                    continue; // the same again: the first one will do
+                }
+                let new_name = (2..)
+                    .map(|n| format!("{written} {n}"))
+                    .find(|name| !bodies.contains_key(name))
+                    .expect("some number is free");
+                define.name = new_name;
+            }
+            called.insert(written, define.name.clone());
+            bodies.insert(define.name.clone(), define.commands.clone());
+        }
+        out.push(command);
+    }
+    out
+}
+
+/// Gives every `use` in `command` (also inside others) its new name.
+fn rename_uses(command: &mut Command, called: &HashMap<String, String>) {
+    match command {
+        Command::Use(using) => {
+            if let Some(name) = called.get(&using.name) {
+                using.name = name.clone();
+            }
+        }
+        Command::Group(group) => group
+            .commands
+            .iter_mut()
+            .for_each(|c| rename_uses(c, called)),
+        Command::Define(define) => define
+            .commands
+            .iter_mut()
+            .for_each(|c| rename_uses(c, called)),
+        Command::Repeat(repeat) => repeat
+            .commands
+            .iter_mut()
+            .for_each(|c| rename_uses(c, called)),
+        _ => {}
+    }
+}
+
 /// A whole script from recorded commands: a canvas like the picture's,
 /// then everything recorded, tidied.
 pub fn script(
@@ -416,7 +472,7 @@ pub fn script(
         paper: Some(hex([paper.r, paper.g, paper.b, 255])),
         open: None,
     })];
-    commands.extend(tidy(recorded));
+    commands.extend(unique_symbols(tidy(recorded)));
     Script {
         title,
         notes: notes.map(Value::String),
@@ -645,5 +701,92 @@ mod tests {
         assert_eq!(stroke.points[0], Point::new(1.23, 7.89, Some(0.333)));
         assert_eq!(hex([255, 0, 16, 255]), "#FF0010");
         assert_eq!(hex([255, 0, 16, 128]), "#FF001080");
+    }
+
+    /// A script with groups, symbols, a repeat and text, played the way
+    /// the app plays it, twice.
+    const PLAYED: &str = r##"{ "palette": { "yellow": "#F2C230", "ink": "#202020" }, "commands": [
+        { "cmd": "canvas", "width": 300, "height": 120 },
+        { "cmd": "define", "name": "duck", "commands": [
+            { "cmd": "layer", "name": "Ducks" },
+            { "cmd": "ellipse", "center": [0, 0], "radius": [20, 14], "fill": "yellow", "outline": "ink" } ] },
+        { "cmd": "repeat", "count": 3, "step": { "translate": [90, 0] }, "commands": [
+            { "cmd": "use", "name": "duck", "translate": [50, 50] },
+            { "cmd": "text", "text": "duck {i}", "at": [50, 80], "size": 14, "color": "ink", "align": "center" } ] },
+        { "cmd": "group", "name": "big", "mirror": "x", "origin": [150, 0], "commands": [
+            { "cmd": "use", "name": "duck", "translate": [40, 100], "colors": { "yellow": "#C04040" } } ] }
+    ] }"##;
+
+    #[test]
+    fn played_scripts_with_symbols_export_and_replay_the_same() {
+        // As the app does it: the first time onto a new picture, the
+        // second onto the open picture, starting on its selected layer.
+        let script = Script::parse(PLAYED).unwrap();
+        let mut player = Player::new(script.clone(), PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let mut recorded = without_palette(&script.commands[1..], &script.palette);
+        recorded.push(select_layer(document.active_layer().name()));
+        let mut player = Player::new(script.clone(), PlayOptions::default()).unwrap();
+        player.start_on(&mut document).unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        recorded.extend(without_palette(&script.commands[1..], &script.palette));
+        let exported = super::script(300, 120, document.paper(), recorded, None, None);
+        // Read back from the file, it paints the same picture.
+        let text = exported.to_json();
+        assert_eq!(text.matches("\"define\"").count(), 1, "{text}");
+        let again = Script::parse(&text).unwrap();
+        let mut player = Player::new(again, PlayOptions::default()).unwrap();
+        let mut replayed = player.create_document().unwrap();
+        player.run(&mut replayed, |_, _| {}).unwrap();
+        assert_eq!(png(&replayed), png(&document));
+    }
+
+    #[test]
+    fn symbols_defined_again_differently_get_new_names() {
+        let script = Script::parse(
+            r##"{ "commands": [
+                { "cmd": "canvas", "width": 10, "height": 10 },
+                { "cmd": "define", "name": "dot", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 1, "height": 1, "fill": "#000" } ] },
+                { "cmd": "use", "name": "dot" },
+                { "cmd": "group", "commands": [ { "cmd": "use", "name": "dot" } ] }
+            ] }"##,
+        )
+        .unwrap();
+        let mut other = script.commands[1..].to_vec();
+        let Command::Define(define) = &mut other[0] else {
+            panic!()
+        };
+        define.commands.clear(); // a different "dot"
+        let mut commands = script.commands[1..].to_vec();
+        commands.extend(other);
+        commands.extend(script.commands[1..].to_vec());
+        let names: Vec<String> = unique_symbols(commands)
+            .iter()
+            .map(|command| match command {
+                Command::Define(define) => format!("define {}", define.name),
+                Command::Use(using) => format!("use {}", using.name),
+                Command::Group(group) => match &group.commands[0] {
+                    Command::Use(using) => format!("group > use {}", using.name),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "define dot",
+                "use dot",
+                "group > use dot",
+                "define dot 2",
+                "use dot 2",
+                "group > use dot 2",
+                // The first "dot" again: a new name too, since "dot" now means "dot 2".
+                "define dot 3",
+                "use dot 3",
+                "group > use dot 3",
+            ]
+        );
     }
 }
