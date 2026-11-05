@@ -1,0 +1,186 @@
+//! The skill for AI assistants (`skills/art-app/SKILL.md`) must only
+//! mention commands, options and files that exist, and its examples
+//! must work: an assistant follows it to the letter.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use art_engine::script::{PlayOptions, Player, Script};
+
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn skill() -> String {
+    std::fs::read_to_string(root().join("skills/art-app/SKILL.md")).unwrap()
+}
+
+/// The text between each pair of single backticks (not in code blocks).
+fn inline_code(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut in_block = false;
+    for line in text.lines() {
+        if line.starts_with("```") {
+            in_block = !in_block;
+            continue;
+        }
+        if in_block {
+            continue;
+        }
+        found.extend(line.split('`').skip(1).step_by(2).map(str::to_owned));
+    }
+    found
+}
+
+/// The code blocks marked `lang`.
+fn blocks<'a>(text: &'a str, lang: &str) -> Vec<&'a str> {
+    text.split(&format!("```{lang}\n"))
+        .skip(1)
+        .map(|block| block.split("```").next().unwrap_or(""))
+        .collect()
+}
+
+#[test]
+fn it_is_short_and_says_what_it_is_for() {
+    let skill = skill();
+    assert!(
+        skill.lines().count() < 150,
+        "{} lines",
+        skill.lines().count()
+    );
+    let front = skill
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split("\n---\n").next())
+        .expect("starts with frontmatter between --- lines");
+    assert!(front.lines().any(|l| l == "name: art-app"), "{front}");
+    let description = front
+        .lines()
+        .find_map(|l| l.strip_prefix("description: "))
+        .expect("a description");
+    assert!(description.len() > 80, "say when to use it: {description}");
+}
+
+#[test]
+fn its_examples_play_without_mistakes() {
+    let skill = skill();
+    let json = blocks(&skill, "json");
+    assert!(json.len() >= 4);
+    // The first one is a whole script; the others are commands that
+    // follow on from it (later ones use symbols defined earlier).
+    let script = Script::parse(json[0]).unwrap_or_else(|e| panic!("{e}\n{}", json[0]));
+    let mut text = json[0].trim().trim_end_matches('}').trim_end().to_owned();
+    text = text.trim_end_matches(']').trim_end().to_owned();
+    for block in &json[1..] {
+        let commands = block.trim().replace("}\n{", "},\n{");
+        text = format!("{text},\n{commands}");
+    }
+    // Inline examples, like a `snapshot` command, too.
+    for code in inline_code(&skill) {
+        if code.starts_with("{ \"cmd\"") {
+            text = format!("{text},\n{code}");
+        }
+    }
+    text.push_str("\n] }");
+    let all = Script::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    assert!(all.commands.len() > script.commands.len() + 5);
+    let options = PlayOptions {
+        dry_run: true,
+        ..PlayOptions::default()
+    };
+    let mut player = Player::new(all, options).unwrap();
+    let mut document = player.create_document().unwrap();
+    player
+        .run(&mut document, |_, _| {})
+        .unwrap_or_else(|e| panic!("{e}\n{text}"));
+}
+
+#[test]
+fn every_art_cli_command_and_option_it_mentions_exists() {
+    let skill = skill();
+    let help = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+        .arg("help")
+        .output()
+        .unwrap();
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    let mut options = 0;
+    // (Lines with `cargo` have cargo's own options.)
+    let words = skill
+        .lines()
+        .filter(|line| !line.contains("cargo "))
+        .flat_map(|line| line.split(|c: char| c.is_whitespace() || "`()".contains(c)));
+    for word in words {
+        let option_like = word
+            .strip_prefix("--")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_lowercase()));
+        if let (true, Some(option)) = (option_like, word.strip_prefix("--")) {
+            let option: String = option
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            assert!(
+                help.contains(&format!("--{option}")),
+                "art-cli has no --{option}"
+            );
+            options += 1;
+        }
+    }
+    assert!(options >= 10, "only {options} options mentioned");
+    // `art-cli <command>` in code (prose may say "the art-cli renderer").
+    let mut code = inline_code(&skill).join("\n");
+    code.push_str(&blocks(&skill, "bash").join("\n"));
+    for (i, _) in code.match_indices("art-cli ") {
+        let command: String = code[i + 8..]
+            .chars()
+            .take_while(char::is_ascii_lowercase)
+            .collect();
+        if !command.is_empty() {
+            assert!(
+                help.contains(&format!("art-cli {command} ")),
+                "art-cli has no command {command:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_script_command_and_field_it_mentions_exists() {
+    // Everything in the script format is in script-format.md, which is
+    // itself tested: in `backticks` or "quotes".
+    let format = std::fs::read_to_string(root().join("docs/script-format.md")).unwrap();
+    let mut known: HashSet<String> = inline_code(&format).into_iter().collect();
+    for quoted in format.split('"').skip(1).step_by(2) {
+        known.insert(quoted.to_owned());
+    }
+    // Words of art-cli itself.
+    known.extend(["check", "render", "info"].map(str::to_owned));
+    let mut checked = 0;
+    for code in inline_code(&skill()) {
+        let is_word = !code.is_empty()
+            && code
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if is_word {
+            assert!(known.contains(&code), "`{code}` isn't in the script format");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 30, "only {checked} words checked");
+}
+
+#[test]
+fn every_file_it_mentions_exists() {
+    let skill = skill();
+    let mut checked = 0;
+    for code in inline_code(&skill) {
+        let path = code.split_whitespace().next().unwrap_or("");
+        let is_repo_path = ["docs/", "examples/", "skills/", "crates/"]
+            .iter()
+            .any(|start| path.starts_with(start));
+        if is_repo_path {
+            assert!(root().join(path).exists(), "{path} doesn't exist");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 4, "only {checked} files checked");
+}

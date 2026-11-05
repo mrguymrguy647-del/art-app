@@ -613,3 +613,22 @@ that), so it can be rendered straight away. The test that reads the
 JSON examples in the docs now covers the quick start too, and whole
 scripts in the docs are also played, so a wrong colour name or a `use`
 of a symbol that isn't defined is caught, not only typos.
+
+## 46. A skill for AI assistants, tested against the real thing
+`skills/art-app/SKILL.md` is what an assistant like Claude loads when
+it's asked to paint with Art App: a name and a description that says
+when to use it, then the loop (check, preview, close-up, fix), a script
+skeleton, the rules that prevent most mistakes, reuse with symbols,
+groups and repeats, text sizes, sprites and sheets, and how to report
+back. Under 150 lines, so it's cheap to load; the details stay in the
+docs it points to.
+
+An assistant follows such a file to the letter, so a wrong option name
+in it costs a failed run every time. A test (`crates/cli/tests/skill.rs`)
+checks that:
+- its JSON examples, put together, play without a mistake;
+- every `--option` and `art-cli` command it names is in `art-cli help`;
+- every script word it puts in `backticks` is in the script format;
+- every repository file it names exists;
+- it has its name and description, and stays under 150 lines.
+Planting a made-up option, field or file in it makes the test fail.

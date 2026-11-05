@@ -86,6 +86,11 @@ AI (like Claude) painting with these scripts on a machine without a screen: how 
 the format on one page, a step-by-step workflow (block in, snapshot, check, refine), techniques that
 work, and common mistakes.
 
+**As a skill:** [skills/art-app/SKILL.md](skills/art-app/SKILL.md) is the same know-how as a Claude
+skill (a short instruction file an assistant loads when it's asked to paint). Copy the
+`skills/art-app` folder into a project's `.claude/skills/` folder, or into `~/.claude/skills/`, and
+Claude uses it whenever it's asked to paint with Art App.
+
 `art-cli` renders scripts without a window or graphics card (it works on a server too):
 
 ```
@@ -119,6 +124,7 @@ art-app/
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
 ├── examples/             example painting scripts (sunset, night hills, two ducks)
 ├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page
+├── skills/art-app/       the same know-how as a skill for Claude (SKILL.md)
 ├── docs/decisions.md     why we chose things, in plain words
 ├── docs/script-format.md painting scripts: every command, with examples
 ├── docs/AI_GUIDE.md      how an AI assistant paints with scripts and art-cli
