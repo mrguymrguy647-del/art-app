@@ -5,10 +5,11 @@
 
 A digital painting app for Windows, written in Rust.
 
-**Status:** Phase 1 is complete, plus a paint bucket, gradients, blend modes, and **painting
+**Status:** Phases 1 and 2 are complete, plus a paint bucket, gradients, blend modes, and **painting
 scripts**: pictures described as text, step by step (see [docs/script-format.md](docs/script-format.md)),
 with groups that move, resize, turn and mirror a drawing, symbols (define once, use many times,
-with colours swapped), repeats and text. Paint and erase with a round brush (pen pressure changes size
+with colours swapped and parameters), repeats, text, **animations** (keyframes, sprite sheets,
+GIF and MP4 export) and **pixel art**. Paint and erase with a round brush (pen pressure changes size
 and opacity) on layers, pick colours from a colour wheel or the canvas, undo and redo, zoom, pan
 and rotate the canvas, and save, open and export your pictures. The pen test is under
 **Pen test** in the top bar.

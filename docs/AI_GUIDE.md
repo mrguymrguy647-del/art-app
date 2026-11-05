@@ -11,8 +11,10 @@ stepping back from the easel.
 This guide is the practical part. Every command is described in
 [script-format.md](script-format.md). Complete examples: two paintings, [examples/sunset.json](../examples/sunset.json)
 and [examples/night-hills.json](../examples/night-hills.json); for games, a 4-frame walk cycle drawn
-with symbols, [examples/duck-walk.json](../examples/duck-walk.json), and a character sheet with a
-colour swap, a mirrored pose and labels, [examples/duck-sheet.json](../examples/duck-sheet.json).
+with symbols, [examples/duck-walk.json](../examples/duck-walk.json), a character sheet with a
+colour swap, a mirrored pose and labels, [examples/duck-sheet.json](../examples/duck-sheet.json),
+an animated duck with keyframes, [examples/duck-animated.json](../examples/duck-animated.json), and
+a 32-pixel one, [examples/duck-pixel.json](../examples/duck-pixel.json).
 
 ## 1. Set up (once)
 
@@ -323,7 +325,36 @@ People can draw in the Art App window and send you their work:
   see what they drew and where, and to match their brush sizes and colours.
 - They can watch your script being painted in the app with **File → Play strokes…**.
 
-## 10. Speed
+## 10. Animation and pixel art
+
+**Build the character first, then animate it.** A character is a `define` with `params` for what
+moves (`leg`, `bob`, `mouth`), its parts as symbols around `[0, 0]`, feet `"upright": true`. An
+animation is then one `use` with keyframes in `with`:
+
+```json
+{ "cmd": "use", "name": "duck", "translate": [64, 96],
+  "with": { "near": { "keys": [[0, -22], [4, 22], [8, -22]], "ease": "in-out" },
+            "far":  { "keys": [[0, -22], [4, 22], [8, -22]], "ease": "in-out", "shift": 4 },
+            "bob":  { "keys": [[0, 0], [2, -3], [4, 0], [6, -3], [8, 0]] } } }
+```
+
+- A loop's last key sits at `frames` (frame 8 of an 8-frame loop equals frame 0): then the loop
+  can't pop. `check` warns if it does, and about jumps between frames.
+- `shift` gives the other leg, arm or wing: the same keys, half a cycle later.
+- Swap parts with a parameter: `"with": {"eye": {"keys": [[0, "eye_open"], [9, "eye_shut"], [11, "eye_open"]]}}`
+  and `{"cmd": "use", "name": "$eye"}` inside the symbol. Names hold until the next key.
+- A squash and stretch is `scale` keyframes on a group with `origin` at the feet: `[1.2, 0.8]` on
+  landing, `[0.9, 1.1]` in the air, `"ease": "out"` into the ground.
+- A camera is the scene in a group with keyframed `translate` and `scale` around `origin`.
+- The loop: `check` (motion summary, warnings) → `render --frame-sheet` → fix → `export`.
+
+**Pixel art:** `"pixel": {"supersample": 8, "outline": "ink"}` on the canvas, a palette of 4 to 8
+colours (it's locked), shapes with decimals (`"radius": 5.5` is fine), and `pixels` rows for
+tiny things like an eye: `"rows": ["kw"]`. Keep every part at least 2 pixels wide, or the vote
+loses it. Check at `--zoom 8`; export with `--scale 8` for people and `--scale 1` for the game.
+The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as the painted one.
+
+## 11. Speed
 
 - A 1600×1000 render takes well under a second; `--preview` about a third of that. `check`
   paints at full size too (so its boxes are exact), in about the time of a render.

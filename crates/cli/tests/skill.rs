@@ -45,7 +45,7 @@ fn blocks<'a>(text: &'a str, lang: &str) -> Vec<&'a str> {
 fn it_is_short_and_says_what_it_is_for() {
     let skill = skill();
     assert!(
-        skill.lines().count() < 150,
+        skill.lines().count() < 200,
         "{} lines",
         skill.lines().count()
     );
@@ -71,12 +71,34 @@ fn its_examples_play_without_mistakes() {
     let script = Script::parse(json[0]).unwrap_or_else(|e| panic!("{e}\n{}", json[0]));
     let mut text = json[0].trim().trim_end_matches('}').trim_end().to_owned();
     text = text.trim_end_matches(']').trim_end().to_owned();
+    let options = PlayOptions {
+        dry_run: true,
+        ..PlayOptions::default()
+    };
     for block in &json[1..] {
+        if block.trim_start().starts_with("{\n") && block.contains("\"commands\"") {
+            // A whole script of its own (an animation): it plays on its own.
+            let own = Script::parse(block).unwrap_or_else(|e| panic!("{e}\n{block}"));
+            let mut player = Player::new(own, options.clone()).unwrap();
+            let mut document = player.create_document().unwrap();
+            player
+                .run(&mut document, |_, _| {})
+                .unwrap_or_else(|e| panic!("{e}\n{block}"));
+            continue;
+        }
         let commands = block.trim().replace("}\n{", "},\n{");
         text = format!("{text},\n{commands}");
     }
-    // Inline examples, like a `snapshot` command, too.
+    // Inline examples, like a `snapshot` command, too (a `canvas` one is
+    // checked on its own: a script has one canvas).
     for code in inline_code(&skill) {
+        if code.starts_with("{ \"cmd\": \"canvas\"") {
+            let own = format!(
+                r##"{{ "palette": {{ "ink": "#202020", "body": "#F2C230" }}, "commands": [ {code} ] }}"##
+            );
+            Script::parse(&own).unwrap_or_else(|e| panic!("{e}\n{code}"));
+            continue;
+        }
         if code.starts_with("{ \"cmd\"") {
             text = format!("{text},\n{code}");
         }
@@ -84,10 +106,6 @@ fn its_examples_play_without_mistakes() {
     text.push_str("\n] }");
     let all = Script::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     assert!(all.commands.len() > script.commands.len() + 5);
-    let options = PlayOptions {
-        dry_run: true,
-        ..PlayOptions::default()
-    };
     let mut player = Player::new(all, options).unwrap();
     let mut document = player.create_document().unwrap();
     player

@@ -1,6 +1,6 @@
 ---
 name: art-app
-description: Paint pictures, game sprites, sprite sheets and character sheets with Art App painting scripts (JSON) and the art-cli renderer, on a machine with no screen. Use when asked to draw, paint or illustrate something with Art App, to write, fix or extend a painting script, or to render, check or inspect one (art-cli render / check / info).
+description: Paint pictures, game sprites, sprite sheets, pixel art and short animations (GIF, MP4) with Art App painting scripts (JSON) and the art-cli renderer, on a machine with no screen. Use when asked to draw, paint, animate or illustrate something with Art App, to write, fix or extend a painting script, or to render, check, export or inspect one (art-cli render / check / export / info).
 ---
 
 # Painting with Art App
@@ -100,16 +100,58 @@ Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `o
 1.21 × `size` high; capitals run from 0.24 × `size` to 0.97 × `size` below the top. `\n` starts
 a new line; `rotate` turns it around `at`. The font is built in.
 
-## Sprites and sheets
+## Animation: frames, keyframes, parameters
 
-- See-through background: `art-cli render sheet.json --transparent --bg "#4080A0"`. The PNG
-  keeps its transparency; previews, crops and `sheet-view.png` show it on the colour.
-- Frames: a canvas of whole frames (four 128 × 128 frames: 512 × 128), the character as a symbol
-  drawn around `[0, 0]`, one `use` per frame (or a `repeat` with the frame width as `translate`).
-  Change only what moves between frames (legs, arms: symbols of their own, turned with `rotate`).
-- `--grid 128` shows the frame edges; `--crop 128,0,128,128 --zoom 4` shows one frame.
-- Worked examples: `examples/duck-walk.json` (walk cycle: a body and a leg symbol, one named
-  group per frame) and `examples/duck-sheet.json` (character sheet: swap, mirror, labels).
+The canvas is one frame. An `animations` section plays the script's commands and then its own,
+once per frame; time is the frame number from 0. Any number of a `group` or `use` can be
+keyframes; a symbol's `params` are set by a `use`'s `with` (keyframes allowed).
+
+```json
+{
+  "palette": { "ink": "#202020", "body": "#F2C230" },
+  "pivot": [64, 116],
+  "commands": [
+    { "cmd": "canvas", "width": 128, "height": 128 },
+    { "cmd": "define", "name": "leg", "params": { "angle": 0 }, "commands": [
+      { "cmd": "group", "rotate": "$angle", "commands": [
+        { "cmd": "line", "from": [0, 0], "to": [0, 16], "size": 4, "color": "ink", "taper": 0 },
+        { "cmd": "group", "translate": [0, 16], "upright": true, "commands": [
+          { "cmd": "rect", "x": -3, "y": 0, "width": 12, "height": 4, "fill": "ink" } ] } ] } ] },
+    { "cmd": "define", "name": "hero", "params": { "near": 0, "far": 0 }, "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-4, 0], "with": { "angle": "$far" } },
+      { "cmd": "ellipse", "center": [0, -24], "radius": [24, 20], "fill": "body", "outline": "ink", "outline_size": 2 },
+      { "cmd": "use", "name": "leg", "translate": [4, 0], "with": { "angle": "$near" } } ] }
+  ],
+  "animations": {
+    "walk": { "frames": 8, "fps": 12, "loop": true, "commands": [
+      { "cmd": "use", "name": "hero", "translate": [64, 100],
+        "with": { "near": { "keys": [[0, -25], [4, 25], [8, -25]], "ease": "in-out" },
+                  "far":  { "keys": [[0, -25], [4, 25], [8, -25]], "ease": "in-out", "shift": 4 } } } ] }
+  }
+}
+```
+
+- `keys` are `[frame, value]` (a third element names the easing into that key: `linear`, `in`,
+  `out`, `in-out`, `step`). Numbers, `[x, y]` and colours blend; names hold (`"name": "$mouth"`
+  swaps a mouth). A loop's last key is at `frames`, so it closes without a pop.
+- `shift` plays the same keys later: the far leg, the other arm, the tail.
+- `"upright": true` keeps a foot flat while the leg turns. `pivot` is where the character stands.
+- `each` on `repeat` gives every copy its own values (`"each": {"paint": ["red", "blue"]}`,
+  used as `"$paint"`); `art-cli measure "words" --size 32` and `"fit": 180` size text first.
+- Check without watching: `art-cli check walk.json` (motion summary, jump and loop-pop
+  warnings), `art-cli render walk.json --frame-sheet --transparent`, `--frame 3 --onion`.
+- Export: `art-cli export walk.json --sheet --gif --mp4 --scale 4` writes the sprite sheet with
+  its JSON (`docs/sprite-sheet-format.md`), a GIF and an MP4. `examples/duck-animated.json` is
+  a full idle and walk; `examples/duck-sheet.json` a character sheet (swap, mirror, labels).
+
+## Pixel art
+
+`{ "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 8, "outline": "ink" } }`:
+every command is painted 8 times bigger and shrunk to crisp whole pixels in the palette's colours
+(the palette is locked: no hex colours; 4 to 8 colours is right). Decimals are fine in positions.
+Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k": "ink", "w": "body" }, "rows": ["kw"] }`.
+Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for the game and
+`--scale 8` for people. `examples/duck-pixel.json` is a 32-pixel duck with idle and walk.
 
 ## Seeing and checking
 

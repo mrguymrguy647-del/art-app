@@ -98,19 +98,40 @@ Seeing more: `--crop x,y,w,h --zoom 3` (a close-up), `--grid 50` (coordinates on
 | `text` | Words: `at` is the top of the first line; `size` in pixels; `align`, `outline`. |
 | `group` | Move, turn, resize or mirror what's inside: `translate`, `rotate`, `scale`, `mirror`, `origin`. |
 | `define` / `use` | Draw something once, paint it many times, with `colors` swapped. |
-| `repeat` | Copies with a `step`; in its `text`, `{i}` is the copy number (1, 2, 3...). |
+| `repeat` | Copies with a `step`; `"each"` gives every copy its own values; `{i}` in text is the copy number. |
 | `snapshot` | A named stage, saved by `--snapshots` / `--sheet`. |
 
-Rows of things are one `repeat`:
+## 6. Animation and pixel art
+
+An `animations` section makes the script an animation: each one plays the script's commands and
+then its own, once per frame. Any number of a `group` or `use` can be keyframes:
 
 ```json
-{ "cmd": "repeat", "count": 4, "step": { "translate": [128, 0] }, "commands": [
-  { "cmd": "use", "name": "duck", "translate": [64, 70] },
-  { "cmd": "text", "text": "frame {i}", "at": [64, 104], "size": 14, "color": "ink", "align": "center" }
-] }
+{
+  "palette": { "yellow": "#F2C230", "ink": "#202020" },
+  "commands": [
+    { "cmd": "canvas", "width": 64, "height": 64 },
+    { "cmd": "define", "name": "ball", "commands": [
+      { "cmd": "ellipse", "center": [0, -10], "radius": 10, "fill": "yellow", "outline": "ink" } ] }
+  ],
+  "animations": {
+    "bounce": { "frames": 8, "fps": 12, "loop": true, "commands": [
+      { "cmd": "use", "name": "ball", "translate": { "keys": [[0, [32, 60]], [4, [32, 30], "out"], [8, [32, 60], "in"]] } } ] }
+  }
+}
 ```
 
-## 6. Where next
+```bash
+art-cli check bounce.json                         # every frame, plus a motion summary
+art-cli render bounce.json --frame-sheet --transparent   # all frames in one numbered picture
+art-cli export bounce.json --gif --sheet          # a GIF, and a sprite sheet with its JSON
+```
+
+Pixel art: `{ "cmd": "canvas", "width": 32, "height": 32, "pixel": true }` paints the same
+commands bigger and shrinks them to crisp whole pixels in the palette's colours. Examples:
+`examples/duck-animated.json` and `examples/duck-pixel.json`.
+
+## 7. Where next
 
 - [script-format.md](script-format.md): every command and option, with examples.
 - [AI_GUIDE.md](AI_GUIDE.md): a workflow, techniques for skies, light and texture, common mistakes.
