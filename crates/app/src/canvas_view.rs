@@ -609,8 +609,13 @@ impl CanvasView {
                 continue;
             }
 
-            // All visible layers combined into one tile.
-            let Some(tile) = document.composite_tile(coord, Background::Paper) else {
+            // All visible layers combined into one tile (but not a layer
+            // being transformed: a picture of it is drawn instead).
+            let left_out = self.transform.as_ref().map(LayerTransform::layer);
+            let shown =
+                |layer: &art_engine::layer::Layer| layer.visible() && Some(layer.id()) != left_out;
+            let Some(tile) = document.composite_tile_showing(coord, Background::Paper, shown)
+            else {
                 self.textures.remove(&coord);
                 continue;
             };

@@ -5,11 +5,12 @@
 //! as a `transform_layer` script command, and that command is what's
 //! painted, so "Export strokes" replays exactly what you saw.
 //!
-//! While transforming, the layer itself is hidden and a picture of it is
-//! drawn where it's going, on top of the canvas, inside a box with
-//! handles: drag inside to move, a corner to resize (Shift keeps the
-//! proportions), the round handle to turn. Enter (or Apply) paints it
-//! there, as one undo step; Escape (or Cancel) leaves the layer as it was.
+//! While transforming, the canvas leaves the layer out (its own show/hide
+//! setting isn't touched) and draws a picture of it where it's going, on
+//! top, inside a box with handles: drag inside to move, a corner to
+//! resize (the opposite corner stays put; Shift keeps the proportions),
+//! the round handle to turn. Enter (or Apply) paints it there, as one
+//! undo step; Escape (or Cancel) leaves the layer as it was.
 
 use std::time::{Duration, Instant};
 
@@ -159,8 +160,8 @@ impl Default for Placement {
 pub enum Handle {
     /// Inside the box: move.
     Move,
-    /// A corner: resize.
-    Corner,
+    /// A corner (0 top left, then clockwise): resize.
+    Corner(usize),
     /// The round handle above the box: turn.
     Turn,
 }
@@ -171,7 +172,13 @@ struct Drag {
     /// The placement when the drag started, and where it started.
     start: Placement,
     from: Point,
+    /// For a corner: the opposite corner, which stays put.
+    fixed: Point,
 }
+
+/// Which way each corner is from the box's middle, along its own sides:
+/// top left, top right, bottom right, bottom left.
+const CORNER_SIDES: [(f32, f32); 4] = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
 
 /// A transform in progress (Layer → Transform…).
 pub struct LayerTransform {
@@ -189,8 +196,8 @@ pub struct LayerTransform {
 }
 
 impl LayerTransform {
-    /// Starts transforming the selected layer: hides it, and keeps a
-    /// picture of it to move around instead. An `Err` explains why not.
+    /// Starts transforming the selected layer, with a picture of it to
+    /// move around. An `Err` explains why not.
     pub fn start(document: &mut Document) -> Result<Self, &'static str> {
         let layer = document.active_layer();
         if !layer.visible() {
@@ -204,7 +211,7 @@ impl LayerTransform {
             Image::from_document_showing(document, area, Background::Transparent, |l| l.id() == id)
                 .fit_within(PREVIEW_SIZE, PREVIEW_SIZE);
         if let Some(layer) = document.layer_mut(id) {
-            layer.set_visible(false); // the picture stands in for it meanwhile
+            layer.surface.mark_all_dirty(); // the canvas leaves it out now
         }
         Ok(Self {
             layer: id,
@@ -216,6 +223,11 @@ impl LayerTransform {
             pointer_down: false,
             last_ink: None,
         })
+    }
+
+    /// The layer being transformed (the canvas leaves it out meanwhile).
+    pub fn layer(&self) -> LayerId {
+        self.layer
     }
 
     /// The middle of what's on the layer: turning and resizing are around it.
@@ -294,18 +306,23 @@ impl LayerTransform {
             return Some(Handle::Turn);
         }
         let corners = self.corners();
-        if corners.iter().any(|&c| distance(at, c) <= reach) {
-            return Some(Handle::Corner);
+        if let Some(corner) = (0..4).find(|&i| distance(at, corners[i]) <= reach) {
+            return Some(Handle::Corner(corner));
         }
         inside(&corners, at).then_some(Handle::Move)
     }
 
     /// The pen or mouse went down at `at`: grab whatever handle is there.
     pub fn press(&mut self, at: Point, zoom: f32) {
+        let corners = self.corners();
         self.drag = self.handle_at(at, zoom).map(|handle| Drag {
             handle,
             start: self.placement,
             from: at,
+            fixed: match handle {
+                Handle::Corner(corner) => corners[(corner + 2) % 4],
+                _ => at,
+            },
         });
     }
 
@@ -320,22 +337,34 @@ impl LayerTransform {
             Handle::Move => {
                 self.placement.translate = start.translate + (at - drag.from);
             }
-            Handle::Corner => {
-                // The corner follows the pen, measured along the box's own
-                // sides (it may be turned).
-                let local = turned(at - centre, -start.rotate);
+            Handle::Corner(corner) => {
+                // The corner follows the pen and the opposite one stays put.
+                // Measured along the box's own sides (it may be turned),
+                // from the corner that stays.
+                let (side_x, side_y) = CORNER_SIDES[corner];
+                let local = turned(at - drag.fixed, -start.rotate);
                 let (hx, hy) = self.half();
                 let scale = if keep_proportions {
-                    let was = (hx * start.scale.0).hypot(hy * start.scale.1);
-                    let factor = local.x.hypot(local.y) / was;
+                    // Along the box's diagonal, as it was.
+                    let diagonal = (
+                        side_x * 2.0 * hx * start.scale.0,
+                        side_y * 2.0 * hy * start.scale.1,
+                    );
+                    let factor = (local.x * diagonal.0 + local.y * diagonal.1)
+                        / (diagonal.0 * diagonal.0 + diagonal.1 * diagonal.1);
                     (start.scale.0 * factor, start.scale.1 * factor)
                 } else {
-                    (local.x.abs() / hx, local.y.abs() / hy)
+                    (local.x * side_x / (2.0 * hx), local.y * side_y / (2.0 * hy))
                 };
-                self.placement.scale = (
+                let scale = (
                     scale.0.clamp(MIN_SCALE, MAX_SCALE),
                     scale.1.clamp(MIN_SCALE, MAX_SCALE),
                 );
+                // The middle is half the new size away from the fixed corner.
+                let half = Point::new(side_x * hx * scale.0, side_y * hy * scale.1);
+                let middle = drag.fixed + turned(half, start.rotate);
+                self.placement.scale = scale;
+                self.placement.translate = middle - self.origin();
             }
             Handle::Turn => {
                 let angle = |p: Point| (p.y - centre.y).atan2(p.x - centre.x).to_degrees();
@@ -352,7 +381,7 @@ impl LayerTransform {
     }
 
     /// Paints the layer where it's been put, as one undo step (recorded
-    /// for "Export strokes"), and shows the layer again.
+    /// for "Export strokes").
     pub fn apply(self, document: &mut Document, history: &mut History) {
         let command = self.command();
         self.show_layer_again(document);
@@ -366,7 +395,7 @@ impl LayerTransform {
 
     fn show_layer_again(&self, document: &mut Document) {
         if let Some(layer) = document.layer_mut(self.layer) {
-            layer.set_visible(true);
+            layer.surface.mark_all_dirty(); // the canvas shows it again
         }
     }
 
@@ -467,7 +496,8 @@ impl LayerTransform {
         if !navigating && let Some(handle) = handle {
             ctx.set_cursor_icon(match handle {
                 Handle::Move => CursorIcon::Move,
-                Handle::Corner => CursorIcon::ResizeNwSe,
+                Handle::Corner(0 | 2) => CursorIcon::ResizeNwSe,
+                Handle::Corner(_) => CursorIcon::ResizeNeSw,
                 Handle::Turn => CursorIcon::Grab,
             });
         }
@@ -646,7 +676,10 @@ mod tests {
     fn handles_move_resize_and_turn() {
         let mut document = picture();
         let mut tool = LayerTransform::start(&mut document).unwrap();
-        assert!(!document.active_layer().visible(), "hidden meanwhile");
+        assert!(
+            document.active_layer().visible(),
+            "its setting isn't touched"
+        );
         let zoom = 1.0;
         let at = |x, y| Point::new(x, y);
 
@@ -658,27 +691,34 @@ mod tests {
         assert_eq!(tool.placement.translate, Point::new(30.0, 20.0));
         assert_eq!(tool.corners()[0], Point::new(130.0, 70.0));
 
-        // A corner: resize around the middle (now at 150, 80).
+        // The bottom right corner: resize, the top left one stays put.
+        assert_eq!(
+            tool.handle_at(at(170.0, 90.0), zoom),
+            Some(Handle::Corner(2))
+        );
         tool.press(at(170.0, 90.0), zoom);
-        tool.drag_to(at(190.0, 100.0), false); // 40 x 20 from the middle: twice as big
+        tool.drag_to(at(210.0, 110.0), false); // twice as big
         tool.release();
         assert_eq!(tool.placement.scale, (2.0, 2.0));
-        tool.press(at(190.0, 100.0), zoom);
-        tool.drag_to(at(190.0, 120.0), false); // only taller
+        assert_eq!(tool.corners()[0], Point::new(130.0, 70.0));
+        assert_eq!(tool.corners()[2], Point::new(210.0, 110.0));
+        tool.press(at(210.0, 110.0), zoom);
+        tool.drag_to(at(210.0, 150.0), false); // only taller
         tool.release();
         assert_eq!(tool.placement.scale, (2.0, 4.0));
-        tool.press(at(190.0, 120.0), zoom);
-        tool.drag_to(at(170.0, 100.0), true); // Shift: proportions stay 2:4
+        tool.press(at(210.0, 150.0), zoom);
+        tool.drag_to(at(170.0, 110.0), true); // Shift: proportions stay 2:4
         tool.release();
-        let (sx, sy) = tool.placement.scale;
-        assert!((sy / sx - 2.0).abs() < 1e-4, "{sx} {sy}");
+        assert_eq!(tool.placement.scale, (1.0, 2.0));
+        assert_eq!(tool.corners()[0], Point::new(130.0, 70.0));
 
         // The round handle: turn. It's above the top edge; dragging it to
         // the right of the middle turns a quarter clockwise.
         let handle = tool.turn_handle(zoom);
         assert_eq!(tool.handle_at(handle, zoom), Some(Handle::Turn));
+        let middle = tool.centre(tool.placement);
         tool.press(handle, zoom);
-        tool.drag_to(at(250.0, 80.0), false);
+        tool.drag_to(middle + Point::new(100.0, 0.0), false);
         tool.release();
         assert!(
             (tool.placement.rotate - 90.0).abs() < 1e-3,
