@@ -6,6 +6,7 @@
 // In release builds on Windows, don't open a black console window next to the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod animation_view;
 mod brush_panel;
 mod canvas_view;
 mod color_panel;
@@ -22,8 +23,9 @@ use art_engine::document::Document;
 use art_engine::history::History;
 use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};
 
+use animation_view::{AnimationView, PanelAction};
 use canvas_view::CanvasView;
-use files::{DEFAULT_SIZE, Files};
+use files::{AnimationExport, DEFAULT_SIZE, Files};
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
 use playback::{BarAction, Playback};
@@ -83,6 +85,12 @@ struct ArtApp {
     screen: Screen,
     /// A painting script being played on the canvas ("Play strokes").
     playback: Option<Playback>,
+    /// A script's animations, shown frame by frame (the Animation panel).
+    animation: Option<AnimationView>,
+    /// Which animation and frame the canvas shows, so it's replaced only
+    /// when that changes.
+    frame_shown: Option<(String, usize)>,
+    onion_shown: bool,
 }
 
 impl ArtApp {
@@ -94,6 +102,7 @@ impl ArtApp {
         // of the standard size.
         let mut files = Files::default();
         let mut playback = None;
+        let mut animation = None;
         let argument = std::env::args_os().nth(1).map(std::path::PathBuf::from);
         let document = match argument {
             Some(path)
@@ -102,20 +111,41 @@ impl ArtApp {
                     .is_some_and(|e| e.eq_ignore_ascii_case("json")) =>
             {
                 match files.script_from_file(&path) {
-                    Some((mut player, script)) => match player.create_document() {
-                        Ok(document) => {
-                            let name = path
-                                .file_name()
-                                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                            let active = document.active_layer().name().to_owned();
-                            playback = Some(Playback::new(player, &script, name, true, &active));
-                            Some(document)
+                    Some((mut player, script)) => {
+                        let name = path
+                            .file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                        let folder = path.parent().map(std::path::Path::to_path_buf);
+                        if !script.animations.is_empty() {
+                            match AnimationView::new(&script, folder, name) {
+                                Ok(view) => {
+                                    let document = view.document().clone();
+                                    animation = Some(view);
+                                    Some(document)
+                                }
+                                Err(error) => {
+                                    files.show_message("Couldn't play the script", error);
+                                    None
+                                }
+                            }
+                        } else {
+                            match player.create_document() {
+                                Ok(document) => {
+                                    let active = document.active_layer().name().to_owned();
+                                    playback =
+                                        Some(Playback::new(player, &script, name, true, &active));
+                                    Some(document)
+                                }
+                                Err(error) => {
+                                    files.show_message(
+                                        "Couldn't play the script",
+                                        error.to_string(),
+                                    );
+                                    None
+                                }
+                            }
                         }
-                        Err(error) => {
-                            files.show_message("Couldn't play the script", error.to_string());
-                            None
-                        }
-                    },
+                    }
                     None => None,
                 }
             }
@@ -132,6 +162,72 @@ impl ArtApp {
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
             playback,
+            animation,
+            frame_shown: None,
+            onion_shown: false,
+        }
+    }
+
+    /// Shows the Animation panel, plays, and puts the frame shown on the
+    /// canvas (with the onion skin over it).
+    fn update_animation(&mut self, ui: &mut egui::Ui) {
+        let Some(view) = &mut self.animation else {
+            self.canvas.set_overlay(None);
+            return;
+        };
+        let seconds = ui.input(|i| i.stable_dt).min(0.25);
+        let mut changed = view.tick(seconds);
+        let action = egui::Panel::bottom("animation")
+            .show(ui, |ui| view.panel(ui))
+            .inner;
+        if view.is_playing() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f32(
+                    (1.0 / view.fps.max(1.0)).min(0.1),
+                ));
+        }
+        // The frame shown is the picture: when it changes, so does the
+        // canvas (and the onion skin with it).
+        let now = (view.current().name.clone(), view.frame());
+        changed |= self.frame_shown.as_ref() != Some(&now);
+        if changed {
+            self.document = view.document().clone();
+            self.frame_shown = Some(now);
+        }
+        if changed || self.onion_shown != view.onion {
+            self.canvas.set_overlay(view.onion_skin());
+            self.onion_shown = view.onion;
+        }
+        if action == PanelAction::Close {
+            self.animation = None;
+            self.frame_shown = None;
+            self.canvas.set_overlay(None);
+        }
+    }
+
+    /// Carries out File → Export animation's choice.
+    fn export_animation(&mut self, frame: &eframe::Frame, choice: AnimationExport) {
+        let Some(view) = &self.animation else {
+            return;
+        };
+        let result = match choice {
+            AnimationExport::Sheet => self.files.ask_sheet_path(frame).map(|path| {
+                view.export_sheet(&path)
+                    .map(|json| format!("{} and {}", path.display(), json.display()))
+            }),
+            AnimationExport::Frames => self.files.ask_frames_folder(frame).map(|folder| {
+                view.export_frames(&folder)
+                    .map(|count| format!("{count} frames in {}", folder.display()))
+            }),
+            AnimationExport::Gif => self
+                .files
+                .ask_gif_path(frame, &view.current().name)
+                .map(|path| view.export_gif(&path).map(|()| path.display().to_string())),
+        };
+        match result {
+            Some(Ok(what)) => self.files.show_message("Exported", what),
+            Some(Err(error)) => self.files.show_message("Couldn't export", error),
+            None => {} // cancelled
         }
     }
 
@@ -202,6 +298,7 @@ impl eframe::App for ArtApp {
         let playing = self.playback.is_some();
         // A transform (or other edit on the canvas) must be finished first.
         let busy = playing || self.canvas.is_editing();
+        let watching = self.animation.is_some();
 
         // While a small window like "Save changes?" is open, or a script
         // is playing, shortcuts would act on the picture, so they're ignored.
@@ -273,17 +370,24 @@ impl eframe::App for ArtApp {
         }
 
         // New, open, save, export; asks "Save changes?" when needed.
+        let animation_name = self.animation.as_ref().map(|v| v.current().name.clone());
         let new_document = self.files.update(
             ui.ctx(),
             frame,
             file_action,
             &self.document,
             &mut self.history,
+            animation_name.as_deref(),
         );
         if let Some(document) = new_document {
             self.document = document;
             self.history = History::default();
             self.canvas.reset();
+            self.animation = None;
+            self.frame_shown = None;
+        }
+        if let Some(choice) = self.files.take_animation_export() {
+            self.export_animation(frame, choice);
         }
 
         // "Play strokes": start playing a script that's ready.
@@ -294,25 +398,41 @@ impl eframe::App for ArtApp {
             } else {
                 player.start_on(&mut self.document)
             };
-            match started {
-                Ok(()) => {
-                    let active = self.document.active_layer().name().to_owned();
-                    self.playback = Some(Playback::new(
-                        player,
-                        &request.script,
-                        request.name,
-                        request.fresh,
-                        &active,
-                    ));
-                    self.screen = Screen::Canvas;
+            if !request.script.animations.is_empty() {
+                // Frames, not strokes: the Animation panel shows them.
+                match AnimationView::new(&request.script, request.folder, request.name) {
+                    Ok(view) => {
+                        self.document = view.document().clone();
+                        self.history = History::default();
+                        self.canvas.reset();
+                        self.animation = Some(view);
+                        self.frame_shown = None;
+                        self.screen = Screen::Canvas;
+                    }
+                    Err(error) => self.files.show_message("Couldn't play the script", error),
                 }
-                Err(error) => self
-                    .files
-                    .show_message("Couldn't play the script", error.to_string()),
+            } else {
+                match started {
+                    Ok(()) => {
+                        let active = self.document.active_layer().name().to_owned();
+                        self.playback = Some(Playback::new(
+                            player,
+                            &request.script,
+                            request.name,
+                            request.fresh,
+                            &active,
+                        ));
+                        self.screen = Screen::Canvas;
+                    }
+                    Err(error) => self
+                        .files
+                        .show_message("Couldn't play the script", error.to_string()),
+                }
             }
         }
         self.update_playback(ui);
-        self.canvas.locked = self.playback.is_some();
+        self.update_animation(ui);
+        self.canvas.locked = self.playback.is_some() || watching || self.animation.is_some();
 
         match self.screen {
             Screen::Canvas => self

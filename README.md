@@ -48,6 +48,8 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Open / save | **File → Open…** (`Ctrl+O`), **Save** (`Ctrl+S`), **Save as…** (`Ctrl+Shift+S`). Pictures are saved as `.artapp` files, with all layers | Tap **File** |
 | Export a PNG image | **File → Export PNG…** (`Ctrl+E`) on the paper colour, or **Export PNG, transparent…** (`Ctrl+Shift+E`) with no paper | Tap **File** |
 | Watch a painting script being painted | **File → Play strokes…** and pick a `.json` script. A bar at the bottom has **Pause**, **Skip to end**, **Stop** and a **Speed** slider. Everything it paints is **one** undo step. While it plays you can zoom and move around, but not paint | Tap **File** |
+| Watch an animation | **File → Play strokes…** (or **Open…**) and pick a script with animations: its frames appear in the **Animation** panel at the bottom. **Play / Pause**, `|<` and `>|` step a frame, the **fps** slider, **Onion skin** shows the frame before in red and the one after in blue, the list of frame numbers jumps to a frame, and the drop-down picks the animation. **Close** keeps the frame shown as the picture | Tap the buttons |
+| Export an animation | **File → Export animation…** while the panel is open: the **sprite sheet + JSON** (every animation; see `docs/sprite-sheet-format.md`), the **frames** as PNG files into a folder, or a **GIF** of the animation shown at the panel's fps | Tap **File** |
 | Save what you painted as a script | **File → Export strokes…**: everything painted since the picture was started or opened (not what you undid), as a `.json` painting script that can be played again or read and continued (for example by Claude) | Tap **File** |
 | Paint | Pen, or drag with the left mouse button | (fingers don't paint) |
 | Erase | `E` or the **Eraser** button, or turn the pen round to its eraser end. `B` goes back to the brush | |
@@ -186,6 +188,7 @@ art-app/
             ├── canvas_view.rs draws the canvas, zoom/pan/rotate
             ├── paint_tool.rs  the tools: pen/mouse input into strokes, fills, gradients
             ├── text_tool.rs   the Text tool: click, type, finish
+            ├── animation_view.rs the Animation panel: frames, play, onion skin, exports
             ├── transform_tool.rs the Layer menu: flip, and Transform with handles
             ├── brush_panel.rs the tool panel (tools, colour, settings)
             ├── color_panel.rs colour wheel, hex code, recent colours

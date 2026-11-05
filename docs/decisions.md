@@ -869,3 +869,25 @@ colours, from the same kind of symbols as the painted one.
 Left alone: overlapping outlines where two shapes meet (hide the seam
 with a shape, as before) and arithmetic in parameters (`shift`,
 `each` and `fit` cover what was wanted).
+
+## 57. The app watches and exports animations (phase 2, step 7)
+Opening a script with animations (Play strokes, Open, or double-click)
+paints every frame of every animation once and shows them in an
+Animation panel at the bottom: play and pause at a chosen fps, step a
+frame, jump to a frame, pick the animation, and an onion skin. The
+frame shown *is* the picture on the canvas (stepping replaces it), so
+zoom, layers and export PNG work as always, and Close simply keeps the
+frame. Painting is locked while the panel is open: drawing on frames by
+hand is phase 3's timeline.
+
+The onion skin is blended into each tile between the paper and the
+layers, so it sits behind the frame instead of tinting it (drawing it
+on top, which was tried first, made the whole duck muddy). File →
+Export animation offers the three exports the panel can make from the
+frames it holds: the sprite sheet with its JSON (through the engine's
+`sprites.rs`, the same file art-cli writes), the frames as PNGs, and a
+GIF at the panel's fps. A pixel script is played the same way (its
+frames come out shrunk); it can't be played onto an open picture.
+The panel's playing, stepping, onion skin and exports are tested
+without a screen; the panel was also tried in the real app on a
+virtual screen.

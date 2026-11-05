@@ -307,8 +307,27 @@ impl Document {
         Some(result)
     }
 
+    /// The layers `show` picks, laid over `base` (a tile already holding
+    /// the paper and whatever goes under the picture, like an onion skin).
+    pub fn composite_tile_over(
+        &self,
+        coord: TileCoord,
+        mut base: Tile,
+        show: impl Fn(&Layer) -> bool,
+    ) -> Tile {
+        for layer in &self.layers {
+            if show(layer)
+                && layer.opacity() > 0.0
+                && let Some(tile) = layer.surface.tile(coord)
+            {
+                combine(&mut base, tile, layer);
+            }
+        }
+        base
+    }
+
     /// A tile of plain paper, transparent outside the canvas.
-    fn paper_tile(&self, coord: TileCoord) -> Tile {
+    pub fn paper_tile(&self, coord: TileCoord) -> Tile {
         let mut tile = Tile::new();
         let (left, top) = coord.origin();
         let size = TILE_SIZE as i32;

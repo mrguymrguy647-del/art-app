@@ -53,6 +53,8 @@ pub enum FileAction {
     New,
     Open,
     Save,
+    /// The sprite sheet, frames or a GIF of the animation shown.
+    ExportAnimation,
     SaveAs,
     Export(Background),
     PlayStrokes,
@@ -65,8 +67,9 @@ pub struct PlayRequest {
     /// `fresh` (then it was played onto a new picture made from its canvas).
     pub player: Player,
     pub script: Script,
-    /// The script file's name.
+    /// The script file's name, and its folder (for `open` paths).
     pub name: String,
+    pub folder: Option<PathBuf>,
     pub fresh: bool,
 }
 
@@ -75,7 +78,19 @@ struct PendingPlay {
     player: Player,
     script: Script,
     name: String,
+    folder: Option<PathBuf>,
     size: (u32, u32),
+}
+
+/// What File → Export animation offers.
+#[derive(Clone, Copy, PartialEq)]
+pub enum AnimationExport {
+    /// The sprite sheet PNG and its JSON.
+    Sheet,
+    /// Every frame of the animation shown, as PNGs in a folder.
+    Frames,
+    /// The animation shown, as a GIF.
+    Gif,
 }
 
 /// Something that throws the current picture away, so it first asks
@@ -119,6 +134,10 @@ pub struct Files {
     /// A script waiting for "Play it on a new picture or this one?".
     pending_play: Option<PendingPlay>,
     asking_play_size: bool,
+    /// File → Export animation's choice window is open.
+    asking_animation_export: bool,
+    /// What it chose, for the app to carry out.
+    animation_export: Option<AnimationExport>,
     /// A script ready to start playing.
     ready_play: Option<PlayRequest>,
 }
@@ -146,6 +165,7 @@ impl Files {
             ),
             ("Play strokes…", None, FileAction::PlayStrokes),
             ("Export strokes…", None, FileAction::ExportStrokes),
+            ("Export animation…", None, FileAction::ExportAnimation),
         ];
         let button = Button::new("File").min_size(vec2(56.0, 26.0));
         egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
@@ -205,6 +225,88 @@ impl Files {
             || self.new_size.is_some()
             || self.error.is_some()
             || self.asking_play_size
+            || self.asking_animation_export
+    }
+
+    /// What File → Export animation chose, once (the app carries it out).
+    pub fn take_animation_export(&mut self) -> Option<AnimationExport> {
+        self.animation_export.take()
+    }
+
+    /// Asks where to save the sprite sheet PNG (its JSON goes next to it).
+    pub fn ask_sheet_path(&self, frame: &eframe::Frame) -> Option<PathBuf> {
+        let chosen = self
+            .file_window(frame)
+            .set_title("Export sprite sheet (the JSON is saved next to it)")
+            .set_file_name("sheet.png")
+            .add_filter("PNG image", &["png"])
+            .save_file()?;
+        Some(with_extension(chosen, "png"))
+    }
+
+    /// Asks for the folder the frames go into.
+    pub fn ask_frames_folder(&self, frame: &eframe::Frame) -> Option<PathBuf> {
+        self.file_window(frame)
+            .set_title("Export frames into a folder")
+            .pick_folder()
+    }
+
+    /// Asks where to save the GIF.
+    pub fn ask_gif_path(&self, frame: &eframe::Frame, name: &str) -> Option<PathBuf> {
+        let chosen = self
+            .file_window(frame)
+            .set_title("Export GIF")
+            .set_file_name(format!("{name}.gif"))
+            .add_filter("GIF animation", &["gif"])
+            .save_file()?;
+        Some(with_extension(chosen, "gif"))
+    }
+
+    /// The small window with the three kinds of export.
+    fn animation_export_dialog(&mut self, ctx: &egui::Context, animation_name: Option<&str>) {
+        let modal = Modal::new(Id::unique("export_animation")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Export animation");
+            ui.add_space(6.0);
+            match animation_name {
+                Some(name) => ui.label(format!("The animation shown is \"{name}\".")),
+                None => ui.label("Open a script with animations first (File → Play strokes…)."),
+            };
+            ui.add_space(12.0);
+            let mut chosen = None;
+            let mut cancel = false;
+            let size = vec2(0.0, 30.0);
+            ui.add_enabled_ui(animation_name.is_some(), |ui| {
+                if ui
+                    .add(Button::new("Sprite sheet + JSON (every animation)").min_size(size))
+                    .clicked()
+                {
+                    chosen = Some(AnimationExport::Sheet);
+                }
+                if ui
+                    .add(Button::new("Frames as PNG files (this animation)").min_size(size))
+                    .clicked()
+                {
+                    chosen = Some(AnimationExport::Frames);
+                }
+                if ui
+                    .add(Button::new("GIF (this animation)").min_size(size))
+                    .clicked()
+                {
+                    chosen = Some(AnimationExport::Gif);
+                }
+            });
+            ui.add_space(6.0);
+            if ui.add(Button::new("Cancel").min_size(size)).clicked() {
+                cancel = true;
+            }
+            (chosen, cancel)
+        });
+        let (chosen, cancel) = modal.inner;
+        if chosen.is_some() || cancel || modal.should_close() {
+            self.asking_animation_export = false;
+            self.animation_export = chosen;
+        }
     }
 
     /// The short "Saved ..." message, shown in the top bar for a few seconds.
@@ -234,6 +336,7 @@ impl Files {
         requested: Option<FileAction>,
         document: &Document,
         history: &mut History,
+        animation_name: Option<&str>,
     ) -> Option<Document> {
         let mut replacement = None;
 
@@ -258,9 +361,15 @@ impl Files {
                     self.save(frame, document, history, true);
                 }
                 FileAction::Export(background) => self.export(frame, document, background),
-                FileAction::PlayStrokes => self.play_strokes(frame, document),
+                FileAction::PlayStrokes => {
+                    replacement = self.play_strokes(ctx, frame, document, history);
+                }
                 FileAction::ExportStrokes => self.export_strokes(frame, document, history),
+                FileAction::ExportAnimation => self.asking_animation_export = true,
             }
+        }
+        if self.asking_animation_export {
+            self.animation_export_dialog(ctx, animation_name);
         }
         if self.asking_play_size {
             replacement = replacement.or(self.play_size_dialog(ctx, frame, document, history));
@@ -324,6 +433,7 @@ impl Files {
                     mut player,
                     script,
                     name,
+                    folder,
                     ..
                 } = self.pending_play.take()?;
                 match player.create_document() {
@@ -334,6 +444,7 @@ impl Files {
                             player,
                             script,
                             name,
+                            folder,
                             fresh: true,
                         });
                         Some(document)
@@ -353,26 +464,57 @@ impl Files {
     }
 
     /// Asks for a painting script and gets it ready to play. If it was
-    /// made for a different canvas size, asks what to do first.
-    fn play_strokes(&mut self, frame: &eframe::Frame, document: &Document) {
-        let Some(path) = self
+    /// made for a different canvas size, asks what to do first. A script
+    /// with animations always goes on a new picture (its frames are
+    /// shown in the Animation panel), so that may return the new document.
+    fn play_strokes(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        document: &Document,
+        history: &History,
+    ) -> Option<Document> {
+        let path = self
             .file_window(frame)
             .set_title("Play strokes")
             .add_filter("Painting script", &["json"])
-            .pick_file()
-        else {
-            return;
-        };
-        let Some((player, script)) = self.script_from_file(&path) else {
-            return;
-        };
-        let name = file_name(&path);
-        match player.canvas_size() {
+            .pick_file()?;
+        self.play_script_at(ctx, frame, &path, document, history)
+    }
+
+    /// Gets the script at `path` ready to play (see `play_strokes`).
+    fn play_script_at(
+        &mut self,
+        ctx: &egui::Context,
+        frame: &eframe::Frame,
+        path: &Path,
+        document: &Document,
+        history: &History,
+    ) -> Option<Document> {
+        let (player, script) = self.script_from_file(path)?;
+        let name = file_name(path);
+        let folder = path.parent().map(Path::to_path_buf);
+        let size = player.canvas_size();
+        let animated = !script.animations.is_empty();
+        if animated || player.is_pixel() {
+            // Frames (and a pixel canvas, painted big and shrunk) need a
+            // new picture: ask "Save changes?" if there's unsaved work.
+            self.pending_play = Some(PendingPlay {
+                player,
+                script,
+                name,
+                folder,
+                size: size.unwrap_or((document.width(), document.height())),
+            });
+            return self.discard(Discard::PlayNew, ctx, frame, history);
+        }
+        match size {
             Some(size) if size != (document.width(), document.height()) => {
                 self.pending_play = Some(PendingPlay {
                     player,
                     script,
                     name,
+                    folder,
                     size,
                 });
                 self.asking_play_size = true;
@@ -382,10 +524,12 @@ impl Files {
                     player,
                     script,
                     name,
+                    folder,
                     fresh: false,
                 })
             }
         }
+        None
     }
 
     /// Reads a painting script and gets a player ready for it (recording
@@ -462,6 +606,7 @@ impl Files {
                 player: pending.player,
                 script: pending.script,
                 name: pending.name,
+                folder: pending.folder,
                 fresh: false,
             });
             None
@@ -679,9 +824,40 @@ impl Files {
     fn open(&mut self, frame: &eframe::Frame) -> Option<Document> {
         let path = self
             .file_window(frame)
-            .set_title("Open picture")
+            .set_title("Open picture or painting script")
+            .add_filter(
+                "Art App picture or painting script",
+                &[FILE_EXTENSION, "json"],
+            )
             .add_filter("Art App picture", &[FILE_EXTENSION])
+            .add_filter("Painting script", &["json"])
             .pick_file()?;
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        {
+            // A script opens as a new picture that it's played on (an
+            // animated one shows its frames).
+            let (mut player, script) = self.script_from_file(&path)?;
+            return match player.create_document() {
+                Ok(document) => {
+                    self.path = None;
+                    self.opened_from = None;
+                    self.ready_play = Some(PlayRequest {
+                        player,
+                        script,
+                        name: file_name(&path),
+                        folder: path.parent().map(Path::to_path_buf),
+                        fresh: true,
+                    });
+                    Some(document)
+                }
+                Err(error) => {
+                    self.show_message("Couldn't play the script", error.to_string());
+                    None
+                }
+            };
+        }
         self.open_path(path)
     }
 

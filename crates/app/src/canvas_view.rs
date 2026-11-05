@@ -16,9 +16,12 @@ use std::time::{Duration, Instant};
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::document::{Background, Document};
 use art_engine::history::{History, TileCommand};
+use art_engine::image::Image;
+use art_engine::layer::{BlendMode, blend_over};
 use art_engine::script::record;
 use art_engine::surface::{PixelRect, TileCoord};
 use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
+use art_engine::tile::{Rgba8, Tile};
 use art_engine::view::{Point, View};
 use eframe::egui::epaint::Vertex;
 use eframe::egui::{
@@ -99,6 +102,9 @@ pub struct CanvasView {
     /// Where the tool panel was last frame: clicking there while typing
     /// text (to change its colour or size) doesn't finish the text.
     brush_panel_rect: Option<Rect>,
+    /// A see-through picture (an onion skin) shown on the paper, under the
+    /// picture's layers: blended into every tile's texture.
+    overlay: Option<Image>,
 }
 
 impl Default for CanvasView {
@@ -118,6 +124,7 @@ impl Default for CanvasView {
             transform: None,
             notice: None,
             brush_panel_rect: None,
+            overlay: None,
         }
     }
 }
@@ -227,6 +234,47 @@ impl CanvasView {
     /// Finishes the text being typed, if any (before undo, a menu, ...).
     pub fn finish_typing(&mut self, document: &mut Document, history: &mut History) {
         self.tools.finish_typing(document, history);
+    }
+
+    /// Draws `image` (the canvas's size, see-through) over the canvas
+    /// from now on; `None` takes it away. Setting it again replaces it.
+    pub fn set_overlay(&mut self, image: Option<Image>) {
+        self.overlay = image;
+        // It's blended into every tile's picture, so they're all redone.
+        for texture in self.textures.values_mut() {
+            texture.outdated = true;
+        }
+    }
+
+    /// A tile of paper with the overlay (onion skin) blended on it, for
+    /// the layers to go over.
+    fn paper_with_overlay(&self, document: &Document, coord: TileCoord) -> Tile {
+        let mut base = document.paper_tile(coord);
+        let Some(image) = &self.overlay else {
+            return base;
+        };
+        let (left, top) = coord.origin();
+        let size = TILE_SIZE as i32;
+        let area = document
+            .bounds()
+            .intersect(&PixelRect::new(left, top, left + size, top + size));
+        for y in area.top..area.bottom {
+            for x in area.left..area.right {
+                let [r, g, b, a] = image.pixel(x as u32, y as u32);
+                if a == 0 {
+                    continue;
+                }
+                let i = (y - top) as usize * TILE_SIZE + (x - left) as usize;
+                let pixels = base.pixels_mut();
+                pixels[i] = blend_over(
+                    pixels[i],
+                    Rgba8::from_straight(r, g, b, a),
+                    1.0,
+                    BlendMode::Normal,
+                );
+            }
+        }
+        base
     }
 
     /// Does what was chosen in the Layer menu.
@@ -635,8 +683,9 @@ impl CanvasView {
         let sharp = real_zoom >= SHARP_PIXELS_FROM_ZOOM;
 
         // Tiles whose combined picture changed: their textures are out of date.
+        let overlaid = self.overlay.is_some();
         for coord in document.take_dirty_tiles() {
-            if !document.has_visible_tile(coord) {
+            if !document.has_visible_tile(coord) && !overlaid {
                 self.textures.remove(&coord);
             } else if let Some(texture) = self.textures.get_mut(&coord) {
                 texture.outdated = true;
@@ -645,7 +694,7 @@ impl CanvasView {
 
         let mut preview_updates_left = PREVIEW_UPDATES_PER_FRAME;
         for &coord in visible {
-            if !document.has_visible_tile(coord) {
+            if !document.has_visible_tile(coord) && !overlaid {
                 continue;
             }
             let send = match self.textures.get(&coord) {
@@ -670,10 +719,17 @@ impl CanvasView {
             let left_out = self.transform.as_ref().map(LayerTransform::layer);
             let shown =
                 |layer: &art_engine::layer::Layer| layer.visible() && Some(layer.id()) != left_out;
-            let Some(tile) = document.composite_tile_showing(coord, Background::Paper, shown)
-            else {
-                self.textures.remove(&coord);
-                continue;
+            let tile = if overlaid {
+                let base = self.paper_with_overlay(document, coord);
+                document.composite_tile_over(coord, base, shown)
+            } else {
+                match document.composite_tile_showing(coord, Background::Paper, shown) {
+                    Some(tile) => tile,
+                    None => {
+                        self.textures.remove(&coord);
+                        continue;
+                    }
+                }
             };
             let size = TILE_SIZE >> level;
             let image =
