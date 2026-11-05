@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use super::{
-    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, FillCmd, GradientCmd, LayerCmd,
-    MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd, TransformLayerCmd,
+    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd, GradientCmd,
+    LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd, TransformLayerCmd,
 };
-use crate::brush::{BrushMode, BrushSettings};
+use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
 use crate::layer::LayerProps;
 use crate::stroke::StrokePoint;
@@ -33,6 +33,34 @@ pub fn hex([r, g, b, a]: Rgba) -> String {
         format!("#{r:02X}{g:02X}{b:02X}")
     } else {
         format!("#{r:02X}{g:02X}{b:02X}{a:02X}")
+    }
+}
+
+/// A brush's dynamics as written in a script: only what's on.
+pub fn dynamics(dynamics: &Dynamics) -> DynamicsCmd {
+    let on = |value: f32| (value != 0.0).then(|| round(value, 3));
+    DynamicsCmd {
+        follow: dynamics.follow.then_some(true),
+        size: on(dynamics.size),
+        angle: on(dynamics.angle),
+        opacity: on(dynamics.opacity),
+        scatter: on(dynamics.scatter),
+        hue: on(dynamics.hue),
+        lightness: on(dynamics.lightness),
+        saturation: on(dynamics.saturation),
+    }
+}
+
+/// The brush settings a fresh script starts from, for `tidy`: a plain
+/// round tip, so those aren't written unless they change.
+fn plain_brush() -> BrushCmd {
+    BrushCmd {
+        tip: Some(Value::String(
+            Tip::Round.name().unwrap_or("round").to_owned(),
+        )),
+        angle: Some(0.0),
+        dynamics: Some(DynamicsCmd::default()),
+        ..BrushCmd::default()
     }
 }
 
@@ -57,6 +85,11 @@ pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
         pressure_size: Some(settings.pressure_size),
         pressure_opacity: Some(settings.pressure_opacity),
         pressure_flow: Some(settings.pressure_flow),
+        tip: Some(Value::String(
+            settings.tip.name().unwrap_or("round").to_owned(),
+        )),
+        angle: Some(round(settings.angle, 2)),
+        dynamics: Some(dynamics(&settings.dynamics)),
     })
 }
 
@@ -352,6 +385,12 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                 for_each_color(inner, f);
             }
         }
+        Command::Stamp(c) => {
+            option(&mut c.color, f);
+            if let Some(colors) = &mut c.colors {
+                colors.iter_mut().for_each(&mut *f);
+            }
+        }
         Command::Use(c) => {
             // Both sides of a colour swap are colours (the new one may be
             // keyframes, with a colour in each key).
@@ -382,7 +421,7 @@ pub fn tidy(commands: Vec<Command>) -> Vec<Command> {
     let mut out = Vec::with_capacity(commands.len());
     let mut layer: Option<String> = None;
     // The brush settings known so far (None = not known yet).
-    let mut known = BrushCmd::default();
+    let mut known = plain_brush();
     for command in commands {
         match command {
             Command::Layer(select)
@@ -411,7 +450,7 @@ pub fn tidy(commands: Vec<Command>) -> Vec<Command> {
             }
             Command::Canvas(canvas) => {
                 layer = None;
-                known = BrushCmd::default();
+                known = plain_brush();
                 out.push(Command::Canvas(canvas));
             }
             other => out.push(other),
@@ -450,6 +489,9 @@ fn changed_brush_settings(known: &mut BrushCmd, new: BrushCmd) -> BrushCmd {
         pressure_size: keep(&mut known.pressure_size, new.pressure_size),
         pressure_opacity: keep(&mut known.pressure_opacity, new.pressure_opacity),
         pressure_flow: keep(&mut known.pressure_flow, new.pressure_flow),
+        tip: keep(&mut known.tip, new.tip),
+        angle: keep(&mut known.angle, new.angle),
+        dynamics: keep(&mut known.dynamics, new.dynamics),
     }
 }
 
@@ -491,6 +533,11 @@ fn rename_uses(command: &mut Command, called: &HashMap<String, String>) {
         Command::Use(using) => {
             if let Some(name) = called.get(&using.name) {
                 using.name = name.clone();
+            }
+        }
+        Command::Stamp(stamp) => {
+            if let Some(name) = stamp.symbol.as_ref().and_then(|s| called.get(s)) {
+                stamp.symbol = Some(name.clone());
             }
         }
         Command::Group(group) => group
@@ -925,5 +972,52 @@ mod tests {
             r#"{"cmd":"layer","name":"Shade","clip":true,"lock":true}"#
         );
         assert!(layer_changes(&after, &after).is_empty());
+    }
+
+    #[test]
+    fn tips_and_dynamics_are_recorded_only_when_they_change() {
+        let plain = BrushSettings::default();
+        let chalk = BrushSettings {
+            tip: Tip::Chalk,
+            angle: 15.0,
+            dynamics: Dynamics {
+                follow: true,
+                size: 0.25,
+                ..Dynamics::default()
+            },
+            ..plain
+        };
+        let commands = tidy(vec![
+            brush(&plain, true),
+            brush(&chalk, true),
+            brush(&plain, true),
+        ]);
+        let json: Vec<String> = commands
+            .iter()
+            .map(|c| serde_json::to_string(c).unwrap())
+            .collect();
+        assert_eq!(json.len(), 3);
+        assert!(
+            !json[0].contains("tip"),
+            "a plain brush writes no tip: {}",
+            json[0]
+        );
+        assert!(
+            json[1]
+                .contains(r#""tip":"chalk","angle":15.0,"dynamics":{"follow":true,"size":0.25}"#),
+            "{}",
+            json[1]
+        );
+        assert!(
+            json[2].contains(r#""tip":"round","angle":0.0,"dynamics":{}"#),
+            "back to plain: {}",
+            json[2]
+        );
+        let script = format!(
+            "{{ \"commands\": [ {{ \"cmd\": \"canvas\", \"width\": 10, \"height\": 10 }}, {} ] }}",
+            json[1]
+        );
+        let parsed = crate::script::Script::parse(&script).unwrap();
+        assert_eq!(parsed.commands[1], commands[1]);
     }
 }

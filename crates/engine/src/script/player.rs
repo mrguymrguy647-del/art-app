@@ -30,11 +30,11 @@ use serde_json::Value;
 use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
-    BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
-    MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script,
-    ScriptError, StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
+    BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd,
+    LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd,
+    Script, ScriptError, StampCmd, StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
 };
-use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
+use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
 use crate::document::{Document, MAX_CANVAS_SIDE};
 use crate::file;
 use crate::fill::{
@@ -194,6 +194,8 @@ enum Job {
         layer: LayerId,
         brush: BrushSettings,
         points: Vec<StrokePoint>,
+        /// Where the brush's dynamics get their randomness.
+        seed: u64,
     },
     /// Fills a shape (or the whole layer, if `shape` is `None`). A shape
     /// is one or more outlines filled together (a letter "o" has two).
@@ -299,6 +301,8 @@ struct Copies {
     seed: u64,
     /// Values that differ per copy (`each`), as `$name` parameters.
     each: BTreeMap<String, Vec<Value>>,
+    /// For a `stamp`: where each copy goes, instead of a step.
+    placements: Vec<Transform>,
 }
 
 /// The parameters a `repeat`'s copy number `copy` gets from `each`.
@@ -405,6 +409,10 @@ pub struct Player {
     /// Scratch pictures a symbol's silhouette is painted on, to become a
     /// mask: one per capture frame being played, innermost last.
     capture: Vec<Document>,
+    /// Brush tips loaded from files, by the number in `Tip::File`, and
+    /// which file each came from (so a file is loaded once).
+    tips: Vec<Arc<TipShape>>,
+    tip_files: HashMap<String, u32>,
 }
 
 impl Player {
@@ -514,6 +522,8 @@ impl Player {
             pending_animation: None,
             options,
             capture: Vec::new(),
+            tips: Vec::new(),
+            tip_files: HashMap::new(),
         })
     }
 
@@ -980,7 +990,10 @@ impl Player {
         let frame = self.frames.last_mut().expect("checked above");
         let copies = frame.copies.as_mut().expect("checked above");
         copies.current += 1;
-        copies.so_far = copies.so_far.then(copies.step);
+        copies.so_far = match copies.placements.get(copies.current as usize) {
+            Some(place) => *place,
+            None => copies.so_far.then(copies.step),
+        };
         frame.next = 0;
         frame.place = copies.so_far.then(copies.base_place);
         frame.detail = copies.base_detail * copies.so_far.size_factor();
@@ -990,7 +1003,12 @@ impl Player {
             frame.params = Some(Arc::new(each_params(&copies.each, copies.current)));
         }
         if let Some((_, label)) = &mut frame.label {
-            *label = format!("repeat, copy {}", copies.current + 1);
+            let word = if label.starts_with("stamp") {
+                "stamp"
+            } else {
+                "repeat"
+            };
+            *label = format!("{word}, copy {}", copies.current + 1);
         }
     }
 
@@ -1284,10 +1302,16 @@ impl Player {
                 layer,
                 brush,
                 points,
+                seed,
             } => {
-                let mut stroke = Stroke::new(brush, document.bounds());
+                let mut stroke = Stroke::new(brush, document.bounds()).seeded(seed);
                 if let Some(clip) = clip {
                     stroke = stroke.clipped(clip);
+                }
+                if let Tip::File(id) = brush.tip
+                    && let Some(shape) = self.tips.get(id as usize)
+                {
+                    stroke = stroke.with_tip(Arc::clone(shape));
                 }
                 self.running = Some(RunningStroke {
                     layer: target_layer(layer),
@@ -1356,6 +1380,27 @@ impl Player {
                 AREA_COST
             }
         }
+    }
+
+    /// Queues a stroke. `seed` is the command's own seed, if it has one:
+    /// each stroke of a command gets its own random numbers from it.
+    fn push_stroke(
+        &mut self,
+        layer: LayerId,
+        brush: BrushSettings,
+        points: Vec<StrokePoint>,
+        seed: Option<u64>,
+    ) {
+        let seed = Random::mix(
+            Random::mix(self.seed, seed.unwrap_or(self.current_seed)),
+            self.jobs.len() as u64 + 1,
+        );
+        self.jobs.push_back(Job::Stroke {
+            layer,
+            brush,
+            points,
+            seed,
+        });
     }
 
     fn mark_painted(&mut self, document: &Document, layer: LayerId) {
@@ -1510,6 +1555,7 @@ impl Player {
                     .push_back(Event::Snapshot(snapshot.name.clone()));
                 Ok(())
             }
+            Command::Stamp(stamp) => self.stamp(document, stamp),
             Command::Group(group) => self.group(document, group),
             Command::Define(define) => {
                 // Duplicate names and `define` inside other commands are
@@ -1726,6 +1772,259 @@ impl Player {
             base_brush_scale: frame.brush_scale,
             seed: self.current_seed,
             each,
+            placements: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// `stamp`: copies of a symbol, or dabs of a tip, along a smooth path.
+    fn stamp(&mut self, document: &Document, command: &StampCmd) -> Result<(), String> {
+        // The path, in drawing units.
+        let points: Vec<[f32; 2]> = serde_json::from_value(self.value(&command.points)?)
+            .map_err(|_| "`points` is a list of [x, y] points, like [[20, 300], [300, 290]]")?;
+        if points.is_empty() {
+            return Err("`points` needs at least one point".into());
+        }
+        let given: Vec<StrokePoint> = points
+            .iter()
+            .map(|&p| pt(p).map(|(x, y)| StrokePoint::new(x, y, 1.0)))
+            .collect::<Result<_, _>>()?;
+        let path = if given.len() == 1 {
+            given.clone()
+        } else {
+            geometry::smooth_path(&given, false, self.detail())
+        };
+        let spacing = match self.value(&command.spacing)? {
+            Value::Number(n) => n.as_f64().unwrap_or(0.0) as f32,
+            other => return Err(format!("`spacing` must be a number, not {other}")),
+        };
+        if spacing <= 0.0 || !spacing.is_finite() {
+            return Err("`spacing` must be more than 0".into());
+        }
+        let follow = command.follow.unwrap_or(true);
+        let scatter = not_negative("scatter", command.scatter.unwrap_or(0.0))?;
+        let size_value = command.size.as_ref().map(|v| self.value(v)).transpose()?;
+        let angle_value = command.angle.as_ref().map(|v| self.value(v)).transpose()?;
+        let angle = range(angle_value.as_ref(), (0.0, 0.0), "angle")?;
+        let colors: Vec<Rgba> = match (&command.colors, &command.color) {
+            (Some(_), Some(_)) => return Err("give `color` or `colors`, not both".into()),
+            (Some(list), None) if list.is_empty() => return Err("`colors` is empty".into()),
+            (Some(list), None) => list
+                .iter()
+                .map(|c| self.color(c))
+                .collect::<Result<_, _>>()?,
+            (None, Some(color)) => vec![self.color(color)?],
+            (None, None) => Vec::new(),
+        };
+
+        // Where each copy goes: every `spacing` along the path, with the
+        // direction of the path there.
+        let total: f32 = path.windows(2).map(|w| w[0].distance_to(&w[1])).sum();
+        let count = (total / spacing).floor() as u32 + 1;
+        if count > MAX_REPEAT {
+            return Err(format!(
+                "that would be {count} copies; at most {MAX_REPEAT} (make `spacing` bigger)"
+            ));
+        }
+        let mut random = self.random(command.seed);
+        let mut spots: Vec<(f32, f32, f32)> = Vec::with_capacity(count as usize);
+        let (mut segment, mut along) = (0, 0.0);
+        for i in 0..count {
+            let wanted = i as f32 * spacing;
+            while segment + 2 < path.len() {
+                let length = path[segment].distance_to(&path[segment + 1]);
+                if along + length >= wanted {
+                    break;
+                }
+                along += length;
+                segment += 1;
+            }
+            let (x, y, heading) = if path.len() == 1 {
+                (path[0].x, path[0].y, 0.0)
+            } else {
+                let (a, b) = (path[segment], path[segment + 1]);
+                let length = a.distance_to(&b).max(1e-6);
+                let t = ((wanted - along) / length).clamp(0.0, 1.0);
+                let heading = (b.y - a.y).atan2(b.x - a.x).to_degrees();
+                (a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, heading)
+            };
+            let turn = if follow { heading } else { 0.0 }
+                + random.range(angle.0, angle.1.max(angle.0 + f32::EPSILON));
+            let (mut x, mut y) = (x, y);
+            if scatter > 0.0 {
+                let distance = random.range(0.0, scatter);
+                let (sin, cos) = random.range(0.0, std::f32::consts::TAU).sin_cos();
+                x += cos * distance;
+                y += sin * distance;
+            }
+            spots.push((x, y, turn));
+        }
+
+        match (&command.symbol, &command.tip) {
+            (Some(_), Some(_)) => Err("give `symbol` or `tip`, not both".into()),
+            (Some(symbol), None) => {
+                self.stamp_symbol(document, command, symbol, spots, size_value, colors, random)
+            }
+            (None, tip) => {
+                let tip = match tip {
+                    Some(tip) => Some(self.tip(tip)?),
+                    None => None,
+                };
+                self.stamp_tip(document, command, tip, spots, size_value, colors, random)
+            }
+        }
+    }
+
+    /// `stamp` with a tip: one dab per spot, with the brush's settings.
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_tip(
+        &mut self,
+        document: &Document,
+        command: &StampCmd,
+        tip: Option<Tip>,
+        spots: Vec<(f32, f32, f32)>,
+        size: Option<Value>,
+        colors: Vec<Rgba>,
+        mut random: Random,
+    ) -> Result<(), String> {
+        let mut base = self.stroke_brush(
+            BrushChanges {
+                opacity: command.opacity,
+                ..BrushChanges::default()
+            },
+            BrushMode::Paint,
+        )?;
+        // The stamp varies the dabs itself.
+        base.dynamics = Dynamics::default();
+        base.pressure_size = true;
+        if let Some(tip) = tip {
+            base.tip = tip;
+        }
+        let size = range(size.as_ref(), (self.brush.size, self.brush.size), "size")?;
+        brush_size(size.0)?;
+        brush_size(size.1)?;
+        let brush_scale = self.frame().brush_scale;
+        let layer = document.active_id();
+        for (x, y, turn) in spots {
+            let (dab_size, fade) = self.sized(
+                random.range(size.0, size.1.max(size.0 + f32::EPSILON)),
+                brush_scale,
+            );
+            let mut brush = BrushSettings {
+                size: dab_size,
+                angle: base.angle + turn,
+                ..base
+            };
+            brush.opacity *= fade;
+            if !colors.is_empty() {
+                let [r, g, b, a] = colors[random.index(colors.len())];
+                brush.color = [r, g, b];
+                brush.opacity *= f32::from(a) / 255.0;
+            }
+            let mut points = vec![StrokePoint::new(x, y, 1.0)];
+            self.place_all(&mut points);
+            self.push_stroke(layer, brush, points, command.seed);
+        }
+        Ok(())
+    }
+
+    /// `stamp` with a symbol: a frame like a `repeat`'s, one copy per
+    /// spot, each placed (scaled, turned, moved) in its own way, the
+    /// colour picked for it as its `color` parameter.
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_symbol(
+        &mut self,
+        document: &Document,
+        command: &StampCmd,
+        symbol: &str,
+        spots: Vec<(f32, f32, f32)>,
+        size: Option<Value>,
+        colors: Vec<Rgba>,
+        mut random: Random,
+    ) -> Result<(), String> {
+        let Some(defined) = self.symbols.get(symbol) else {
+            return Err(format!("there's no symbol called \"{symbol}\""));
+        };
+        let mut with = command.with.clone().unwrap_or_default();
+        let mut each = BTreeMap::new();
+        if !colors.is_empty() {
+            if !defined.params.contains_key("color") {
+                return Err(format!(
+                    "`colors` go to the symbol's `color` parameter, but \"{symbol}\" has none: \
+                     give it \"params\": {{\"color\": \"...\"}} in its define"
+                ));
+            }
+            let picked: Vec<Value> = spots
+                .iter()
+                .map(|_| Value::String(super::record::hex(colors[random.index(colors.len())])))
+                .collect();
+            each.insert("color".to_owned(), picked);
+            with.insert("color".to_owned(), Value::String("$color".to_owned()));
+        }
+        let size = range(size.as_ref(), (1.0, 1.0), "size")?;
+        if size.0 <= 0.0 || !size.0.is_finite() {
+            return Err("`size` must be more than 0".into());
+        }
+        let placements: Vec<Transform> = spots
+            .iter()
+            .map(|&(x, y, turn)| {
+                let scale = random.range(size.0, size.1.max(size.0 + f32::EPSILON));
+                Transform::scale(scale, scale)
+                    .then(Transform::rotate(turn))
+                    .then(Transform::translate(x, y))
+            })
+            .collect();
+        let using = Command::Use(UseCmd {
+            name: symbol.to_owned(),
+            with: (!with.is_empty()).then_some(with),
+            ..UseCmd::default()
+        });
+        let new = NewFrame {
+            commands: Arc::new(vec![using]),
+            label: "stamp".to_owned(),
+            placement: Placement {
+                transform: Transform::IDENTITY,
+                opacity: 1.0,
+                scale_brush: true,
+                origin: (0.0, 0.0),
+            },
+            seed_base: Random::mix(self.current_seed, 1),
+            symbol: None,
+            swaps: Vec::new(),
+            part: false,
+            params: None,
+            upright: false,
+            mask: None,
+            capture: None,
+        };
+        self.push_frame(document, new)?;
+        let outer = self.frames.len() - 2;
+        let (base_place, base_detail, base_brush_scale) = {
+            let parent = &self.frames[outer];
+            (parent.place, parent.detail, parent.brush_scale)
+        };
+        let frame = self.frames.last_mut().expect("just pushed");
+        if let Some((_, label)) = &mut frame.label {
+            *label = "stamp, copy 1".to_owned();
+        }
+        if !each.is_empty() {
+            frame.params = Some(Arc::new(each_params(&each, 0)));
+        }
+        let first = placements[0];
+        frame.place = first.then(base_place);
+        frame.detail = base_detail * first.size_factor();
+        frame.brush_scale = base_brush_scale * first.size_factor();
+        frame.copies = Some(Copies {
+            count: placements.len() as u32,
+            current: 0,
+            step: Transform::IDENTITY,
+            so_far: first,
+            base_place,
+            base_detail,
+            base_brush_scale,
+            seed: self.current_seed,
+            each,
+            placements,
         });
         Ok(())
     }
@@ -1916,8 +2215,51 @@ impl Player {
         if let Some(on) = command.pressure_flow {
             brush.pressure_flow = on;
         }
+        if let Some(tip) = &command.tip {
+            brush.tip = self.tip(tip)?;
+        }
+        if let Some(angle) = command.angle {
+            brush.angle = finite("angle", angle)?;
+        }
+        if let Some(dynamics) = &command.dynamics {
+            brush.dynamics = read_dynamics(dynamics)?;
+        }
         self.brush = brush;
         Ok(())
+    }
+
+    /// A tip as written: a built-in name, or `{"file": "..."}` (loaded
+    /// once, relative to the script).
+    fn tip(&mut self, written: &Value) -> Result<Tip, String> {
+        let names: Vec<&str> = Tip::BUILT_IN.iter().filter_map(|t| t.name()).collect();
+        let help = format!(
+            "`tip` is one of {}, or {{\"file\": \"tips/splat.png\"}} (a greyscale picture)",
+            names.join(", ")
+        );
+        match written {
+            Value::String(name) => {
+                Tip::from_name(name).ok_or_else(|| format!("unknown tip \"{name}\"; {help}"))
+            }
+            Value::Object(object) if object.len() == 1 => {
+                let Some(Value::String(file)) = object.get("file") else {
+                    return Err(help);
+                };
+                if let Some(&id) = self.tip_files.get(file) {
+                    return Ok(Tip::File(id));
+                }
+                let path = match &self.options.folder {
+                    Some(folder) => folder.join(file),
+                    None => PathBuf::from(file),
+                };
+                let shape = load_tip(&path)
+                    .map_err(|problem| format!("can't load the tip \"{file}\": {problem}"))?;
+                let id = self.tips.len() as u32;
+                self.tips.push(Arc::new(shape));
+                self.tip_files.insert(file.clone(), id);
+                Ok(Tip::File(id))
+            }
+            _ => Err(help),
+        }
     }
 
     /// The brush for one stroke: the current brush with this command's
@@ -1951,6 +2293,7 @@ impl Player {
         brush.opacity *= f32::from(alpha) / 255.0;
         brush.opacity *= frame.opacity * fade;
         brush.size = size;
+        brush.dynamics.scatter *= frame.brush_scale;
         brush.mode = mode;
         Ok(brush)
     }
@@ -1999,11 +2342,7 @@ impl Player {
         let mut points = self.points(&command.points)?;
         self.jitter(&mut points, command.jitter, command.seed, false)?;
         self.place_all(&mut points);
-        self.jobs.push_back(Job::Stroke {
-            layer: document.active_id(),
-            brush,
-            points,
-        });
+        self.push_stroke(document.active_id(), brush, points, command.seed);
         Ok(())
     }
 
@@ -2027,11 +2366,7 @@ impl Player {
         }
         self.jitter(&mut points, command.jitter, command.seed, false)?;
         self.place_all(&mut points);
-        self.jobs.push_back(Job::Stroke {
-            layer: document.active_id(),
-            brush,
-            points,
-        });
+        self.push_stroke(document.active_id(), brush, points, command.seed);
         Ok(())
     }
 
@@ -2077,11 +2412,7 @@ impl Player {
             });
         }
         if command.line.unwrap_or(true) {
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, command.seed);
         } else if command.fill.is_none() {
             return Err("with \"line\": false there's nothing to draw: add a `fill`".into());
         }
@@ -2218,11 +2549,7 @@ impl Player {
             if let Some(&first) = points.first() {
                 points.push(first);
             }
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, style.seed);
         }
         Ok(())
     }
@@ -2311,11 +2638,7 @@ impl Player {
                 // would round off the long straight edges.
                 let mut points = to_stroke_points(&geometry::densify(ring, true, 1.0));
                 points.push(points[0]); // back to the start, to close it
-                self.jobs.push_back(Job::Stroke {
-                    layer,
-                    brush,
-                    points,
-                });
+                self.push_stroke(layer, brush, points, None);
             }
         } else if command.outline_size.is_some() {
             return Err("`outline_size` needs an `outline` colour too".into());
@@ -2541,11 +2864,7 @@ impl Player {
                 );
             }
             self.place_all(&mut points);
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, command.seed);
         }
         Ok(())
     }
@@ -2621,7 +2940,7 @@ impl Player {
                 random.range(size.0, size.1.max(size.0 + f32::EPSILON)),
                 brush_scale,
             );
-            let brush = BrushSettings {
+            let mut brush = BrushSettings {
                 color: [r, g, b],
                 size: dab_size,
                 opacity: random
@@ -2636,6 +2955,11 @@ impl Player {
                 pressure_size: true,
                 ..self.brush
             };
+            brush.dynamics.scatter *= brush_scale;
+            if !strokes && brush.tip != Tip::Round {
+                // A shaped dab (a leaf, say) lands turned within `angle`.
+                brush.angle += random.range(angle.0, angle.1.max(angle.0 + f32::EPSILON));
+            }
             let mut points = if strokes {
                 let half = random.range(length.0, length.1.max(length.0 + f32::EPSILON)) / 2.0;
                 let (sin, cos) = random
@@ -2653,11 +2977,7 @@ impl Player {
                 vec![StrokePoint::new(x, y, 1.0)]
             };
             self.place_all(&mut points);
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, command.seed);
         }
         Ok(())
     }
@@ -3218,6 +3538,86 @@ fn find_layer(document: &Document, name: &str) -> Result<LayerId, String> {
 fn layer_index(document: &Document, name: &str) -> Result<usize, String> {
     let id = find_layer(document, name)?;
     Ok(document.layer_index(id).unwrap_or(0))
+}
+
+/// A brush's dynamics as written, checked.
+fn read_dynamics(written: &DynamicsCmd) -> Result<Dynamics, String> {
+    let fraction = |what: &str, value: Option<f32>| -> Result<f32, String> {
+        match value {
+            None => Ok(0.0),
+            Some(v) if (0.0..=1.0).contains(&v) => Ok(v),
+            Some(v) => Err(format!(
+                "`dynamics`: `{what}` is a fraction from 0 to 1, not {v}"
+            )),
+        }
+    };
+    let degrees = |what: &str, value: Option<f32>| -> Result<f32, String> {
+        match value {
+            None => Ok(0.0),
+            Some(v) if (0.0..=180.0).contains(&v) => Ok(v),
+            Some(v) => Err(format!(
+                "`dynamics`: `{what}` is from 0 to 180 degrees, not {v}"
+            )),
+        }
+    };
+    Ok(Dynamics {
+        follow: written.follow.unwrap_or(false),
+        size: fraction("size", written.size)?,
+        angle: degrees("angle", written.angle)?,
+        opacity: fraction("opacity", written.opacity)?,
+        scatter: not_negative("scatter", written.scatter.unwrap_or(0.0))
+            .map_err(|p| format!("`dynamics`: {p}"))?,
+        hue: degrees("hue", written.hue)?,
+        lightness: fraction("lightness", written.lightness)?,
+        saturation: fraction("saturation", written.saturation)?,
+    })
+}
+
+/// A number that must be a real one (not infinite).
+fn finite(what: &str, value: f32) -> Result<f32, String> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(format!("`{what}` must be a number"))
+    }
+}
+
+/// Loads a brush tip from a PNG: its lightness is the dab's shape (and
+/// a see-through pixel is nothing).
+fn load_tip(path: &std::path::Path) -> Result<TipShape, String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buffer).map_err(|e| e.to_string())?;
+    let (width, height) = (info.width as usize, info.height as usize);
+    if width == 0 || height == 0 || width > 1024 || height > 1024 {
+        return Err("a tip picture is at most 1024 x 1024 pixels".into());
+    }
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        _ => return Err("the picture's pixels aren't a kind I can read".into()),
+    };
+    let lightness: Vec<u8> = buffer[..width * height * channels]
+        .chunks(channels)
+        .map(|px| {
+            let light = match channels {
+                1 | 2 => u32::from(px[0]),
+                _ => (u32::from(px[0]) * 54 + u32::from(px[1]) * 183 + u32::from(px[2]) * 19) / 256,
+            };
+            let alpha = match channels {
+                2 => u32::from(px[1]),
+                4 => u32::from(px[3]),
+                _ => 255,
+            };
+            (light * alpha / 255) as u8
+        })
+        .collect();
+    Ok(TipShape::from_lightness(width, height, &lightness))
 }
 
 /// True for the commands that matter while a symbol is painted for a
@@ -5358,6 +5758,306 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("(group \"g\")") && w.contains("covers nothing")),
             "{warnings:?}"
+        );
+    }
+
+    // ---- Brush tips, dynamics and stamp (phase 3, step 2) --------------------
+
+    const TIP_SCRIPT: &str = r##"{ "seed": 2, "commands": [
+        { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+        { "cmd": "brush", "tip": "TIP", "size": 20, "color": "#000000", "hardness": 1, "dynamics": DYNAMICS },
+        { "cmd": "stroke", "points": [[20, 50], [180, 50]] }
+      ] }"##;
+
+    fn tip_script(tip: &str, dynamics: &str) -> String {
+        TIP_SCRIPT.replace("TIP", tip).replace("DYNAMICS", dynamics)
+    }
+
+    fn painted_pixels(document: &Document) -> usize {
+        let mut count = 0;
+        for y in 0..100 {
+            for x in 0..200 {
+                if document.layers()[0].surface.pixel(x, y).a > 0 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn every_tip_paints_and_each_looks_different() {
+        let mut pictures = Vec::new();
+        for tip in [
+            "round", "square", "bristle", "chalk", "leaf", "grass", "sparkle",
+        ] {
+            let document = play(&tip_script(tip, "{}"));
+            assert!(painted_pixels(&document) > 500, "{tip} paints");
+            // Nothing lands outside the stroke's reach.
+            assert_eq!(
+                document.layers()[0].surface.pixel(100, 20),
+                Rgba8::TRANSPARENT,
+                "{tip}"
+            );
+            pictures.push((tip, png(&document)));
+        }
+        for (i, (tip, picture)) in pictures.iter().enumerate() {
+            for (other, theirs) in &pictures[i + 1..] {
+                assert_ne!(picture, theirs, "{tip} and {other} look the same");
+            }
+        }
+        // The round tip is exactly the brush as it always was.
+        let plain = play(&tip_script("round", "{}"));
+        let before = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 20, "color": "#000000", "hardness": 1 },
+            { "cmd": "stroke", "points": [[20, 50], [180, 50]] } ] }"##,
+        );
+        assert_eq!(png(&plain), png(&before));
+    }
+
+    #[test]
+    fn a_square_tip_has_corners_and_follows_the_stroke() {
+        let square = play(&tip_script("square", "{}"));
+        // A horizontal stroke with a square tip: a 20-pixel-high band
+        // with square ends, solid right to the corner.
+        let layer = &square.layers()[0].surface;
+        assert_eq!(layer.pixel(100, 41).a, 255);
+        assert_eq!(layer.pixel(100, 58).a, 255);
+        assert_eq!(layer.pixel(100, 38).a, 0);
+        assert_eq!(layer.pixel(11, 41).a, 255, "the start's corner is square");
+        // Turned 45 degrees, the band gets wider (the square's diagonal).
+        let turned = play(
+            &tip_script("square", "{}")
+                .replace(r#""hardness": 1,"#, r#""hardness": 1, "angle": 45,"#),
+        );
+        assert!(turned.layers()[0].surface.pixel(100, 38).a > 0);
+        assert_ne!(png(&turned), png(&square));
+    }
+
+    #[test]
+    fn dynamics_vary_the_dabs_from_the_seed_only() {
+        let dynamics = r##"{ "size": 0.4, "angle": 30, "opacity": 0.5, "scatter": 6, "hue": 20, "lightness": 0.2, "saturation": 0.3 }"##;
+        // (A colour, not black: black has no hue or lightness to vary.)
+        let tip_script =
+            |tip: &str, dynamics: &str| tip_script(tip, dynamics).replace("#000000", "#4080C0");
+        let a = play(&tip_script("chalk", dynamics));
+        let b = play(&tip_script("chalk", dynamics));
+        assert_eq!(png(&a), png(&b), "the same seed: the same picture");
+        let c = play(&tip_script("chalk", dynamics).replace("\"seed\": 2", "\"seed\": 3"));
+        assert_ne!(png(&a), png(&c), "another seed: another picture");
+        let plain = play(&tip_script("chalk", "{}"));
+        assert_ne!(png(&a), png(&plain));
+        // Scatter puts paint off the line; colour dynamics vary the colour.
+        let layer = &a.layers()[0].surface;
+        let off_line = (0..200).filter(|&x| layer.pixel(x, 36).a > 0).count();
+        assert!(off_line > 0, "scatter");
+        let mut colors = std::collections::HashSet::new();
+        for x in 20..180 {
+            let p = layer.pixel(x, 50);
+            if p.a > 200 {
+                colors.insert((p.r, p.g, p.b));
+            }
+        }
+        assert!(colors.len() > 3, "colours vary: {colors:?}");
+        // Round tips take dynamics too (size and scatter), with the same seed rule.
+        let round = play(&tip_script("round", r##"{ "size": 0.5, "scatter": 5 }"##));
+        assert_ne!(png(&round), png(&play(&tip_script("round", "{}"))));
+    }
+
+    #[test]
+    fn dynamics_and_tips_are_checked() {
+        let bad_tip = error(&tip_script("fluffy", "{}"));
+        assert!(
+            bad_tip.contains("unknown tip \"fluffy\"") && bad_tip.contains("chalk"),
+            "{bad_tip}"
+        );
+        let bad_size = error(&tip_script("round", r##"{ "size": 3 }"##));
+        assert!(
+            bad_size.contains("`dynamics`: `size` is a fraction"),
+            "{bad_size}"
+        );
+        let bad_field = error(&tip_script("round", r##"{ "wobble": 3 }"##));
+        assert!(bad_field.contains("unknown field `wobble`"), "{bad_field}");
+        let missing = error(
+            &tip_script("round", "{}")
+                .replace(r#""tip": "round""#, r#""tip": { "file": "nope.png" }"#),
+        );
+        assert!(
+            missing.contains("can't load the tip \"nope.png\""),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn a_tip_from_a_file_is_its_lightness() {
+        // A 8 x 8 PNG: white on the left half, black on the right.
+        let folder = std::env::temp_dir().join(format!("art-app-tip-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("half.png");
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut encoder = png::Encoder::new(file, 8, 8);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            let mut data = vec![0u8; 64];
+            for y in 0..8 {
+                for x in 0..4 {
+                    data[y * 8 + x] = 255;
+                }
+            }
+            writer.write_image_data(&data).unwrap();
+        }
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "tip": { "file": "half.png" }, "size": 40, "color": "#000000", "hardness": 1 },
+            { "cmd": "stroke", "points": [[50, 50]] },
+            { "cmd": "brush", "tip": { "file": "half.png" } } ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            folder: Some(folder.clone()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        assert_eq!(player.tips.len(), 1, "loaded once");
+        let layer = &document.layers()[0].surface;
+        assert_eq!(layer.pixel(40, 50).a, 255, "the white half paints");
+        assert_eq!(layer.pixel(60, 50).a, 0, "the black half doesn't");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn stamp_puts_dabs_along_a_path() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "brush", "size": 10, "color": "#000000", "hardness": 1 },
+              { "cmd": "stamp", "tip": "square", "points": [[20, 50], [180, 50]], "spacing": 40, "size": 10 }
+            ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        // Copies at x = 20, 60, 100, 140, 180: solid there, nothing between.
+        for x in [20, 60, 100, 140, 180] {
+            assert_eq!(layer.pixel(x, 50).a, 255, "a dab at {x}");
+        }
+        assert_eq!(layer.pixel(40, 50).a, 0, "nothing between dabs");
+        assert_eq!(layer.pixel(80, 50).a, 0);
+        // Keyframed points: frame 2 of a moving path equals the path by hand.
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "go": { "frames": 5, "commands": [
+            { "cmd": "stamp", "tip": "leaf", "points": { "keys": [[0, [[20, 20], [180, 20]]], [4, [[20, 60], [180, 60]]]] },
+              "spacing": 30, "size": 14, "color": "#008000", "seed": 1 } ] } } }"##;
+        let frame = play_frame(script, Some("go"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "stamp", "tip": "leaf", "points": [[20, 40], [180, 40]], "spacing": 30, "size": 14, "color": "#008000", "seed": 1 }
+            ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+    }
+
+    #[test]
+    fn stamp_copies_a_symbol_turned_scaled_and_coloured() {
+        let script = r##"{ "seed": 7, "commands": [
+            { "cmd": "canvas", "width": 400, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "dot", "params": { "color": "#FF0000", "r": 4 }, "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 4, "fill": "$color" },
+              { "cmd": "rect", "x": -1, "y": -12, "width": 2, "height": 8, "fill": "$color" } ] },
+            { "cmd": "stamp", "symbol": "dot", "points": [[20, 50], [380, 50]], "spacing": 18,
+              "size": [0.7, 1.3], "colors": ["#FF0000", "#0000FF"], "with": { "r": 5 } }
+          ] }"##;
+        let document = play(script);
+        let layer = &document.layers()[0].surface;
+        let (mut red, mut blue) = (0, 0);
+        for x in (20..=380).step_by(18) {
+            let p = layer.pixel(x, 50);
+            assert_eq!(p.a, 255, "a copy at {x}");
+            if p.r > p.b {
+                red += 1;
+            } else {
+                blue += 1;
+            }
+        }
+        assert!(
+            red > 0 && blue > 0,
+            "both colours are picked: {red} red, {blue} blue"
+        );
+        // `follow` on a path going right turns the stick (drawn upwards)
+        // to point right... which with angle 0 along a horizontal path is
+        // a 0-degree turn: the stick still points up.
+        assert!(layer.pixel(20, 42).a > 0, "the stick above the first dot");
+        // The same seed, the same picture; and copies land where a use would.
+        assert_eq!(png(&document), png(&play(script)));
+        let one = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "box", "commands": [
+              { "cmd": "rect", "x": -10, "y": -5, "width": 20, "height": 10, "fill": "#000000" } ] },
+            { "cmd": "stamp", "symbol": "box", "points": [[50, 50]], "spacing": 10, "size": 2, "angle": 90 }
+            ] }"##,
+        );
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "box", "commands": [
+              { "cmd": "rect", "x": -10, "y": -5, "width": 20, "height": 10, "fill": "#000000" } ] },
+            { "cmd": "use", "name": "box", "translate": [50, 50], "scale": 2, "rotate": 90 }
+            ] }"##,
+        );
+        assert_eq!(png(&one), png(&by_hand));
+    }
+
+    #[test]
+    fn stamp_mistakes_are_explained() {
+        let base = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100 },
+            { "cmd": "define", "name": "plain", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 4, "fill": "#000000" } ] },
+            STAMP
+          ] }"##;
+        let error_with = |stamp: &str| error(&base.replace("STAMP", stamp));
+        let both = error_with(
+            r##"{ "cmd": "stamp", "symbol": "plain", "tip": "leaf", "points": [[0, 0]], "spacing": 5 }"##,
+        );
+        assert!(
+            both.contains("(stamp)") && both.contains("`symbol` or `tip`, not both"),
+            "{both}"
+        );
+        let none = error_with(
+            r##"{ "cmd": "stamp", "symbol": "nope", "points": [[0, 0]], "spacing": 5 }"##,
+        );
+        assert!(none.contains("no symbol called \"nope\""), "{none}");
+        let color = error_with(
+            r##"{ "cmd": "stamp", "symbol": "plain", "points": [[0, 0]], "spacing": 5, "colors": ["#FF0000"] }"##,
+        );
+        assert!(
+            color.contains("`color` parameter") && color.contains("\"plain\" has none"),
+            "{color}"
+        );
+        let spacing = error_with(
+            r##"{ "cmd": "stamp", "tip": "leaf", "points": [[0, 0], [50, 0]], "spacing": 0 }"##,
+        );
+        assert!(
+            spacing.contains("`spacing` must be more than 0"),
+            "{spacing}"
+        );
+        let many = error_with(
+            r##"{ "cmd": "stamp", "tip": "leaf", "points": [[0, 0], [100, 0]], "spacing": 0.001 }"##,
+        );
+        assert!(many.contains("at most 10000"), "{many}");
+        let points =
+            error_with(r##"{ "cmd": "stamp", "tip": "leaf", "points": 5, "spacing": 1 }"##);
+        assert!(
+            points.contains("`points` is a list of [x, y] points"),
+            "{points}"
         );
     }
 }

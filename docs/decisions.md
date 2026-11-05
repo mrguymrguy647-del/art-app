@@ -973,3 +973,41 @@ put it:
 - `value()` now resolves `$params` and keyframes inside any object, not
   only keyed ones, so mask numbers can animate without a special case.
 
+## 60. Brush tips, dynamics and `stamp` (phase 3, step 2)
+
+- **A tip is a small greyscale picture, sampled per pixel**, not a
+  formula evaluated per dab: the same code stamps a built-in tip and one
+  from a PNG. Built-in tips are made once from formulas with fixed seeds
+  (3 x 3 samples per texel for smooth edges) at 128 texels across, then
+  halved down to 2 x 2, and a dab samples the level nearest its own size
+  (bilinear), so a 10-pixel chalk dab doesn't alias. The `round` tip
+  keeps the old analytic path, so every existing picture is unchanged
+  (the reference tests say so). `hardness` on a shaped tip softens a
+  round envelope around the dab's corners, so a square stays square at
+  hardness 1 and fades at the corners when softer.
+- **Dynamics are per dab, from the stroke's seed.** The stroke owns a
+  `Random` (seeded by the player from the script's seed, the command's
+  seed and the stroke's number in the command), so a script with chalk
+  strokes paints the same picture every time, and a different `seed`
+  gives a different one. Colour variation is kept per pixel (which dab
+  last raised the pixel's coverage), so the stroke's "never darker than
+  its opacity" rule still holds. Black doesn't vary in hue or lightness:
+  it has none.
+- **`BrushSettings` stays `Copy`**: a tip from a file is `Tip::File(n)`,
+  a number into the player's list of loaded shapes (each file loaded
+  once), handed to the stroke with `with_tip`. The app's brush panel
+  never needs file tips.
+- **`stamp` reuses what's there.** Tip copies are single-point strokes
+  (so masks, clipping, lock and the brush's hardness all apply);
+  symbol copies are a `repeat`-like frame whose copies have their own
+  placements instead of a step, and the picked colour reaches the symbol
+  as its `color` parameter through `each`. So a stamped copy is exactly
+  a `use`, and messages say `stamp, copy 3 > 1 (use "blade")`.
+- **Cost** (1920 x 1080, 40 paths of 1840 px with a 40 px brush,
+  release build): round 0.89 s; round with size, scatter and hue
+  dynamics 0.84 s; chalk 2.4 s; chalk with follow, size, opacity and
+  lightness dynamics 2.7 s; leaf with follow 2.2 s. A shaped tip costs
+  about 2.7x a round one: its box is twice the area (it may be turned)
+  and each pixel samples the shape. Fine for paintings; worth a sampled
+  envelope if animations with big textured brushes ever feel slow.
+

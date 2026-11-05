@@ -167,6 +167,10 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 
 - Block in big shapes back to front first; details last, mostly at the focal point.
 - Shadows: a `multiply` layer in a dark cool colour; glows: `screen` or `add`.
+- Texture: `brush` with a `tip` (`chalk`, `bristle`, `leaf`, `grass`, `sparkle`, `square`) and
+  `dynamics` (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); then `stroke`,
+  `path`, `hatch` and `scatter` all use it. `stamp` puts a symbol or tip along a path every
+  `spacing`: grass, vines, pebbles, lights.
 - Shading inside a shape: a `"clip": true` layer above the shape's layer (shows only on its
   paint); `"lock": true` recolours a layer without changing its edges; a group's `mask` (an
   area, `{"symbol": ...}` or `{"layer": ...}`) keeps a reflection on the water.

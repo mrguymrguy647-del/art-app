@@ -164,6 +164,9 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 | `hardness` | 1 = crisp edge, 0 = very soft edge. |
 | `spacing` | Distance between dabs as a fraction of the size (0.01 to 5). Default 0.1. |
 | `pressure_size`, `pressure_opacity`, `pressure_flow` | Which settings point pressure changes (`true`/`false`). |
+| `tip` | The dab's shape: `"round"` (default), `"square"`, `"bristle"`, `"chalk"`, `"leaf"`, `"grass"`, `"sparkle"`, or `{ "file": "tips/splat.png" }`. See [Brushes with character](#brushes-with-character). |
+| `angle` | How far the tip is turned, degrees clockwise. |
+| `dynamics` | How dabs vary along a stroke (see below). Replaces the dynamics as a whole: `{}` turns them all off. |
 
 Only the settings given change.
 
@@ -468,6 +471,64 @@ parameter, round and round if there are more copies than values:
   { "cmd": "rect", "x": 100, "y": 350, "width": 24, "height": 24, "fill": "$paint", "outline": "ink" }
 ] }
 ```
+
+## Brushes with character
+
+```json
+{ "cmd": "brush", "tip": "chalk", "size": 18, "color": "rock",
+  "dynamics": { "follow": true, "size": 0.3, "angle": 20, "opacity": 0.4, "scatter": 3, "hue": 4, "lightness": 0.08, "saturation": 0.1 } }
+{ "cmd": "brush", "tip": { "file": "tips/splat.png" } }
+```
+
+A brush's **tip** is the shape of each dab. The built-in tips are made by the engine (the same
+on every computer): `round` is the plain brush; `square` is hard, for pixels and blocks;
+`bristle` is a row of bristles across the stroke, streaky like a flat brush; `chalk` is grainy;
+`leaf` points along the stroke; `grass` stands up; `sparkle` is a four-pointed star with a glow.
+`{ "file": "..." }` is a greyscale PNG, relative to the script: white paints, black doesn't,
+see-through is nothing. A dab stamps the tip scaled to `size`, turned by `angle`, and
+`hardness` softens its edge as before. Tips work on a pixel canvas too (they come out crisp).
+
+**Dynamics** make each dab a little different, from the stroke's `seed` (so the same script
+always paints the same picture). `follow` turns the tip along the stroke (a leaf tip paints a
+vine); the rest are the most each dab may vary, either way:
+
+| | |
+|---|---|
+| `size` | A fraction: 0.3 is from 70% to 130% of the size. |
+| `angle` | Degrees (0 to 180). |
+| `opacity` | A fraction. |
+| `scatter` | Pixels off the line (scaled with the brush in a group). |
+| `hue` | Degrees around the colour wheel (0 to 180). |
+| `lightness`, `saturation` | Fractions. |
+
+The brush carries its tip and dynamics, so `stroke`, `line`, `path`, `hatch` and `scatter`
+all use them (`scatter`'s own `size`, `colors` and `angle` still win; its dabs with a shaped
+tip are turned within `angle`).
+
+### `stamp` — copies along a path
+
+```json
+{ "cmd": "stamp", "symbol": "blade", "points": [[20, 300], [300, 290], [620, 310]], "spacing": 9,
+  "size": [0.8, 1.3], "angle": [-10, 10], "colors": ["grass1", "grass2"], "seed": 4 }
+{ "cmd": "stamp", "tip": "leaf", "points": [[100, 100], [160, 40], [240, 60]], "spacing": 14, "size": [10, 16], "color": "leaf" }
+```
+
+Puts copies of a `symbol`, or single dabs of a `tip` (default: the brush's own), along a smooth
+path through `points`, one every `spacing` units, each turned to follow the path. A row of
+grass, a vine, a string of lights, pebbles along a shore.
+
+| Field | |
+|---|---|
+| `symbol` / `tip` | What to put down: one or the other. A symbol copy is a `use` (drawn around `[0, 0]`); a tip copy is one dab with the brush's settings. |
+| `points`, `spacing` | The path and the distance between copies. Both may be keyframes. |
+| `size` | A number or `[min, max]` to pick from. For a symbol a scale (default 1); for a tip pixels across (default: the brush size). |
+| `angle` | Degrees added to each copy's turn: a number or `[min, max]`. |
+| `follow` | `true` (default): turned along the path. `false`: only `angle`. |
+| `scatter` | Copies land up to this many units off the path. |
+| `color` / `colors` | One colour, or colours picked from per copy. For a symbol it goes to the symbol's `color` parameter (`"params": { "color": "..." }` in its define). |
+| `opacity` | For tip dabs. |
+| `with` | Values for the symbol's other parameters (the same for every copy). |
+| `seed` | Which random picks. |
 
 ## Clipping and masks
 

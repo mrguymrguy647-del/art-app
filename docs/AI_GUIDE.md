@@ -110,7 +110,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 |---|---|
 | `canvas` | First command: `width`, `height`, `paper`; or `open` an `.artapp` to continue a picture. |
 | `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only). |
-| `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings. |
+| `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings; `tip` (`round`, `square`, `bristle`, `chalk`, `leaf`, `grass`, `sparkle`, or a PNG file), `angle`, `dynamics` (`follow`, `size`, `angle`, `opacity`, `scatter`, `hue`, `lightness`, `saturation`). |
 | `stroke` / `erase` | Pen-like line through `points` (`[x, y]` or `[x, y, pressure]`). |
 | `line` | Straight line, `from` → `to`, tapered (default `taper` 0.25). |
 | `path` | Smooth curve through points; `closed` + `fill` for organic shapes; `line: false` to fill only. |
@@ -119,6 +119,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `fill` | Paint bucket at a point (`tolerance`, `grow`, `sample`). |
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
+| `stamp` | Copies of a `symbol` or dabs of a `tip` along a path, every `spacing`, turned to follow, varied in `size`, `angle` and `colors`. |
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
@@ -225,7 +226,23 @@ bands), plus bright glints in a column under the light.
 ```
 
 **Grass:** `scatter` strokes pointing up: `"angle": [-100, -80]`, a few lighter ones where the
-light hits.
+light hits. Or `stamp` the `grass` tip along the ground line, which gives real blades:
+
+```json
+{ "cmd": "stamp", "tip": "grass", "points": [[0, 900], [800, 880], [1600, 900]], "spacing": 5,
+  "size": [30, 60], "angle": [-12, 12], "follow": false, "colors": ["grass1", "grass2", "grass3"] }
+```
+
+**Texture and a hand-made look:** give the brush a tip and dynamics once, then paint as usual.
+`chalk` with `size`/`opacity`/`lightness` dynamics for rock and bark; `bristle` with `follow`
+for painterly strokes; `leaf` with `follow` and `hue` for foliage along a `path`; `sparkle`
+with `scatter` for stars and glints.
+
+```json
+{ "cmd": "brush", "tip": "bristle", "size": 40, "color": "#8A6A4A", "flow": 0.7,
+  "dynamics": { "follow": true, "size": 0.2, "opacity": 0.3, "lightness": 0.1 } },
+{ "cmd": "path", "points": [[200, 600], [500, 560], [800, 600]], "seed": 2 }
+```
 
 **Soft light on the water or a soft cloud:** a very soft brush (`hardness` 0–0.1, `flow` 0.3–0.6)
 and a big `size`; `line` or `path` with `taper`.

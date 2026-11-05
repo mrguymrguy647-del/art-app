@@ -145,6 +145,7 @@ pub enum Command {
     Text(TextCmd),
     Pixels(PixelsCmd),
     Snapshot(SnapshotCmd),
+    Stamp(StampCmd),
     Group(GroupCmd),
     Define(DefineCmd),
     Use(UseCmd),
@@ -178,6 +179,7 @@ impl Command {
             Command::Text(_) => "text",
             Command::Pixels(_) => "pixels",
             Command::Snapshot(_) => "snapshot",
+            Command::Stamp(_) => "stamp",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
             Command::Use(_) => "use",
@@ -332,6 +334,87 @@ pub struct BrushCmd {
     pub pressure_opacity: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pressure_flow: Option<bool>,
+    /// The dab's shape: `"round"`, `"square"`, `"bristle"`, `"chalk"`,
+    /// `"leaf"`, `"grass"`, `"sparkle"`, or `{"file": "tips/splat.png"}`
+    /// (a greyscale picture, relative to the script).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<Value>,
+    /// How far the tip is turned, degrees clockwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f32>,
+    /// How dabs vary along a stroke; replaces the dynamics as a whole
+    /// (`{}` turns them all off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamics: Option<DynamicsCmd>,
+}
+
+/// A brush's dynamics, as written: see `brush::Dynamics`. Anything left
+/// out is off.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DynamicsCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hue: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saturation: Option<f32>,
+}
+
+/// `stamp`: puts copies of a symbol, or single dabs of a tip, along a
+/// smooth path through `points`, one every `spacing` units, each turned
+/// to follow the path (unless `follow` is false) and varied at random
+/// (from `seed`) within `size`, `angle` and `colors`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StampCmd {
+    /// The symbol to copy (placed like a `use` at each spot)...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// ...or the tip to stamp (as on `brush`; default: the brush's own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<Value>,
+    /// `[[x, y], ...]`; may be keyframes.
+    pub points: Value,
+    /// Distance between copies, in drawing units; may be keyframes.
+    pub spacing: Value,
+    /// For a symbol, a scale (default 1); for a tip, pixels across
+    /// (default: the brush size). A number, or `[min, max]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Value>,
+    /// Degrees added to each copy's turn: a number, or `[min, max]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<Value>,
+    /// Turn each copy along the path (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,
+    /// Copies land up to this far off the path (drawing units).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<f32>,
+    /// One colour, or colours to pick from per copy. For a symbol, the
+    /// colour goes to its `color` parameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<Vec<String>>,
+    /// For tip dabs: their opacity (default: the brush's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    /// Values for the symbol's other parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<BTreeMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 
 /// `stroke` / `erase`: paints (or erases) through the points with the
