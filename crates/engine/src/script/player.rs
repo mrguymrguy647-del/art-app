@@ -30,19 +30,21 @@ use serde_json::Value;
 use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
-    BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd,
-    LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd,
-    Script, ScriptError, StampCmd, StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
+    BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
+    HatchCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd,
+    RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd, TransformLayerCmd,
+    UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
-use crate::document::{Document, MAX_CANVAS_SIDE};
+use crate::document::{Background, Document, MAX_CANVAS_SIDE};
 use crate::file;
 use crate::fill::{
     self, FloodFill, Gradient, GradientShape, GradientStop, Mask, Paint, Rgba, SampleFrom,
     paint_mask_within, paint_rect_within,
 };
+use crate::filters::{self, Filter};
 use crate::history::{Command as UndoStep, TileCommand};
-use crate::layer::{BlendMode, LayerId, LayerProps};
+use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
 use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
 };
@@ -51,7 +53,7 @@ use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
-use crate::surface::PixelRect;
+use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
 use crate::tile::Rgba8;
 use crate::transform::Transform;
@@ -202,7 +204,7 @@ enum Job {
     /// is one or more outlines filled together (a letter "o" has two).
     Area {
         layer: LayerId,
-        shape: Option<Vec<Vec<Pt>>>,
+        shape: Option<Shape>,
         paint: Paint,
         opacity: f32,
         mode: BrushMode,
@@ -213,6 +215,33 @@ enum Job {
         paint: Paint,
         opacity: f32,
     },
+}
+
+/// What an area job fills.
+enum Shape {
+    /// Outlines, in canvas pixels.
+    Rings(Vec<Vec<Pt>>),
+    /// Pixels already worked out (a bucket's region).
+    Mask(Mask),
+}
+
+impl Job {
+    fn layer(&self) -> LayerId {
+        match self {
+            Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. } => {
+                *layer
+            }
+        }
+    }
+
+    fn on_layer(mut self, to: LayerId) -> Job {
+        match &mut self {
+            Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. } => {
+                *layer = to;
+            }
+        }
+        self
+    }
 }
 
 /// A stroke being painted, a few points at a time.
@@ -276,6 +305,50 @@ struct Frame {
     /// scratch picture, see `Player::capture`), not the picture itself.
     /// `Some(true)`: the mask is everything but the silhouette.
     capture: Option<bool>,
+    /// Filters applied to what this frame draws (on a scratch picture)
+    /// before it's laid on the layers.
+    effect: Option<Vec<Filter>>,
+}
+
+/// A scratch picture a frame paints on instead of the real one: for a
+/// symbol's silhouette (a mask), or a group with filters.
+struct Scratch {
+    document: Document,
+    /// Everything goes on one layer (a silhouette).
+    single: bool,
+    /// For a filtered group: the real layer each scratch layer stands for.
+    layers: Vec<(LayerId, LayerId)>,
+}
+
+impl Scratch {
+    fn new(like: &Document, single: bool) -> Self {
+        Self {
+            document: Document::new(like.width(), like.height()),
+            single,
+            layers: Vec::new(),
+        }
+    }
+
+    /// The scratch layer for the real layer `real` (made if needed).
+    fn layer_for(&mut self, real: LayerId) -> LayerId {
+        if self.single {
+            return self.document.active_id();
+        }
+        if let Some(&(_, scratch)) = self.layers.iter().find(|(r, _)| *r == real) {
+            return scratch;
+        }
+        let scratch = if self.layers.is_empty() {
+            self.document.active_id() // the first layer a new picture has
+        } else {
+            let layer = self.document.new_layer();
+            let id = layer.id();
+            let count = self.document.layers().len();
+            self.document.insert_layer(count, layer);
+            id
+        };
+        self.layers.push((real, scratch));
+        scratch
+    }
 }
 
 /// A symbol: what `define` stored.
@@ -334,6 +407,8 @@ struct NewFrame {
     mask: Option<Value>,
     /// See `Frame::capture`.
     capture: Option<bool>,
+    /// The group's `filter`, worked out once the frame has started.
+    filter: Option<Value>,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -407,9 +482,9 @@ pub struct Player {
     /// How many painted pixels one canvas pixel is: the preview scale
     /// times the pixel canvas's supersample.
     paint_scale: f32,
-    /// Scratch pictures a symbol's silhouette is painted on, to become a
-    /// mask: one per capture frame being played, innermost last.
-    capture: Vec<Document>,
+    /// Scratch pictures: one per frame being played that paints a
+    /// silhouette (for a mask) or a filtered group, innermost last.
+    capture: Vec<Scratch>,
     /// Brush tips loaded from files, by the number in `Tip::File`, and
     /// which file each came from (so a file is loaded once).
     tips: Vec<Arc<TipShape>>,
@@ -659,6 +734,7 @@ impl Player {
             params: None,
             mask: None,
             capture: None,
+            effect: None,
         }];
         self.pending_animation = self.animation.as_ref().map(|(_, c)| Arc::clone(c));
     }
@@ -724,6 +800,7 @@ impl Player {
                     params: None,
                     mask: None,
                     capture: None,
+                    effect: None,
                 });
             } else {
                 self.flush_tiles();
@@ -888,11 +965,20 @@ impl Player {
             params: new.params,
             mask,
             capture: new.capture,
+            effect: None,
         };
         self.frames.push(frame);
+        if let Some(filter) = &new.filter {
+            let filters = self
+                .read_filters(filter)
+                .map_err(|problem| format!("`filter`: {problem}"))?;
+            if !filters.is_empty() {
+                self.frames.last_mut().expect("just pushed").effect = Some(filters);
+                self.capture.push(Scratch::new(document, false));
+            }
+        }
         if new.capture.is_some() {
-            self.capture
-                .push(Document::new(document.width(), document.height()));
+            self.capture.push(Scratch::new(document, true));
         }
         if let Some(mask) = new.mask {
             self.start_mask(document, &mask)
@@ -970,8 +1056,96 @@ impl Player {
         frame.mask = Some(Arc::new(mask));
     }
 
+    /// A filtered group has finished: filters each layer's part of its
+    /// drawing, makes one shadow from the combined silhouette (laid on
+    /// the lowest of those layers, under everything), and lays the parts
+    /// on their layers (or on the scratch picture of the group around).
+    fn lay_effect(&mut self, document: &mut Document, mut scratch: Scratch, filters: &[Filter]) {
+        let limits = document.bounds();
+        let per_part: Vec<Filter> = filters
+            .iter()
+            .filter(|f| !matches!(f, Filter::Shadow { .. }))
+            .cloned()
+            .collect();
+        let shadows: Vec<Filter> = filters
+            .iter()
+            .filter(|f| matches!(f, Filter::Shadow { .. }))
+            .cloned()
+            .collect();
+        let mut parts: Vec<(LayerId, Surface)> = Vec::new();
+        for &(real, id) in &scratch.layers {
+            let Some(layer) = scratch.document.layer_mut(id) else {
+                continue;
+            };
+            if layer.surface.tile_count() == 0 {
+                continue;
+            }
+            filters::apply(&mut layer.surface, &per_part, limits);
+            parts.push((real, std::mem::take(&mut layer.surface)));
+        }
+        if parts.is_empty() {
+            return;
+        }
+        // The shadow goes under the lowest layer's part.
+        if !shadows.is_empty() {
+            let surfaces: Vec<&Surface> = parts.iter().map(|(_, s)| s).collect();
+            let silhouette = filters::silhouette(&surfaces);
+            let mut shadow = Surface::new();
+            for filter in &shadows {
+                if let Filter::Shadow {
+                    offset,
+                    blur,
+                    color,
+                } = filter
+                {
+                    let one = filters::shadow_of(&silhouette, *offset, *blur, *color, limits);
+                    filters::lay_over(&mut shadow, &one, limits);
+                }
+            }
+            let lowest = parts
+                .iter()
+                .map(|(real, _)| *real)
+                .min_by_key(|real| document.layer_index(*real).unwrap_or(0))
+                .expect("there are parts");
+            self.lay_part(document, lowest, &shadow);
+        }
+        for (real, part) in parts {
+            self.lay_part(document, real, &part);
+        }
+    }
+
+    /// Lays `part` on the real layer `real`: on the picture, or on the
+    /// scratch picture of the frame around (when filtered groups nest).
+    fn lay_part(&mut self, document: &mut Document, real: LayerId, part: &Surface) {
+        let limits = document.bounds();
+        if let Some(outer) = self.capture.last_mut() {
+            let id = outer.layer_for(real);
+            if let Some(layer) = outer.document.layer_mut(id) {
+                filters::lay_over(&mut layer.surface, part, limits);
+            }
+            return;
+        }
+        let Some(layer) = document.layer_mut(real) else {
+            return;
+        };
+        let before = filters::lay_over(&mut layer.surface, part, limits);
+        if before.is_empty() {
+            return;
+        }
+        self.remember_tiles(real, before);
+        self.mark_painted(document, real);
+        let top = self.frames.first().map_or(0, |script| script.next);
+        self.painted_by.entry(real).or_default().insert(top);
+    }
+
     /// True while a symbol's silhouette is being painted for a mask.
     fn capturing(&self) -> bool {
+        self.capture.last().is_some_and(|scratch| scratch.single)
+    }
+
+    /// True while painting goes on a scratch picture (a silhouette, or a
+    /// filtered group's drawing).
+    fn on_scratch(&self) -> bool {
         !self.capture.is_empty()
     }
 
@@ -1031,10 +1205,17 @@ impl Player {
                 .capture
                 .pop()
                 .expect("a capture frame has a scratch picture");
-            let limits = scratch.bounds();
-            let mask = Mask::from_alpha(&scratch.active_layer().surface, limits);
+            let limits = scratch.document.bounds();
+            let mask = Mask::from_alpha(&scratch.document.active_layer().surface, limits);
             self.finish_mask(limits, mask, invert);
             return;
+        }
+        if let Some(filters) = &frame.effect {
+            let scratch = self
+                .capture
+                .pop()
+                .expect("a filtered frame has a scratch picture");
+            self.lay_effect(document, scratch, filters);
         }
         // For the report: hand what it drew to the frame around it.
         if let Some(index) = frame.part {
@@ -1152,11 +1333,12 @@ impl Player {
         let mut drawn = None;
         // The number of the script's own command this is part of.
         let top = self.frames.first().map_or(0, |script| script.next);
+        let on_scratch = self.on_scratch();
         for job in self.jobs.iter().skip(queued) {
             drawn = Some(union(drawn, job_extent(job, document)));
-            let (Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. }) =
-                job;
-            self.painted_by.entry(*layer).or_default().insert(top);
+            if !on_scratch {
+                self.painted_by.entry(job.layer()).or_default().insert(top);
+            }
         }
         let Some(drawn) = drawn else {
             return;
@@ -1232,7 +1414,7 @@ impl Player {
                 .capture
                 .pop()
                 .expect("a stroke is captured on a scratch");
-            let left = self.feed_stroke(&mut scratch, running, budget);
+            let left = self.feed_stroke(&mut scratch.document, running, budget);
             self.capture.push(scratch);
             return left;
         }
@@ -1288,11 +1470,36 @@ impl Player {
         if self.options.dry_run {
             return 0.0;
         }
-        if self.capturing() {
-            // A silhouette for a mask: painted on the scratch picture's
-            // one layer, whatever layer the symbol asked for.
-            let mut scratch = self.capture.pop().expect("capturing");
-            let cost = self.do_job(&mut scratch, job, true);
+        if self.on_scratch() {
+            // A silhouette for a mask, or a filtered group's drawing:
+            // painted on the scratch picture (a silhouette all on one
+            // layer; a group on a scratch layer per real layer).
+            let mut scratch = self.capture.pop().expect("on a scratch");
+            let job = match job {
+                // The bucket spreads over the real picture, not the scratch.
+                Job::Bucket {
+                    layer,
+                    fill,
+                    paint,
+                    opacity,
+                } => match fill::flood_region(document, layer, &fill) {
+                    Some(mask) => Job::Area {
+                        layer,
+                        shape: Some(Shape::Mask(mask)),
+                        paint,
+                        opacity,
+                        mode: BrushMode::Paint,
+                    },
+                    None => {
+                        self.capture.push(scratch);
+                        return AREA_COST;
+                    }
+                },
+                other => other,
+            };
+            let target = scratch.layer_for(job.layer());
+            let job = job.on_layer(target);
+            let cost = self.do_job(&mut scratch.document, job, true);
             self.capture.push(scratch);
             return cost;
         }
@@ -1303,7 +1510,6 @@ impl Player {
     /// `capture` (then nothing is remembered for undo or the report).
     fn do_job(&mut self, document: &mut Document, job: Job, capture: bool) -> f32 {
         let clip = self.frame().mask.clone();
-        let target_layer = |layer| if capture { document.active_id() } else { layer };
         match job {
             Job::Stroke {
                 layer,
@@ -1326,7 +1532,7 @@ impl Player {
                     stroke = stroke.with_source(paint);
                 }
                 self.running = Some(RunningStroke {
-                    layer: target_layer(layer),
+                    layer,
                     stroke,
                     points,
                     next: 0,
@@ -1341,14 +1547,22 @@ impl Player {
                 opacity,
                 mode,
             } => {
-                let layer = target_layer(layer);
                 let limits = document.bounds();
                 let Some(target) = document.layer_mut(layer) else {
                     return 0.0;
                 };
                 let clip = clip.as_deref();
                 let before = match shape {
-                    Some(rings) => {
+                    Some(Shape::Mask(mask)) => paint_mask_within(
+                        &mut target.surface,
+                        &mask,
+                        &paint,
+                        opacity,
+                        mode,
+                        limits,
+                        clip,
+                    ),
+                    Some(Shape::Rings(rings)) => {
                         let mask = geometry::polygons_mask(&rings, limits);
                         paint_mask_within(
                             &mut target.surface,
@@ -1376,7 +1590,6 @@ impl Player {
                 paint,
                 opacity,
             } => {
-                let layer = target_layer(layer);
                 let before = fill::flood_fill_within(
                     document,
                     layer,
@@ -1568,6 +1781,7 @@ impl Player {
                 Ok(())
             }
             Command::Stamp(stamp) => self.stamp(document, stamp),
+            Command::Filter(filter) => self.filter(document, filter),
             Command::Group(group) => self.group(document, group),
             Command::Define(define) => {
                 // Duplicate names and `define` inside other commands are
@@ -1613,6 +1827,7 @@ impl Player {
             upright: command.upright.unwrap_or(false),
             mask: command.mask.clone(),
             capture: None,
+            filter: command.filter.clone(),
         };
         self.push_frame(document, new)
     }
@@ -1713,6 +1928,7 @@ impl Player {
             upright: command.upright.unwrap_or(false),
             mask: command.mask.clone(),
             capture,
+            filter: command.filter.clone(),
         };
         self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
@@ -1756,6 +1972,7 @@ impl Player {
             upright: false,
             mask: None,
             capture: None,
+            filter: None,
         };
         let each = command.each.clone().unwrap_or_default();
         for (name, values) in &each {
@@ -2008,6 +2225,7 @@ impl Player {
             upright: false,
             mask: None,
             capture: None,
+            filter: None,
         };
         self.push_frame(document, new)?;
         let outer = self.frames.len() - 2;
@@ -2130,7 +2348,157 @@ impl Player {
         if let Some(step) = LayerPropsCommand::apply(document, id, props) {
             self.record(step);
         }
+        if let Some(from) = &command.from {
+            if from != "below" {
+                return Err(format!(
+                    "`from` is \"below\" (everything below the layer, flattened), not \"{from}\""
+                ));
+            }
+            if !self.options.dry_run {
+                self.fill_from_below(document, id);
+            }
+        }
         Ok(())
+    }
+
+    /// Covers `layer` with everything below it, flattened (hidden layers
+    /// left out; no paper), so a filter on it works on the whole picture.
+    fn fill_from_below(&mut self, document: &mut Document, id: LayerId) {
+        let Some(index) = document.layer_index(id) else {
+            return;
+        };
+        let mut coords: Vec<TileCoord> = document.layers()[..index]
+            .iter()
+            .filter(|layer| layer.visible())
+            .flat_map(|layer| layer.surface.tiles().map(|(coord, _)| coord))
+            .collect();
+        coords.sort_unstable_by_key(|c| (c.y, c.x));
+        coords.dedup();
+        let mut tiles = Vec::with_capacity(coords.len());
+        for coord in coords {
+            let below = |layer: &Layer| {
+                layer.visible() && document.layer_index(layer.id()).is_some_and(|i| i < index)
+            };
+            if let Some(tile) =
+                document.composite_tile_showing(coord, Background::Transparent, below)
+            {
+                tiles.push((coord, tile));
+            }
+        }
+        let Some(layer) = document.layer_mut(id) else {
+            return;
+        };
+        let mut before = TilesBefore::new();
+        for (coord, tile) in tiles {
+            let old = layer.surface.replace_tile(coord, Some(tile));
+            before.insert(coord, old);
+        }
+        self.remember_tiles(id, before);
+        self.mark_painted(document, id);
+        let top = self.frames.first().map_or(0, |script| script.next);
+        self.painted_by.entry(id).or_default().insert(top);
+    }
+
+    /// `filter`: changes a layer in place.
+    fn filter(&mut self, document: &mut Document, command: &FilterCmd) -> Result<(), String> {
+        let filters = self.read_filters(&command.fields())?;
+        if filters.is_empty() {
+            return Err(
+                "give at least one of `blur`, `glow`, `shadow`, `adjust`, `gradient_map`".into(),
+            );
+        }
+        let id = match &command.layer {
+            Some(name) => find_layer(document, name)?,
+            None => document.active_id(),
+        };
+        if self.options.dry_run {
+            return Ok(());
+        }
+        self.flush_tiles();
+        let limits = document.bounds();
+        let Some(layer) = document.layer_mut(id) else {
+            return Ok(());
+        };
+        let before = filters::apply(&mut layer.surface, &filters, limits);
+        if !before.is_empty() {
+            self.record(TileCommand::new("Filter", id, before));
+            let top = self.frames.first().map_or(0, |script| script.next);
+            self.painted_by.entry(id).or_default().insert(top);
+        }
+        Ok(())
+    }
+
+    /// Filters as written (`blur`, `glow`, `shadow`, `adjust`,
+    /// `gradient_map`), with keyframes worked out and sizes in this
+    /// frame's pixels, in the order they're applied.
+    fn read_filters(&self, written: &Value) -> Result<Vec<Filter>, String> {
+        let value = self.value(written)?;
+        let spec: FilterFields = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let scale = self.detail();
+        let mut filters = Vec::new();
+        if let Some(adjust) = spec.adjust {
+            let signed = |what: &str, v: Option<f32>| -> Result<f32, String> {
+                match v {
+                    None => Ok(0.0),
+                    Some(v) if (-1.0..=1.0).contains(&v) => Ok(v),
+                    Some(v) => Err(format!("`adjust`: `{what}` is from -1 to 1, not {v}")),
+                }
+            };
+            filters.push(Filter::Adjust {
+                hue: finite("hue", adjust.hue.unwrap_or(0.0))?,
+                saturation: signed("saturation", adjust.saturation)?,
+                brightness: signed("brightness", adjust.brightness)?,
+                contrast: signed("contrast", adjust.contrast)?,
+            });
+        }
+        if let Some(map) = spec.gradient_map {
+            let stops = self
+                .stops_of(map.colors.as_deref(), map.stops.as_deref())
+                .map_err(|p| format!("`gradient_map`: {p}"))?;
+            filters.push(Filter::GradientMap(stops));
+        }
+        if let Some(blur) = spec.blur {
+            let radius = not_negative("blur", blur)?;
+            if radius > filters::MAX_BLUR {
+                return Err(format!("`blur` is at most {} pixels", filters::MAX_BLUR));
+            }
+            if radius > 0.0 {
+                filters.push(Filter::Blur(radius * scale));
+            }
+        }
+        if let Some(glow) = spec.glow {
+            filters.push(Filter::Glow {
+                radius: not_negative("glow: radius", glow.radius.unwrap_or(16.0))? * scale,
+                threshold: unit("glow: threshold", glow.threshold.unwrap_or(0.7))?,
+                strength: not_negative("glow: strength", glow.strength.unwrap_or(1.0))?,
+            });
+        }
+        if let Some(shadow) = spec.shadow {
+            let offset = pt(shadow.offset.unwrap_or([4.0, 4.0]))?;
+            let color = match &shadow.color {
+                Some(color) => self.color(color).map_err(|p| format!("`shadow`: {p}"))?,
+                None => [0, 0, 0, 128],
+            };
+            filters.push(Filter::Shadow {
+                offset: (offset.0 * scale, offset.1 * scale),
+                blur: not_negative("shadow: blur", shadow.blur.unwrap_or(4.0))? * scale,
+                color,
+            });
+        }
+        if self.pixel.is_some()
+            && let Some(blurry) = filters.iter().find(|f| f.blurs())
+        {
+            let name = match blurry {
+                Filter::Blur(_) => "blur",
+                Filter::Glow { .. } => "glow",
+                _ => "a shadow with blur",
+            };
+            return Err(format!(
+                "a pixel canvas can't take {name}: its pixels would melt (use `shadow` with \
+                 \"blur\": 0, `adjust` or `gradient_map`)"
+            ));
+        }
+        Ok(filters)
     }
 
     /// Where a layer should go for `above` / `below` another layer, as a
@@ -2429,7 +2797,9 @@ impl Player {
             let opacity = unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
+                shape: Some(Shape::Rings(vec![
+                    points.iter().map(|p| (p.x, p.y)).collect(),
+                ])),
                 paint,
                 opacity,
                 mode: BrushMode::Paint,
@@ -2553,7 +2923,9 @@ impl Player {
             let paint = self.paint(fill)?;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
+                shape: Some(Shape::Rings(vec![
+                    points.iter().map(|p| (p.x, p.y)).collect(),
+                ])),
                 paint,
                 opacity: opacity * self.frame().opacity,
                 mode,
@@ -2670,7 +3042,7 @@ impl Player {
         if !rings.is_empty() {
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(rings),
+                shape: Some(Shape::Rings(rings)),
                 paint: Paint::Color(color),
                 opacity: opacity * self.frame().opacity,
                 mode: BrushMode::Paint,
@@ -2726,7 +3098,7 @@ impl Player {
                 let ring = vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
                 self.jobs.push_back(Job::Area {
                     layer,
-                    shape: Some(vec![self.place_polygon(ring)]),
+                    shape: Some(Shape::Rings(vec![self.place_polygon(ring)])),
                     paint: Paint::Color(color),
                     opacity,
                     mode: BrushMode::Paint,
@@ -2817,7 +3189,7 @@ impl Player {
             }
         };
         let shape = match &command.area {
-            Some(area) => Some(vec![self.place_polygon(self.area(area)?)]),
+            Some(area) => Some(Shape::Rings(vec![self.place_polygon(self.area(area)?)])),
             None => None,
         };
         let mode = if command.erase.unwrap_or(false) {
@@ -3530,6 +3902,49 @@ struct ShapeStyle<'a> {
     seed: Option<u64>,
 }
 
+/// The fields of a `filter` command or a group's `filter`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilterFields {
+    blur: Option<f32>,
+    glow: Option<GlowSpec>,
+    shadow: Option<ShadowSpec>,
+    adjust: Option<AdjustSpec>,
+    gradient_map: Option<MapSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GlowSpec {
+    radius: Option<f32>,
+    threshold: Option<f32>,
+    strength: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShadowSpec {
+    offset: Option<[f32; 2]>,
+    blur: Option<f32>,
+    color: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdjustSpec {
+    hue: Option<f32>,
+    saturation: Option<f32>,
+    brightness: Option<f32>,
+    contrast: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapSpec {
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
+}
+
 /// `{"noise": {...}}` as a fill.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3868,6 +4283,7 @@ fn paints_or_structures(command: &Command) -> bool {
             | Command::TransformLayer(_)
             | Command::Pixels(_)
             | Command::Snapshot(_)
+            | Command::Filter(_)
     )
 }
 
@@ -3981,8 +4397,16 @@ fn job_extent(job: &Job, document: &Document) -> Extent {
             around(&mut points.iter().map(|p| (p.x, p.y)), brush.size / 2.0)
         }
         Job::Area {
-            shape: Some(rings), ..
+            shape: Some(Shape::Rings(rings)),
+            ..
         } => around(&mut rings.iter().flatten().copied(), 0.0),
+        Job::Area {
+            shape: Some(Shape::Mask(mask)),
+            ..
+        } => {
+            let r = mask.content_bounds();
+            (r.left as f32, r.top as f32, r.right as f32, r.bottom as f32)
+        }
         Job::Area { shape: None, .. } => whole,
         // Where it ends up isn't known until it's done: count where it starts.
         Job::Bucket { fill, .. } => (fill.x, fill.y, fill.x + 1.0, fill.y + 1.0),
@@ -6533,5 +6957,239 @@ mod tests {
               { "cmd": "gradient", "colors": ["#FF0000", "#0000FF"] } ] }"##,
         );
         assert!(e.contains("needs `from` and `to`"), "{e}");
+    }
+
+    // ---- Filters (phase 3, step 4) ---------------------------------------------
+
+    #[test]
+    fn a_filter_changes_a_layer_in_place_and_can_be_undone() {
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "layer", "name": "A" },
+            { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" },
+            { "cmd": "layer", "name": "B" },
+            { "cmd": "rect", "x": 150, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" },
+            { "cmd": "filter", "layer": "A", "blur": 6, "adjust": { "saturation": -1 } } ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            record_undo: true,
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let undo = player.take_undo(&mut document);
+        let a = &document.layers()[0].surface;
+        assert!(a.pixel(70, 50).a > 200);
+        assert_eq!(
+            (a.pixel(70, 50).r, a.pixel(70, 50).g),
+            (a.pixel(70, 50).a, a.pixel(70, 50).a),
+            "grey now"
+        );
+        assert!(a.pixel(93, 50).a > 0, "blurred outwards");
+        let b = &document.layers()[1].surface;
+        assert_eq!(
+            b.pixel(170, 50),
+            Rgba8::new(255, 0, 0, 255),
+            "the other layer is untouched"
+        );
+        assert_eq!(b.pixel(193, 50).a, 0);
+        // The filter is one undo step that puts the layer back.
+        let mut group = CommandGroup::new("script", undo);
+        group.undo(&mut document);
+        let empty = document.layers()[0].surface.tile_count() == 0;
+        assert!(empty, "everything undone");
+        // And the report says the filter painted on A.
+        assert!(player.report().painted_by.values().any(|c| c.contains(&6)));
+    }
+
+    #[test]
+    fn a_filtered_group_draws_on_its_own_then_lands_on_the_layers() {
+        // A glow around a sun: the halo reaches beyond the shape, but a
+        // dark shape on the same layer from before is untouched.
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#000000" },
+            { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "#202020" },
+            { "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 10, "threshold": 0.5, "strength": 1 } }, "commands": [
+              { "cmd": "ellipse", "center": [100, 50], "radius": 15, "fill": "#FFFFC0" } ] } ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        assert!(layer.pixel(118, 50).a > 0, "a halo outside the sun");
+        assert_eq!(
+            layer.pixel(20, 20),
+            Rgba8::new(0x20, 0x20, 0x20, 255),
+            "untouched"
+        );
+        assert_eq!(document.layers().len(), 1);
+        // A use with a shadow on two layers: one shadow of the whole
+        // silhouette, on the lower layer, under the drawing.
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "#FFD000" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "#FFD000" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            { "cmd": "use", "name": "duck", "translate": [100, 100],
+              "filter": { "shadow": { "offset": [20, 20], "blur": 0, "color": "#000000FF" } } } ] }"##,
+        );
+        let body = &document.layers()[0].surface;
+        let head = &document.layers()[1].surface;
+        assert_eq!(
+            body.pixel(100, 100),
+            Rgba8::new(255, 208, 0, 255),
+            "the body"
+        );
+        assert_eq!(
+            head.pixel(120, 80),
+            Rgba8::new(255, 208, 0, 255),
+            "the head"
+        );
+        assert_eq!(
+            body.pixel(145, 120),
+            Rgba8::BLACK,
+            "the body's shadow, on the body layer"
+        );
+        assert_eq!(
+            body.pixel(145, 85),
+            Rgba8::BLACK,
+            "the head's shadow too, on the body layer"
+        );
+        assert_eq!(
+            head.pixel(145, 85).a,
+            0,
+            "nothing on the head layer but the head"
+        );
+        assert_eq!(
+            body.pixel(125, 105),
+            Rgba8::new(255, 208, 0, 255),
+            "the shadow is under the body"
+        );
+        assert_eq!(
+            seen(&document, 125, 75),
+            Rgba8::new(255, 208, 0, 255),
+            "and under the head"
+        );
+        // Without the filter, the same pixels, minus the shadow.
+        let plain = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "#FFD000" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "#FFD000" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            { "cmd": "use", "name": "duck", "translate": [100, 100] } ] }"##,
+        );
+        assert_eq!(
+            plain.layers()[1].surface.pixel(120, 80),
+            head.pixel(120, 80)
+        );
+        assert_eq!(seen(&plain, 145, 120), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn from_below_flattens_the_picture_onto_a_layer() {
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "layer", "name": "Sky" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 50, "fill": "#0000FF" },
+            { "cmd": "layer", "name": "Hidden", "visible": false },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#00FF00" },
+            { "cmd": "layer", "name": "Ground" },
+            { "cmd": "rect", "x": 0, "y": 50, "width": 100, "height": 50, "fill": "#FF0000" },
+            { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.5 },
+            { "cmd": "filter", "gradient_map": { "colors": ["#000000", "#FFFFFF"] } } ] }"##,
+        );
+        let mood = &document.layers()[3].surface;
+        assert_eq!(mood.pixel(50, 25).a, 255, "copied from below");
+        assert_eq!(mood.pixel(50, 75).a, 255);
+        assert_eq!(mood.pixel(50, 25).g, mood.pixel(50, 25).r, "mapped to grey");
+        assert!(
+            mood.pixel(50, 75).r > mood.pixel(50, 25).r,
+            "red is lighter than blue"
+        );
+        // Seen: half the original colour, half the grey.
+        let sky = seen(&document, 50, 25);
+        assert!(sky.b > sky.r && sky.r > 0, "{sky:?}");
+        assert!(sky.b < 255 && sky.b > 100, "half way: {sky:?}");
+        let bad = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "layer", "name": "A", "from": "above" } ] }"##,
+        );
+        assert!(bad.contains("`from` is \"below\""), "{bad}");
+    }
+
+    #[test]
+    fn filter_numbers_may_be_keyframes_and_scale_with_the_group() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "pulse": { "frames": 5, "commands": [
+            { "cmd": "group", "filter": { "shadow": { "offset": { "keys": [[0, [0, 0]], [4, [40, 0]]] }, "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" } ] } ] } } }"##;
+        let frame = play_frame(script, Some("pulse"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "filter": { "shadow": { "offset": [20, 0], "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_eq!(seen(&by_hand, 100, 50), Rgba8::BLACK, "offset 20");
+        // In a group scaled by 2, the offset doubles.
+        let scaled = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "scale": 2, "filter": { "shadow": { "offset": [20, 0], "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 25, "y": 15, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(seen(&scaled, 120, 50), Rgba8::BLACK, "offset 40");
+        assert_eq!(seen(&scaled, 70, 50), Rgba8::new(255, 0, 0, 255));
+    }
+
+    #[test]
+    fn filter_mistakes_are_explained() {
+        let base = r##"{ "palette": { "k": "#000000" }, "commands": [
+            { "cmd": "canvas", "width": 20, "height": 20 CANVAS },
+            { "cmd": "rect", "x": 5, "y": 5, "width": 5, "height": 5, "fill": "k" },
+            FILTER ] }"##;
+        let plain = |filter: &str| error(&base.replace("CANVAS", "").replace("FILTER", filter));
+        let e = plain(r##"{ "cmd": "filter" }"##);
+        assert!(e.contains("give at least one of `blur`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "blur": -1 }"##);
+        assert!(e.contains("`blur`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "adjust": { "saturation": 3 } }"##);
+        assert!(e.contains("`saturation` is from -1 to 1"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "glow": { "size": 3 } }"##);
+        assert!(e.contains("unknown field `size`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "layer": "Nope", "blur": 2 }"##);
+        assert!(e.contains("Nope"), "{e}");
+        let e = plain(r##"{ "cmd": "group", "filter": { "wobble": 2 }, "commands": [] }"##);
+        assert!(e.contains("`filter`: unknown field `wobble`"), "{e}");
+        // A pixel canvas refuses anything that melts pixels.
+        let pixel = |filter: &str| {
+            error(
+                &base
+                    .replace("CANVAS", r##", "pixel": { "supersample": 1 }"##)
+                    .replace("FILTER", filter),
+            )
+        };
+        let e = pixel(r##"{ "cmd": "filter", "blur": 2 }"##);
+        assert!(e.contains("a pixel canvas can't take blur"), "{e}");
+        let e = pixel(r##"{ "cmd": "filter", "shadow": { "blur": 2 } }"##);
+        assert!(e.contains("can't take a shadow with blur"), "{e}");
+        let ok = base
+            .replace("CANVAS", r##", "pixel": { "supersample": 1 }"##)
+            .replace("FILTER", r##"{ "cmd": "filter", "shadow": { "offset": [2, 2], "blur": 0, "color": "k" }, "adjust": { "brightness": 0.1 } }"##);
+        play(&ok);
     }
 }

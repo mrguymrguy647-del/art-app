@@ -174,6 +174,9 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - Clouds, water, rock, skin: a `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}`;
   paper grain: `{"texture": "paper"}` on a `multiply` layer at 0.3. Patterns move with the
   group or symbol they're written in.
+- Depth and light: `filter` with `blur` + `adjust` (less saturation) on far layers; a `group`
+  with `"filter": {"glow": ...}` for a sun; a `use` with `"filter": {"shadow": ...}` for a
+  character; a `"from": "below"` layer with a `gradient_map` at 0.4 to unify the picture.
 - Shading inside a shape: a `"clip": true` layer above the shape's layer (shows only on its
   paint); `"lock": true` recolours a layer without changing its edges; a group's `mask` (an
   area, `{"symbol": ...}` or `{"layer": ...}`) keeps a reflection on the water.

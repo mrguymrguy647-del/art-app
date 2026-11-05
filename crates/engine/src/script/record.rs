@@ -12,8 +12,9 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use super::{
-    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd, GradientCmd,
-    LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd, TransformLayerCmd,
+    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd, FilterCmd,
+    GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
+    TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
@@ -224,6 +225,14 @@ pub fn transform_layer(name: &str, command: &TransformLayerCmd) -> Vec<Command> 
     })]
 }
 
+/// A filter applied to the layer called `name` (the app's Filters menu).
+pub fn filter(name: &str, command: &FilterCmd) -> Vec<Command> {
+    vec![Command::Filter(FilterCmd {
+        layer: Some(name.to_owned()),
+        ..command.clone()
+    })]
+}
+
 /// Changing a layer's name, visibility, opacity or blend mode.
 pub fn layer_changes(before: &LayerProps, after: &LayerProps) -> Vec<Command> {
     let mut commands = Vec::new();
@@ -408,6 +417,16 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             option(&mut c.color, f);
             if let Some(colors) = &mut c.colors {
                 colors.iter_mut().for_each(&mut *f);
+            }
+        }
+        Command::Filter(c) => {
+            if let Some(Value::Object(shadow)) = &mut c.shadow
+                && let Some(color) = shadow.get_mut("color")
+            {
+                colors_in_value(color, f);
+            }
+            if let Some(map) = &mut c.gradient_map {
+                paint(map, f);
             }
         }
         Command::Use(c) => {

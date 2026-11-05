@@ -225,6 +225,7 @@ dependencies = [
  "art_engine",
  "eframe",
  "rfd",
+ "serde_json",
  "windows",
  "winit",
  "winresource",

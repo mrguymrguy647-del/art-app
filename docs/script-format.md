@@ -119,6 +119,7 @@ another layer). Then applies any settings given:
 | `visible` | `true` / `false`. |
 | `clip` | `true`: a clipping layer, shown only where the nearest unclipped layer below it has paint. See [Clipping and masks](#clipping-and-masks). |
 | `lock` | `true`: the alpha lock. Painting only recolours what's already on the layer; the eraser does nothing. |
+| `from` | `"below"`: fill the layer with everything below it, flattened (hidden layers left out, no paper), for a [filter](#filters) over the whole picture. |
 | `above` / `below` | Put the layer just above / below another layer (also moves an existing layer). |
 
 ### `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`
@@ -388,6 +389,7 @@ of `hatch` and `scatter`.
 | `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
 | `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
+| `filter` | Filters on what the group draws, on its own, before it lands on the layers: `{ "glow": {...} }`, `{ "shadow": {...} }`... See [Filters](#filters). |
 
 The order is always the same: around `origin`, first **mirror**, then **scale**, then **rotate**;
 then **translate**. So `"mirror": "x", "origin": [64, 0]` flips a drawing left to right around
@@ -420,7 +422,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 | | |
 |---|---|
 | `define` | `name` and `commands`. Only at the top level of the script (not inside a group, symbol or repeat), each name once, and before it's used. |
-| `use` | `name`, the group fields above (`mask` too), and `colors`. |
+| `use` | `name`, the group fields above (`mask` and `filter` too), and `colors`. |
 | `colors` | Colours to swap for this use: `{ "yellow": "#C04040" }` paints red wherever the symbol paints the palette colour `yellow`. The left side can also be a hex code (`"#F2C230"`). For enemy variants, team colours and so on. |
 
 - **Symbols can use other symbols.** A symbol using itself, even through others, is an error:
@@ -626,6 +628,51 @@ fill and dab inside is multiplied by the mask. A mask is one of:
 - On a pixel canvas, a mask has hard edges (a pixel is in or out).
 - A mask that covers nothing (off the canvas, an empty layer) is a warning: the group paints
   nothing.
+
+## Filters
+
+```json
+{ "cmd": "filter", "blur": 8 }
+{ "cmd": "filter", "layer": "Far hills", "blur": 3, "adjust": { "saturation": -0.3, "brightness": 0.1 } }
+{ "cmd": "filter", "glow": { "radius": 24, "threshold": 0.75, "strength": 0.8 } }
+{ "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.5 }
+{ "cmd": "filter", "gradient_map": { "stops": [[0, "#1B2433"], [0.5, "#C2651C"], [1, "#FFF3DC"]] } }
+{ "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 40, "strength": 1 } }, "commands": [
+  { "cmd": "ellipse", "center": [520, 90], "radius": 34, "fill": "#FFF2B0" } ] }
+{ "cmd": "use", "name": "duck", "translate": [64, 96], "filter": { "shadow": { "offset": [6, 8], "blur": 6, "color": "#00000070" } } }
+```
+
+The **`filter` command** changes everything on a layer (`layer`, or the selected one) in place.
+Give any of these; they're applied in this order (use two `filter` commands for another order):
+
+| | |
+|---|---|
+| `adjust` | `hue` (degrees), then `saturation`, `brightness`, `contrast`, each -1 to 1 (0 = as is). |
+| `gradient_map` | Every pixel recoloured by its lightness through `stops` or `colors` (dark to light); opacity stays. |
+| `blur` | Pixels of softening (up to 500). |
+| `glow` | `radius` (how far, default 16), `threshold` (how light a pixel must be, 0 to 1, default 0.7), `strength` (default 1): the light parts spread and are added on top, brighter inside, a halo outside. |
+| `shadow` | `offset` `[x, y]` (default `[4, 4]`), `blur` (default 4), `color` (default half-transparent black): a soft copy of the silhouette, behind. |
+
+Every number may be keyframes. Sizes are in the drawing units of where the command is, so in a
+group scaled by 2 a blur of 3 is 6 pixels. In the app, **Filters** in the top bar has the same
+five for the selected layer, each one undo step, written down by Export strokes.
+
+**The whole picture:** `"from": "below"` on a layer fills it with everything below, flattened.
+A gradient map or an adjustment on that layer then unifies the picture; at `opacity` 0.5, half
+way.
+
+**`filter` on a group or `use`** applies to what the group draws, on its own, before it lands
+on the layers: a sun gets a glow, a duck a drop shadow, a far hill a haze, without touching
+what's already there. When the group paints on several layers (a symbol that switches layers),
+`blur`, `glow`, `adjust` and `gradient_map` are applied to each layer's part separately, and
+each part lands on its own layer. A `shadow` is made from the **combined silhouette** of all the
+parts and laid on the **lowest** of those layers, under everything the group drew, so one shadow
+falls behind the whole duck and no seam shows between its layers. Filtered groups can nest.
+
+- A `fill` (paint bucket) inside a filtered group spreads over the real picture, as it would
+  outside.
+- **Pixel canvas:** `blur`, `glow` and a `shadow` with blur are refused (pixels would melt);
+  `shadow` with `"blur": 0`, `adjust` and `gradient_map` work and snap to the palette.
 
 ## Animations: frames and timing
 

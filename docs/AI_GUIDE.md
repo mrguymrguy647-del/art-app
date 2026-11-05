@@ -109,7 +109,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | Command | Use it for |
 |---|---|
 | `canvas` | First command: `width`, `height`, `paper`; or `open` an `.artapp` to continue a picture. |
-| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only). |
+| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only), `from: "below"` (a flattened copy of everything below). |
 | `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings; `tip` (`round`, `square`, `bristle`, `chalk`, `leaf`, `grass`, `sparkle`, or a PNG file), `angle`, `dynamics` (`follow`, `size`, `angle`, `opacity`, `scatter`, `hue`, `lightness`, `saturation`). |
 | `stroke` / `erase` | Pen-like line through `points` (`[x, y]` or `[x, y, pressure]`). |
 | `line` | Straight line, `from` → `to`, tapered (default `taper` 0.25). |
@@ -121,6 +121,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
 | `stamp` | Copies of a `symbol` or dabs of a `tip` along a path, every `spacing`, turned to follow, varied in `size`, `angle` and `colors`. |
+| `filter` | On a layer: `blur`, `glow`, `shadow`, `adjust` (hue, saturation, brightness, contrast), `gradient_map`. On a `group`/`use` as `"filter": {...}`: applied to what it draws alone (a sun's glow, a duck's drop shadow). |
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
@@ -232,6 +233,20 @@ light hits. Or `stamp` the `grass` tip along the ground line, which gives real b
 ```json
 { "cmd": "stamp", "tip": "grass", "points": [[0, 900], [800, 880], [1600, 900]], "spacing": 5,
   "size": [30, 60], "angle": [-12, 12], "follow": false, "colors": ["grass1", "grass2", "grass3"] }
+```
+
+**Depth and light with filters:** far things get `blur` 2–4 and `adjust` with lower
+saturation and a little more brightness (haze); a sun or lamp is a `group` with a `glow`
+filter; a character is a `use` with a `shadow` filter (one shadow behind all its layers). To
+unify the whole picture at the end: `{"cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.4}`
+then a `filter` with a `gradient_map` from the shadow colour through a mid tone to the
+highlight colour.
+
+```json
+{ "cmd": "filter", "layer": "Far hills", "blur": 3, "adjust": { "saturation": -0.35, "brightness": 0.12 } },
+{ "cmd": "use", "name": "duck", "translate": [300, 400], "filter": { "shadow": { "offset": [8, 10], "blur": 8, "color": "#00000080" } } },
+{ "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.4 },
+{ "cmd": "filter", "gradient_map": { "stops": [[0, "#1B2433"], [0.5, "#C2651C"], [1, "#FFF3DC"]] } }
 ```
 
 **Clouds, water, rock:** a noise fill. Sky: a `gradient` with an `area` and a noise `fill` whose

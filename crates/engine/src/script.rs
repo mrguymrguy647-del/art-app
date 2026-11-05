@@ -146,6 +146,7 @@ pub enum Command {
     Pixels(PixelsCmd),
     Snapshot(SnapshotCmd),
     Stamp(StampCmd),
+    Filter(FilterCmd),
     Group(GroupCmd),
     Define(DefineCmd),
     Use(UseCmd),
@@ -180,6 +181,7 @@ impl Command {
             Command::Pixels(_) => "pixels",
             Command::Snapshot(_) => "snapshot",
             Command::Stamp(_) => "stamp",
+            Command::Filter(_) => "filter",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
             Command::Use(_) => "use",
@@ -247,6 +249,10 @@ pub struct LayerCmd {
     /// `true`: the alpha lock, so painting only recolours what's there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock: Option<bool>,
+    /// `"below"`: fill the layer with everything below it, flattened
+    /// (for a filter over the whole picture).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub above: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -417,6 +423,54 @@ pub struct StampCmd {
     pub with: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+}
+
+/// `filter`: changes everything on a layer (`layer`, or the selected
+/// one) in place: `adjust`, then `gradient_map`, `blur`, `glow` and
+/// `shadow`, whichever are given. Every number may be keyframes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Pixels of softening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blur: Option<Value>,
+    /// `{"radius": 24, "threshold": 0.75, "strength": 0.8}`: light
+    /// pixels spread and added on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<Value>,
+    /// `{"offset": [6, 8], "blur": 6, "color": "#00000070"}`: a soft
+    /// copy of the silhouette behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<Value>,
+    /// `{"hue": 0, "saturation": 0, "brightness": 0, "contrast": 0}`:
+    /// degrees, then -1 to 1 each.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust: Option<Value>,
+    /// `{"stops": [[0, "dark"], [1, "light"]]}` or `{"colors": [...]}`:
+    /// every pixel recoloured by its lightness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_map: Option<Value>,
+}
+
+impl FilterCmd {
+    /// The filter fields as one object (as a group's `filter` is written).
+    pub fn fields(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        for (name, value) in [
+            ("blur", &self.blur),
+            ("glow", &self.glow),
+            ("shadow", &self.shadow),
+            ("adjust", &self.adjust),
+            ("gradient_map", &self.gradient_map),
+        ] {
+            if let Some(value) = value {
+                object.insert(name.to_owned(), value.clone());
+            }
+        }
+        Value::Object(object)
+    }
 }
 
 /// `stroke` / `erase`: paints (or erases) through the points with the
@@ -751,6 +805,10 @@ pub struct GroupCmd {
     /// paint) or `{"not": ..}` (everything but one of those).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<Value>,
+    /// Filters applied to what the group draws, on its own, before it's
+    /// laid on the layers: the fields of `filter` (see `FilterCmd`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -797,6 +855,9 @@ pub struct UseCmd {
     /// As on a group: paint only inside this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<Value>,
+    /// As on a group: filters on what it draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
     /// Colours to paint instead of the symbol's: `{"yellow": "#C04040"}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<BTreeMap<String, Value>>,

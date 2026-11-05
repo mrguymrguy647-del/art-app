@@ -298,7 +298,7 @@ impl CanvasView {
         }
     }
 
-    fn show_notice(&mut self, text: &'static str) {
+    pub fn show_notice(&mut self, text: &'static str) {
         self.notice = Some((text, Instant::now()));
     }
 

@@ -1042,3 +1042,43 @@ put it:
   patterns; the PNG writing is most of the rest). Nothing here needs
   caching yet.
 
+## 62. Filters: in place on a layer, or on a group's own drawing (phase 3, step 4)
+
+- **One block of floats.** A filter copies the layer's painted area
+  (grown by the filter's reach) into a block of premultiplied floats,
+  works there, and writes back tile by tile, keeping the old tiles for
+  undo: the same shape as `transform_layer`. Premultiplied, so a blurred
+  red edge fades to clear red, never to grey.
+- **Blur is three box blurs each way**, with the box widths chosen for
+  a Gaussian of sigma = radius / 2, as running sums: the cost doesn't
+  depend on the radius. Glow is "the light parts, blurred, added";
+  shadow is "the silhouette, moved, blurred, tinted, underneath".
+- **A filtered group paints on a scratch picture**, one scratch layer
+  per real layer it touches (the same scratch stack that captures a
+  symbol's silhouette for a mask: one mechanism, with `single` saying
+  whether everything goes on one layer). When the group ends, each
+  part is filtered on its own and laid on its layer through the alpha
+  lock; a shadow is made once from the combined silhouette and laid on
+  the lowest layer first, so it sits under all the parts and no seam
+  shows between a head and a body on different layers. Nested filtered
+  groups lay onto the scratch of the group around them. A bucket fill
+  inside spreads over the real picture (its region is worked out
+  there), not the empty scratch.
+- **Order:** `adjust`, `gradient_map`, `blur`, `glow`, `shadow`, fixed,
+  because JSON objects have no reliable order; two `filter` commands
+  give any other order. Sizes scale with the frame's `detail`, so a
+  blur inside a scaled group scales too, and a preview blurs less.
+- **`from: "below"`** is just "composite the visible layers below onto
+  this layer" (no paper), recorded for undo like painting. It's the
+  only way to filter the whole picture, and it's enough.
+- **The app's Filters menu** writes a `filter` command, reads it back
+  into engine filters and applies it: so Export strokes replays exactly
+  what the window did, like Layer → Transform.
+- **Cost** (release build, 1920 x 1080 with a full-canvas noise fill
+  that takes 0.20 s on its own): blur 4 / 40 / 200 px: 0.33 / 0.34 /
+  0.44 s; glow 0.38 s; a blurred shadow 0.38 s; adjust 0.36 s; gradient
+  map 0.24 s. A 96-frame 640 x 360 animation with a glowing sun, a
+  moving shape with a blurred shadow and a gradient-mapped "from below"
+  layer on every frame: 1.5 s for all the frames. Blur is the costliest
+  thing in phase 3 so far and still well under the painting itself.
+
