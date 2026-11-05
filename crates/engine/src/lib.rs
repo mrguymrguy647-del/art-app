@@ -20,6 +20,7 @@ pub mod pen;
 pub mod random;
 pub mod script;
 pub mod smoothing;
+pub mod sprites;
 pub mod stroke;
 pub mod surface;
 pub mod text;

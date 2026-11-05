@@ -542,6 +542,11 @@ saved as `name-walk-003.png`. Then:
 - `--gif`: the animation as `name-walk.gif`, at its fps, looping if it loops, for showing a
   person. `--bg` puts a colour behind see-through frames; `--zoom 4` enlarges with sharp pixels.
 
+`art-cli export script.json` writes the animations for a game or a video: a sprite sheet with
+its JSON (`--sheet`, the default: see [sprite-sheet-format.md](sprite-sheet-format.md)), every
+frame as a PNG (`--frames`), a GIF (`--gif`) and an MP4 (`--mp4`, through ffmpeg), with `--scale 8`
+for sharp enlargement and `--bg` behind see-through parts.
+
 `art-cli check` plays every frame of every animation, so a mistake in any of them is found
 (`animation "walk" > command 2 (use "duck"): ...`), and prints a **motion summary**: for each
 named group and `use`, where its middle is in the first and last frame and its biggest step

@@ -801,3 +801,22 @@ see-through sprite in one.
 - **`check` says which frame it shows** and takes `--animation` and
   `--frame` to show another. Before, it silently showed frame 0 of the
   first animation alphabetically.
+
+## 54. Exports: one sheet, one JSON, frames, GIF, MP4 (phase 2, step 4)
+`art-cli export` paints every frame once (full size, see-through) and
+writes what was asked for. The sprite sheet is built in the engine
+(`sprites.rs`), so the app can write the same file: one row per
+animation, cells the frame size, frames numbered across the grid row
+by row. That numbering is what a game gets from cutting the sheet into
+equal cells, so the JSON only has to list frame numbers per animation,
+plus fps, loop and the pivot. Nothing in the JSON is needed to *find*
+a frame, only to play it. The pivot defaults to the bottom centre so a
+character stands on its feet whichever animation plays.
+
+MP4 goes through ffmpeg when it's installed (H.264, sizes padded to
+even numbers, fast start), on the paper colour unless `--bg` says
+otherwise, since a video has no see-through background. Without
+ffmpeg, the frames are written and the exact command printed: better
+than a dependency on a video library in the engine. `--scale` enlarges
+with sharp pixels, and the JSON records it, so a sheet exported at 8×
+for people is as usable as one at 1× for the game.

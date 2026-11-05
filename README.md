@@ -108,6 +108,8 @@ art-cli render examples/sunset.json --preview --layers "Sky,Sun"   # only some l
 art-cli render sprite.json --transparent --bg "#4080A0"  # see-through PNG, also shown on a colour
 art-cli check examples/sunset.json                       # mistakes, and where everything was drawn
 art-cli check examples/sunset.json --detail              # ...including groups inside groups
+art-cli render examples/duck-animated.json --animation walk --frame-sheet --transparent  # every frame, numbered
+art-cli export examples/duck-animated.json --gif --mp4   # sprite sheet + JSON, GIFs and videos
 art-cli info out/sunset.artapp                           # size, paper and layers of a picture
 art-cli info examples/sunset.json                        # ...and which commands painted each layer
 ```
@@ -129,6 +131,8 @@ art-app/
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
 ├── examples/             example scripts (sunset, night hills, two ducks, duck walk cycle and sheet)
 ├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page
+├── docs/animation-design.md   how animation, sprite sheets and pixel art fit the format
+├── docs/sprite-sheet-format.md the exported sheet's PNG and JSON, for games
 ├── skills/art-app/       the same know-how as a skill for Claude (SKILL.md)
 ├── docs/decisions.md     why we chose things, in plain words
 ├── docs/script-format.md painting scripts: every command, with examples
@@ -151,6 +155,8 @@ art-app/
     │       ├── random.rs     random numbers that repeat exactly (for scripts)
     │       ├── transform.rs  moving, turning, resizing, mirroring (groups, previews)
     │       ├── layer_transform.rs  moving, turning, resizing, mirroring a layer's pixels
+    │       ├── sprites.rs    sprite sheets with their JSON
+    │       ├── gif.rs        animated GIFs
     │       ├── text.rs       text: letter shapes from the built-in font, laid out in lines
     │       ├── image.rs      flat images: crop, shrink, enlarge, save PNG
     │       ├── script.rs     painting scripts: the format, reading, errors
@@ -168,6 +174,7 @@ art-app/
     │       ├── main.rs        render / check / info commands
     │       ├── sheet.rs       contact sheets (every stage in one image)
     │       ├── grid.rs        the --grid: lines and coordinates over a picture
+    │       ├── export.rs      export: sprite sheet + JSON, frames, GIF, MP4
     │       └── font.rs        a tiny pixel font for the labels
     └── app/              the program: window and interface (egui)
         ├── build.rs      puts the icon into ArtApp.exe

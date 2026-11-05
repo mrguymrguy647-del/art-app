@@ -21,6 +21,7 @@ macro_rules! complain {
     };
 }
 
+mod export;
 mod font;
 mod grid;
 mod sheet;
@@ -52,6 +53,8 @@ USAGE
                                            (--detail: every group and use, also
                                            the ones inside others; --animation
                                            and --frame choose the frame shown)
+  art-cli export <script.json> [options]   an animated script as a sprite sheet
+                                           with its JSON, frames, a GIF or an MP4
   art-cli info <picture.artapp>            describe a saved picture: its layers
   art-cli info <script.json>               the same for the picture a script
                                            paints, with the commands that
@@ -91,11 +94,25 @@ RENDER OPTIONS
   --grid; <name>.png and <name>.artapp never do. At full size, the picture
   with them is saved as <name>-view.png.
 
+EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
+  --out <folder>     where to save (default: out)
+  --sheet            <name>.png (one row per animation) and <name>.json: the
+                     default when nothing else is asked for
+  --frames           every frame as <name>-<animation>-<frame>.png
+  --gif              <name>-<animation>.gif, at the animation's fps
+  --mp4              <name>-<animation>.mp4 through ffmpeg (or the frames and
+                     the exact ffmpeg command to run, if it isn't installed)
+  --scale <n>        n times bigger, with sharp pixels (for pixel art)
+  --bg <#RRGGBB>     behind see-through parts of GIFs and MP4s (an MP4 uses
+                     the paper colour if not given)
+  --animation <name> only this animation
+
 EXAMPLES
   art-cli render examples/sunset.json --preview --sheet
   art-cli render examples/sunset.json --out render --snapshots
   art-cli render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
   art-cli render examples/sunset.json --preview --layers \"Sky,Sun\"
+  art-cli export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
 
 The script format is described in docs/script-format.md.";
 
@@ -107,6 +124,9 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("render") => parse_render(&args[1..]).and_then(|options| render(&options)),
         Some("check") => parse_check(&args[1..]).and_then(|options| check(&options)),
+        Some("export") => {
+            export::parse_export(&args[1..]).and_then(|options| export::export(&options))
+        }
         Some("info") => match &args[1..] {
             [picture] => info(Path::new(picture)),
             _ => Err(Problem::Usage(

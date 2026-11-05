@@ -605,3 +605,108 @@ fn check_counts_use_over_every_frame_and_says_which_frames_warn() {
     assert!(errors.contains("no frame 9"), "{errors}");
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn export_writes_the_sheet_its_json_frames_and_a_gif() {
+    let out = folder("export");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
+    let output = art_cli()
+        .args([
+            "export",
+            script.to_str().unwrap(),
+            "--sheet",
+            "--frames",
+            "--gif",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("sheet 1024 x 256, 2 animations, 12 frames"),
+        "{text}"
+    );
+    // The JSON says where the frames are, as docs/sprite-sheet-format.md promises.
+    let json = std::fs::read_to_string(out.join("duck-animated.json")).unwrap();
+    for expected in [
+        "\"image\": \"duck-animated.png\"",
+        "\"frame\": { \"width\": 128, \"height\": 128 }",
+        "\"columns\": 8",
+        "\"pivot\": [64.0,116.0]",
+        "\"idle\": {\"row\":0,\"frames\":[0,1,2,3],\"fps\":6.0,\"loop\":true}",
+        "\"walk\": {\"row\":1,\"frames\":[8,9,10,11,12,13,14,15],\"fps\":12.0,\"loop\":true}",
+    ] {
+        assert!(
+            json.contains(expected),
+            "{expected:?} missing from:\n{json}"
+        );
+    }
+    assert!(out.join("duck-animated.png").exists());
+    assert!(out.join("duck-animated-walk-007.png").exists());
+    assert!(out.join("duck-animated-idle-003.png").exists());
+    assert!(
+        std::fs::read(out.join("duck-animated-walk.gif"))
+            .unwrap()
+            .starts_with(b"GIF89a")
+    );
+
+    // --scale enlarges with sharp pixels, and the JSON says so.
+    let scaled = art_cli()
+        .args([
+            "export",
+            script.to_str().unwrap(),
+            "--animation",
+            "walk",
+            "--scale",
+            "3",
+            "--out",
+        ])
+        .arg(out.join("big"))
+        .output()
+        .unwrap();
+    assert!(scaled.status.success());
+    let json = std::fs::read_to_string(out.join("big/duck-animated.json")).unwrap();
+    assert!(
+        json.contains("\"frame\": { \"width\": 384, \"height\": 384 }"),
+        "{json}"
+    );
+    assert!(json.contains("\"scale\": 3"), "{json}");
+    assert!(json.contains("\"pivot\": [192.0,348.0]"), "{json}");
+    assert!(!json.contains("\"idle\""), "only the walk");
+
+    // An MP4 through ffmpeg, or the frames and the command when there's none.
+    let video = art_cli()
+        .args([
+            "export",
+            script.to_str().unwrap(),
+            "--animation",
+            "idle",
+            "--mp4",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(video.status.success());
+    let text = String::from_utf8_lossy(&video.stdout);
+    let made = out.join("duck-animated-idle.mp4").exists();
+    let told = text.contains("ffmpeg -y -loglevel error -framerate 6")
+        && out.join("duck-animated-idle-mp4-frames/003.png").exists();
+    assert!(made || told, "{text}");
+
+    let picture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sunset.json");
+    let wrong = art_cli()
+        .args(["export", picture.to_str().unwrap(), "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(wrong.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&wrong.stderr).contains("no animations"));
+    std::fs::remove_dir_all(out).ok();
+}
