@@ -46,7 +46,8 @@ picture, exactly as before.
 - Per-frame durations are left out: hold a pose with a `step` keyframe or repeated keys, and
   Duck Forge's `Animation::new(frames, fps)` takes one fps anyway.
 - `pivot` (top level, canvas pixels) is the character's anchor point, for the export. Default:
-  the middle of the frame.
+  the bottom centre of the frame, `[width / 2, height]`, so a character stands on its feet and
+  switching from idle to walk never moves it up or down in a game.
 
 **Determinism.** A frame is a function of the script and the frame number: no clocks, no
 randomness beyond the script's seeds. Random patterns (`scatter`, `jitter`) are the same in every
@@ -76,6 +77,26 @@ as keyframes instead of a number:
   `step` (holds the earlier value until the next key). `ease` on the field sets it for every
   segment; a third element on a key, like `[8, [64, 100], "out"]`, sets the easing *into* that
   key. Five named curves, no custom curves.
+- **`shift`** plays the same keys later: `{ "keys": [...], "shift": 4 }` is the motion 4 frames
+  late, wrapping round in a looping animation. A walk's far leg, arms, wings and tail are the near
+  leg's motion shifted half a cycle, so one set of keys serves all of them:
+
+```json
+{ "cmd": "use", "name": "duck", "translate": [64, 100],
+  "with": { "near_leg": { "keys": [[0, -25], [4, 25], [8, -25]] },
+            "far_leg":  { "keys": [[0, -25], [4, 25], [8, -25]], "shift": 4 } } }
+```
+
+- **A camera** for videos is nothing new: the whole scene in a group with keyframed `translate`
+  and `scale` (around `origin`, the point the camera looks at):
+
+```json
+{ "cmd": "group", "name": "camera", "origin": [320, 180],
+  "scale": { "keys": [[0, 1], [48, 1.6]], "ease": "in-out" },
+  "translate": { "keys": [[0, [0, 0]], [48, [-120, -40]]], "ease": "in-out" },
+  "commands": [ "...the scene..." ] }
+```
+
 - Keyframes work on: `group` and `use` (`translate`, `scale`, `rotate`, `origin`, `opacity`,
   `mirror`, the `name` of a `use`, `colors` and `with`), `text` (`at`, `size`, `rotate`,
   `opacity`, `text`) and `seed` on any command. Not on layers, brushes or shapes: move those by
@@ -104,7 +125,7 @@ gives values with `with`; what it doesn't give keeps the default. A parameter ca
 ```
 
 - `"$name"` replaces a whole value: a number, a list, a colour or a symbol name. No arithmetic
-  (no `"-$leg"`): a mirrored far leg is a second parameter or the same `use` with `"mirror": "x"`.
+  (no `"-$leg"`): the far leg is the near leg's keys with a `shift` of half the cycle.
   A test will show a `use` with parameters paints exactly the pixels of the pose written by hand.
 - **Flat feet: `"upright": true`** on a group or use undoes the turning of everything around it.
   The foot still moves with the leg (its position is turned), but it isn't turned itself, so it
@@ -128,7 +149,9 @@ format; what changes is how commands paint:
 - **Painted art into pixel art: `supersample`.** With `"supersample": 8`, commands are still
   written in canvas pixels (decimals allowed) but painted 8 times bigger, then shrunk to the
   canvas: each pixel is opaque if more than half of it was painted, and takes the palette colour
-  nearest its average. So the smooth 256-pixel duck becomes a clean 32-pixel duck. `outline`
+  that the most of its painted samples had (not the colour nearest their average: at the edge
+  between an outline and a fill, an average is a muddy colour that can snap to the wrong palette
+  entry). So the smooth 256-pixel duck becomes a clean 32-pixel duck. `outline`
   adds a one-pixel line of that colour wherever paint meets transparency, after shrinking.
 - **A locked palette.** On a pixel canvas, drawing commands must use palette names; a hex colour
   is an error, and `check` warns about any colour outside the palette (also after shrinking, it
