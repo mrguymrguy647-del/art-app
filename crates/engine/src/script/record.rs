@@ -169,6 +169,18 @@ pub fn move_layer(name: &str, index: usize) -> Vec<Command> {
     })]
 }
 
+/// A `scale` field: nothing for no change, one number when it's the
+/// same across and down, otherwise `[across, down]`.
+pub fn scale(across: f64, down: f64) -> Option<Value> {
+    if across == 1.0 && down == 1.0 {
+        None
+    } else if across == down {
+        Some(Value::from(across))
+    } else {
+        Some(Value::from(vec![across, down]))
+    }
+}
+
 /// Moving, turning, resizing or mirroring everything on a layer: the
 /// command as given (its `name` set to `name`).
 pub fn transform_layer(name: &str, command: &TransformLayerCmd) -> Vec<Command> {

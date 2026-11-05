@@ -15,6 +15,7 @@ mod paint_tool;
 mod pen_input;
 mod pen_test;
 mod playback;
+mod transform_tool;
 
 use art_engine::document::Document;
 use art_engine::history::History;
@@ -25,6 +26,7 @@ use files::{DEFAULT_SIZE, Files};
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
 use playback::{BarAction, Playback};
+use transform_tool::layer_menu;
 
 fn main() -> eframe::Result {
     let pen_input = PenInput::default();
@@ -193,21 +195,26 @@ impl eframe::App for ArtApp {
         // (as an undo step), so "Save changes?" knows about it.
         if ui.input(|i| i.viewport().close_requested()) {
             self.finish_playback(None);
+            self.canvas.finish_editing(&mut self.document);
         }
         let playing = self.playback.is_some();
+        // A transform (or other edit on the canvas) must be finished first.
+        let busy = playing || self.canvas.is_editing();
 
         // While a small window like "Save changes?" is open, or a script
         // is playing, shortcuts would act on the picture, so they're ignored.
-        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() || playing {
+        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() || busy {
             (false, false, None)
         } else {
             let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
             (undo, redo, self.files.shortcuts(ui.ctx()))
         };
 
+        let mut layer_action = None;
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                file_action = file_action.or(self.files.menu(ui, playing));
+                file_action = file_action.or(self.files.menu(ui, busy));
+                layer_action = layer_menu(ui, busy || self.screen != Screen::Canvas);
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
@@ -223,8 +230,8 @@ impl eframe::App for ArtApp {
                     Some(name) => format!("Redo {name} (Ctrl+Y)"),
                     None => "Nothing to redo".to_owned(),
                 };
-                let can_undo = self.history.undo_name().is_some() && !playing;
-                let can_redo = self.history.redo_name().is_some() && !playing;
+                let can_undo = self.history.undo_name().is_some() && !busy;
+                let can_redo = self.history.redo_name().is_some() && !busy;
                 undo |= ui
                     .add_enabled(can_undo, Button::new("Undo").min_size(size))
                     .on_hover_text(undo_tip)
@@ -244,6 +251,10 @@ impl eframe::App for ArtApp {
         if self.canvas.is_painting() {
             file_action = None;
         } else {
+            if let Some(action) = layer_action {
+                self.canvas
+                    .layer_action(action, &mut self.document, &mut self.history);
+            }
             if undo {
                 self.history.undo(&mut self.document);
             }

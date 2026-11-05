@@ -11,6 +11,7 @@
 //! Painting itself is handled by the painting tools (`paint_tool.rs`).
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use art_engine::brush::{MAX_SIZE, MIN_SIZE};
 use art_engine::document::{Background, Document};
@@ -30,6 +31,7 @@ use crate::color_panel::ColorPicker;
 use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
+use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
 const ZOOM_STEP: f32 = 1.25;
@@ -45,6 +47,8 @@ const SHARP_PIXELS_FROM_ZOOM: f32 = 2.0;
 const PREVIEW_UPDATES_PER_FRAME: usize = 64;
 /// The grey around the canvas.
 const BACKGROUND: Color32 = Color32::from_gray(48);
+/// How long a short message (like "nothing on this layer") stays up.
+const NOTICE_SHOWS_FOR: Duration = Duration::from_secs(3);
 
 /// A tile's texture on the graphics card, and how it was made.
 struct TileTexture {
@@ -88,6 +92,10 @@ pub struct CanvasView {
     tools: PaintTool,
     colors: ColorPicker,
     layers: LayersPanel,
+    /// Layer → Transform… in progress.
+    transform: Option<LayerTransform>,
+    /// A short message at the top of the canvas, and since when.
+    notice: Option<(&'static str, Instant)>,
 }
 
 impl Default for CanvasView {
@@ -104,6 +112,8 @@ impl Default for CanvasView {
             tools: PaintTool::default(),
             colors: ColorPicker::default(),
             layers: LayersPanel::default(),
+            transform: None,
+            notice: None,
         }
     }
 }
@@ -119,11 +129,18 @@ impl CanvasView {
         ink_events: Vec<InkEvent>,
     ) {
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui, document, history));
+        if self.transform.is_some() {
+            egui::Panel::bottom("transform_bar").show(ui, |ui| {
+                self.transform_bar(ui, document, history);
+            });
+        }
+        // While transforming, the panels wait (the layer is hidden meanwhile).
+        let panels_enabled = !self.locked && self.transform.is_none();
         egui::Panel::right("brush_panel")
             .exact_size(250.0)
             .show(ui, |ui| {
                 let actions = ui
-                    .add_enabled_ui(!self.locked, |ui| {
+                    .add_enabled_ui(panels_enabled, |ui| {
                         brush_panel(ui, &mut self.tools, &mut self.colors)
                     })
                     .inner;
@@ -142,7 +159,9 @@ impl CanvasView {
         egui::Panel::left("layers_panel")
             .exact_size(210.0)
             .show(ui, |ui| {
-                ui.add_enabled_ui(!self.locked, |ui| self.layers.ui(ui, document, history));
+                ui.add_enabled_ui(panels_enabled, |ui| {
+                    self.layers.ui(ui, document, history);
+                });
             });
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
@@ -164,6 +183,70 @@ impl CanvasView {
         self.tools.is_painting()
     }
 
+    /// True while something must be finished first (a transform): the
+    /// menus, undo and redo wait meanwhile.
+    pub fn is_editing(&self) -> bool {
+        self.transform.is_some()
+    }
+
+    /// Ends whatever is in progress, for when the window closes: a
+    /// transform that wasn't applied is cancelled.
+    pub fn finish_editing(&mut self, document: &mut Document) {
+        if let Some(transform) = self.transform.take() {
+            transform.cancel(document);
+        }
+    }
+
+    /// Does what was chosen in the Layer menu.
+    pub fn layer_action(
+        &mut self,
+        action: LayerAction,
+        document: &mut Document,
+        history: &mut History,
+    ) {
+        match action {
+            LayerAction::FlipHorizontal | LayerAction::FlipVertical => {
+                let horizontal = action == LayerAction::FlipHorizontal;
+                if !flip(document, history, horizontal) {
+                    self.show_notice("There's nothing on this layer to flip.");
+                }
+            }
+            LayerAction::Transform => match LayerTransform::start(document) {
+                Ok(transform) => self.transform = Some(transform),
+                Err(problem) => self.show_notice(problem),
+            },
+        }
+    }
+
+    fn show_notice(&mut self, text: &'static str) {
+        self.notice = Some((text, Instant::now()));
+    }
+
+    /// The bar under the canvas while transforming: what to do, Apply and Cancel.
+    fn transform_bar(&mut self, ui: &mut egui::Ui, document: &mut Document, history: &mut History) {
+        let mut apply = false;
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            let size = vec2(110.0, 30.0); // easy to tap with the pen
+            apply = ui
+                .add(egui::Button::new("Apply (Enter)").min_size(size))
+                .clicked();
+            cancel = ui
+                .add(egui::Button::new("Cancel (Esc)").min_size(size))
+                .clicked();
+            ui.separator();
+            ui.label(
+                "Transform: drag inside the box to move it, a corner to resize \
+                 (Shift keeps the proportions), the round handle to turn it.",
+            );
+        });
+        if apply && let Some(transform) = self.transform.take() {
+            transform.apply(document, history);
+        } else if cancel && let Some(transform) = self.transform.take() {
+            transform.cancel(document);
+        }
+    }
+
     fn canvas_area(
         &mut self,
         ui: &mut egui::Ui,
@@ -176,12 +259,21 @@ impl CanvasView {
 
         self.follow_window_size(document, rect);
         let navigating = self.handle_input(ui, &response, rect, document);
-        let placement = CanvasPlacement {
-            rect,
-            view: &self.view,
-            navigating,
-        };
-        if !self.locked {
+        if let Some(transform) = &mut self.transform {
+            transform.handle_input(ui, rect, &self.view, ink_events, navigating);
+            let (enter, escape) =
+                ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+            if enter && let Some(transform) = self.transform.take() {
+                transform.apply(document, history);
+            } else if escape && let Some(transform) = self.transform.take() {
+                transform.cancel(document);
+            }
+        } else if !self.locked {
+            let placement = CanvasPlacement {
+                rect,
+                view: &self.view,
+                navigating,
+            };
             self.tools
                 .handle_input(ui, placement, document, history, ink_events);
         }
@@ -190,6 +282,16 @@ impl CanvasView {
         self.update_textures(ui.ctx(), document, &visible);
         let painter = ui.painter_at(rect);
         self.paint(&painter, document, rect, &visible);
+
+        if let Some(transform) = &mut self.transform {
+            transform.draw(ui.ctx(), &painter, &self.view);
+            if let Some((text, since)) = self.notice
+                && since.elapsed() < NOTICE_SHOWS_FOR
+            {
+                draw_notice(&painter, rect, text);
+            }
+            return; // no brush outline while transforming
+        }
 
         // The brush outline (or, when picking a colour, a preview of the
         // colour underneath) replaces the mouse pointer over the canvas.
@@ -220,12 +322,15 @@ impl CanvasView {
             }
         }
 
-        if self.tools.show_hidden_layer_notice() {
-            draw_notice(
-                &painter,
-                rect,
-                "This layer is hidden. Show it in the Layers panel to paint on it.",
-            );
+        let notice = match self.notice {
+            Some((text, since)) if since.elapsed() < NOTICE_SHOWS_FOR => Some(text),
+            _ if self.tools.show_hidden_layer_notice() => {
+                Some("This layer is hidden. Show it in the Layers panel to paint on it.")
+            }
+            _ => None,
+        };
+        if let Some(text) = notice {
+            draw_notice(&painter, rect, text);
             // Redraw soon, so the notice goes away on time.
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(250));
@@ -347,8 +452,10 @@ impl CanvasView {
             ctx.set_cursor_icon(cursor);
         }
 
-        // Keyboard shortcuts (unless you're typing in a text box).
+        // Keyboard shortcuts (unless you're typing in a text box). While
+        // transforming, only the ones that move the view.
         if !ctx.egui_wants_keyboard_input() {
+            let editing = self.is_editing();
             // How many times each key was pressed since the last frame
             // (a slow frame can contain more than one press).
             let presses = |key| ui.input(|i| i.num_presses(key)) as i32;
@@ -373,20 +480,16 @@ impl CanvasView {
                 settings.size =
                     (settings.size * BRUSH_SIZE_STEP.powi(size_steps)).clamp(MIN_SIZE, MAX_SIZE);
             }
-            if presses(Key::B) > 0 {
-                self.tools.tool = Tool::Brush;
-            }
-            if presses(Key::E) > 0 {
-                self.tools.tool = Tool::Eraser;
-            }
-            if presses(Key::I) > 0 {
-                self.tools.tool = Tool::Eyedropper;
-            }
-            if presses(Key::F) > 0 {
-                self.tools.tool = Tool::Fill;
-            }
-            if presses(Key::G) > 0 {
-                self.tools.tool = Tool::Gradient;
+            for (key, tool) in [
+                (Key::B, Tool::Brush),
+                (Key::E, Tool::Eraser),
+                (Key::I, Tool::Eyedropper),
+                (Key::F, Tool::Fill),
+                (Key::G, Tool::Gradient),
+            ] {
+                if !editing && presses(key) > 0 {
+                    self.tools.tool = tool;
+                }
             }
         }
 
