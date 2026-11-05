@@ -33,13 +33,14 @@ use std::time::Instant;
 
 use art_engine::document::{Background, Document};
 use art_engine::file::{self, FILE_EXTENSION};
+use art_engine::gif::save_gif;
 use art_engine::image::{Color, Image, unpremultiply};
 use art_engine::layer::Layer;
 use art_engine::script::{Event, PlayOptions, Player, Report, Script, parse_hex};
 use art_engine::surface::PixelRect;
 
 use grid::{View, draw_grid};
-use sheet::{Entry, THUMB_HEIGHT, THUMB_WIDTH, contact_sheet};
+use sheet::{Entry, THUMB_HEIGHT, THUMB_WIDTH, contact_sheet, frame_sheet};
 
 const HELP: &str = "\
 art-cli: render Art App painting scripts, without a window.
@@ -79,6 +80,11 @@ RENDER OPTIONS
   --frames <a>-<b>   paint frames a to b; --all-frames paints every frame
   --animation <name> which animation, if the script has more than one
                      (frames are saved as <name>-<animation>-<frame>.png)
+  --frame-sheet [n]  every frame (or every nth) in one picture, numbered,
+                     as <name>-<animation>-frames.png
+  --onion            with --frame n: the frame with the one before it faint
+                     in red and the one after in blue, as ...-onion.png
+  --gif              every frame as <name>-<animation>.gif, for a quick look
 
   Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
   --grid; <name>.png and <name>.artapp never do. At full size, the picture
@@ -194,6 +200,12 @@ struct RenderOptions {
     animation: Option<String>,
     /// Which frames of it to paint.
     frames: Frames,
+    /// `--frame-sheet N`: every Nth frame in one picture, with numbers.
+    frame_sheet: Option<u32>,
+    /// `--onion`: the frame with its neighbours faint behind it.
+    onion: bool,
+    /// `--gif`: all the frames as an animated GIF.
+    gif: bool,
 }
 
 /// Which frames of an animation `render` paints.
@@ -225,6 +237,9 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         detail: false,
         animation: None,
         frames: Frames::Default,
+        frame_sheet: None,
+        onion: false,
+        gif: false,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -242,6 +257,19 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--transparent" => options.transparent = true,
             "--detail" => options.detail = true,
             "--all-frames" => options.frames = Frames::All,
+            "--onion" => options.onion = true,
+            "--gif" => options.gif = true,
+            "--frame-sheet" => {
+                // The number is optional: `--frame-sheet` alone is every frame.
+                let every = match rest.clone().next().and_then(|n| n.parse::<u32>().ok()) {
+                    Some(n) if n >= 1 => {
+                        rest.next();
+                        n
+                    }
+                    _ => 1,
+                };
+                options.frame_sheet = Some(every);
+            }
             "--animation" => options.animation = Some(value("--animation")?),
             "--frame" => {
                 let text = value("--frame")?;
@@ -352,8 +380,19 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
     if options.layers.is_some() && !options.hide.is_empty() {
         return Err(Problem::Usage("use --layers or --hide, not both".into()));
     }
-    if options.frames != Frames::Default
-        && !matches!(options.frames, Frames::One(_))
+    if options.onion && !matches!(options.frames, Frames::One(_)) {
+        return Err(Problem::Usage(
+            "--onion shows one frame with its neighbours: say which with --frame N".into(),
+        ));
+    }
+    let whole_animation = options.gif || options.frame_sheet.is_some();
+    if whole_animation && (options.snapshots || options.sheet || options.crop.is_some()) {
+        return Err(Problem::Usage(
+            "--gif and --frame-sheet paint every frame: leave out --snapshots, --sheet and --crop"
+                .into(),
+        ));
+    }
+    if (options.frames != Frames::Default && !matches!(options.frames, Frames::One(_)))
         && (options.snapshots || options.sheet)
     {
         return Err(Problem::Usage(
@@ -484,6 +523,29 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     let mut saved: Vec<PathBuf> = Vec::new();
     let mut snapshot_count = 0;
     let mut last = None;
+    // For --gif and --frame-sheet: every frame's picture, kept in memory.
+    let mut pictures: Vec<(u32, Image)> = Vec::new();
+    let whole_animation = options.gif || options.frame_sheet.is_some();
+    // A frame of the animation, painted and ready: for the neighbours of
+    // an onion skin.
+    let paint_frame = |animation: &str, n: u32| -> Result<Image, Problem> {
+        let play = PlayOptions {
+            scale,
+            folder: folder.clone(),
+            animation: Some(animation.to_owned()),
+            frame: n,
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script.clone(), play)
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        let mut document = player
+            .create_document()
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        player
+            .run(&mut document, |_, _| {})
+            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        Ok(picture(&document, document.bounds()))
+    };
     for frame in &frames {
         let play = PlayOptions {
             scale,
@@ -546,6 +608,61 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             return Err(failed(format!("couldn't save a snapshot: {error}")));
         }
         check_layer_names(options, &document)?;
+
+        // For a GIF or a frame sheet, the frames are put together after
+        // the loop; nothing is saved for each.
+        if whole_animation {
+            let n = frame.as_ref().map_or(0, |(_, n)| *n);
+            pictures.push((n, picture(&document, document.bounds())));
+            last = Some((player, document));
+            continue;
+        }
+
+        // An onion skin: the frame before (red) and after (blue), faint,
+        // behind this one; in a loop, the neighbours wrap round.
+        if options.onion
+            && let Some((animation, n)) = frame
+        {
+            let count = script.animations[animation].frames;
+            let looping = script.animations[animation].looping;
+            let neighbour = |offset: i64| -> Option<u32> {
+                let m = i64::from(*n) + offset;
+                if (0..i64::from(count)).contains(&m) {
+                    Some(m as u32)
+                } else if looping {
+                    Some(m.rem_euclid(i64::from(count)) as u32)
+                } else {
+                    None
+                }
+            };
+            let mut skin = Image::new(document.width(), document.height(), [0, 0, 0, 0]);
+            if let Some(before) = neighbour(-1) {
+                skin.paste(
+                    &paint_frame(animation, before)?.tinted([230, 60, 60], 0.35),
+                    0,
+                    0,
+                );
+            }
+            if let Some(after) = neighbour(1) {
+                skin.paste(
+                    &paint_frame(animation, after)?.tinted([60, 110, 230], 0.35),
+                    0,
+                    0,
+                );
+            }
+            skin.paste(&picture(&document, document.bounds()), 0, 0);
+            let view = View {
+                zoom: scale * zoom,
+                ..whole
+            };
+            let image = for_looking(zoomed(skin), view);
+            save(
+                &image,
+                options.out.join(format!("{name}-onion.png")),
+                keeps_alpha,
+                &mut saved,
+            )?;
+        }
 
         // The finished picture.
         if let Some([x, y, w, h]) = options.crop {
@@ -641,6 +758,43 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         last = Some((player, document));
     }
     let (player, document) = last.expect("at least one frame is painted");
+
+    // The whole animation in one file.
+    if whole_animation && let Some((animation, _)) = &frames[0] {
+        let looks: Vec<(u32, Image)> = pictures
+            .iter()
+            .map(|(n, image)| {
+                let image = match options.bg {
+                    Some(color) => image.on_color(color),
+                    None => image.clone(),
+                };
+                (*n, zoomed(image))
+            })
+            .collect();
+        if let Some(every) = options.frame_sheet {
+            let title = format!(
+                "{stem}: {animation}{}, {} x {}",
+                if every > 1 {
+                    format!(", every {every}th frame")
+                } else {
+                    String::new()
+                },
+                canvas_size(&document, scale).0,
+                canvas_size(&document, scale).1
+            );
+            let sheet = frame_sheet(&title, &looks, FRAME_SHEET_COLUMNS);
+            let path = options.out.join(format!("{stem}-{animation}-frames.png"));
+            save(&sheet, path, false, &mut saved)?;
+        }
+        if options.gif {
+            let settings = &script.animations[animation];
+            let images: Vec<Image> = looks.into_iter().map(|(_, image)| image).collect();
+            let path = options.out.join(format!("{stem}-{animation}.gif"));
+            save_gif(&images, settings.fps, settings.looping, &path)
+                .map_err(|e| failed(format!("couldn't save {}: {e}", path.display())))?;
+            saved.push(path);
+        }
+    }
 
     // A short summary (or everything): what's where, and what looks wrong.
     let canvas = canvas_size(&document, scale);
@@ -755,6 +909,17 @@ fn frames_to_paint(
         ))
     };
     let mut notes = Vec::new();
+    if options.gif || options.frame_sheet.is_some() {
+        let every = options.frame_sheet.unwrap_or(1).max(1);
+        let numbers: Vec<u32> = (0..=last).step_by(every as usize).collect();
+        return Ok((
+            numbers
+                .into_iter()
+                .map(|n| Some((name.clone(), n)))
+                .collect(),
+            notes,
+        ));
+    }
     let numbers: Vec<u32> = match options.frames {
         Frames::Default => {
             notes.push(
@@ -810,6 +975,9 @@ fn outside_canvas(image: &mut Image, area: PixelRect, canvas: PixelRect, zoom: u
         }
     }
 }
+
+/// A frame sheet has at most this many frames side by side.
+const FRAME_SHEET_COLUMNS: usize = 8;
 
 /// The summary after `render` shows this many warnings at most...
 const SUMMARY_WARNINGS: usize = 3;
@@ -998,32 +1166,192 @@ fn layer_names(document: &Document) -> String {
 /// a mistake anywhere is found), and the picture and report are frame 0
 /// of the first animation.
 fn paint(path: &Path) -> Result<(Document, Report, Vec<String>), Problem> {
+    let (document, report, snapshots, _) = paint_all(path)?;
+    Ok((document, report, snapshots))
+}
+
+/// What every frame of one animation drew: its report, frame by frame.
+struct Motion {
+    name: String,
+    looping: bool,
+    reports: Vec<Report>,
+}
+
+/// Like [`paint`], and also every frame's report of every animation,
+/// for the motion summary.
+fn paint_all(path: &Path) -> Result<(Document, Report, Vec<String>, Vec<Motion>), Problem> {
     let script = load(path)?;
     let folder = path.parent().map(Path::to_path_buf);
+    let mut motions = Vec::new();
+    let mut first = None;
     for (name, animation) in &script.animations {
-        for frame in 1..animation.frames {
+        let mut reports = Vec::with_capacity(animation.frames as usize);
+        for frame in 0..animation.frames {
             let options = PlayOptions {
                 folder: folder.clone(),
                 animation: Some(name.clone()),
                 frame,
                 ..PlayOptions::default()
             };
-            paint_frame(path, &script, options)?;
+            let (document, report, snapshots) = paint_frame(path, &script, options)?;
+            reports.push(report.clone());
+            if first.is_none() {
+                first = Some((document, report, snapshots));
+            }
+        }
+        motions.push(Motion {
+            name: name.clone(),
+            looping: animation.looping,
+            reports,
+        });
+    }
+    let (document, report, snapshots) = match first {
+        Some(painted) => painted,
+        None => paint_frame(
+            path,
+            &script,
+            PlayOptions {
+                folder,
+                ..PlayOptions::default()
+            },
+        )?,
+    };
+    Ok((document, report, snapshots, motions))
+}
+
+/// Where a part was in one frame: the frame, its middle, and its box.
+type Place = (u32, f32, f32, PixelRect);
+
+/// How a part moved through an animation: its middle in each frame
+/// where it drew something.
+struct PartMotion {
+    path: String,
+    inside: Option<usize>,
+    places: Vec<Place>,
+    frames: u32,
+}
+
+impl PartMotion {
+    /// The biggest move of the middle between two frames next to each
+    /// other: (pixels, from frame, to frame). `wrap` counts the move from
+    /// the last frame back to the first.
+    fn biggest_step(&self, wrap: bool) -> Option<(f32, u32, u32)> {
+        let mut pairs: Vec<(&Place, &Place)> =
+            self.places.windows(2).map(|w| (&w[0], &w[1])).collect();
+        if wrap && self.places.len() > 1 {
+            pairs.push((&self.places[self.places.len() - 1], &self.places[0]));
+        }
+        pairs
+            .into_iter()
+            .filter(|(a, b)| wrap || b.0 == a.0 + 1)
+            .map(|(a, b)| ((a.1 - b.1).hypot(a.2 - b.2), a.0, b.0))
+            .fold(None, |best: Option<(f32, u32, u32)>, step| match best {
+                Some(b) if b.0 >= step.0 => Some(b),
+                _ => Some(step),
+            })
+    }
+}
+
+/// The motion of every named group and use through `motion`'s frames.
+fn motion_paths(motion: &Motion) -> Vec<PartMotion> {
+    let mut paths: Vec<PartMotion> = Vec::new();
+    for (frame, report) in motion.reports.iter().enumerate() {
+        for part in &report.parts {
+            let found = paths.iter_mut().find(|p| p.path == part.path);
+            let path = match found {
+                Some(path) => path,
+                None => {
+                    paths.push(PartMotion {
+                        path: part.path.clone(),
+                        inside: part.inside,
+                        places: Vec::new(),
+                        frames: motion.reports.len() as u32,
+                    });
+                    paths.last_mut().expect("just pushed")
+                }
+            };
+            if let Some(area) = part.area {
+                let x = (area.left + area.right) as f32 / 2.0;
+                let y = (area.top + area.bottom) as f32 / 2.0;
+                path.places.push((frame as u32, x, y, area));
+            }
         }
     }
-    for name in script.animations.keys().skip(1) {
-        let options = PlayOptions {
-            folder: folder.clone(),
-            animation: Some(name.clone()),
-            ..PlayOptions::default()
-        };
-        paint_frame(path, &script, options)?;
+    paths
+}
+
+/// Prints how each part moves, and returns warnings about jumps, parts
+/// that disappear, and loops that pop.
+fn print_motion(motion: &Motion, canvas: (u32, u32), detail: bool) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let paths = motion_paths(motion);
+    let listed: Vec<&PartMotion> = paths
+        .iter()
+        .filter(|p| detail || p.inside.is_none())
+        .collect();
+    if listed.is_empty() {
+        return warnings;
     }
-    let options = PlayOptions {
-        folder,
-        ..PlayOptions::default()
-    };
-    paint_frame(path, &script, options)
+    say!(
+        "  motion in \"{}\" ({} frames{}):",
+        motion.name,
+        motion.reports.len(),
+        if motion.looping { ", loops" } else { "" }
+    );
+    // A jump bigger than this is probably a mistake.
+    let big = canvas.0.min(canvas.1) as f32 / 4.0;
+    for path in listed.iter().take(CHECK_PARTS) {
+        let name = path
+            .path
+            .trim_start_matches(&format!("animation \"{}\" > ", motion.name));
+        let Some(first) = path.places.first() else {
+            say!("    {name}: draws nothing in any frame");
+            continue;
+        };
+        let last = path.places[path.places.len() - 1];
+        let step = path.biggest_step(false);
+        let mut line = format!(
+            "    {name}: middle ({:.0}, {:.0}) in frame {} to ({:.0}, {:.0}) in frame {}",
+            first.1, first.2, first.0, last.1, last.2, last.0
+        );
+        if let Some((pixels, a, b)) = step {
+            line += &format!("; biggest step {pixels:.0} px (frame {a} to {b})");
+            if pixels > big {
+                warnings.push(format!(
+                    "animation \"{}\": {name} jumps {pixels:.0} px between frames {a} and {b}",
+                    motion.name
+                ));
+            }
+        }
+        say!("{line}");
+        if path.places.len() as u32 != path.frames {
+            let missing: Vec<String> = (0..path.frames)
+                .filter(|f| !path.places.iter().any(|p| p.0 == *f))
+                .map(|f| f.to_string())
+                .collect();
+            warnings.push(format!(
+                "animation \"{}\": {name} draws nothing in frame{} {}",
+                motion.name,
+                if missing.len() > 1 { "s" } else { "" },
+                missing.join(", ")
+            ));
+        }
+        if motion.looping && path.places.len() > 1 {
+            let (pixels, a, b) = ((first.1 - last.1).hypot(first.2 - last.2), last.0, first.0);
+            let usual = step.map_or(0.0, |s| s.0);
+            if pixels > 2.0 && pixels > 2.0 * usual {
+                warnings.push(format!(
+                    "animation \"{}\": the loop pops: {name} moves {pixels:.0} px from frame {a} \
+                     back to frame {b} (its biggest step inside the loop is {usual:.0} px)",
+                    motion.name
+                ));
+            }
+        }
+    }
+    if listed.len() > CHECK_PARTS {
+        say!("    ...and {} more", listed.len() - CHECK_PARTS);
+    }
+    warnings
 }
 
 /// One picture (or frame) of `script`, played at full size.
@@ -1054,9 +1382,24 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
     // It really paints (at full size), so what it reports is exactly
     // what `render` would make.
     let script = load(path)?;
-    let (document, report, snapshots) = paint(path)?;
+    let (document, report, snapshots, motions) = paint_all(path)?;
     let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));
-    let warnings = warnings(&report, &layers);
+    let mut warnings = warnings(&report, &layers);
+    // Warnings from the other frames too (each once).
+    for motion in &motions {
+        for frame_report in &motion.reports {
+            for warning in &frame_report.warnings {
+                if !warnings.contains(warning) {
+                    warnings.push(warning.clone());
+                }
+            }
+        }
+    }
+    // Where everything moves: printed after the summary line, and its
+    // warnings join the rest.
+    let mut motion_lines: Vec<(&Motion, Vec<String>)> = Vec::new();
+    let canvas = (document.width(), document.height());
+    let _ = &mut motion_lines;
 
     say!(
         "OK: {} (painted in {:.2} s{})",
@@ -1096,6 +1439,11 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
         let first = script.animations.keys().next().expect("not empty");
         say!("  (the layers and parts below are frame 0 of \"{first}\")");
     }
+    let mut motion_warnings = Vec::new();
+    for motion in &motions {
+        motion_warnings.extend(print_motion(motion, canvas, detail));
+    }
+    warnings.extend(motion_warnings);
     print_findings(&layers, &report, &warnings, detail);
     Ok(())
 }

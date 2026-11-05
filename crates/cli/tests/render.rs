@@ -458,3 +458,79 @@ fn frames_of_an_animation_are_painted_and_checked() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+/// A looping animation with a part that jumps, one whose loop pops, and
+/// one that's fine.
+const BAD_MOTION: &str = r##"{ "commands": [
+    { "cmd": "canvas", "width": 100, "height": 100 },
+    { "cmd": "define", "name": "dot", "commands": [ { "cmd": "ellipse", "center": [0, 0], "radius": 5, "fill": "#202020" } ] }
+  ], "animations": { "bad": { "frames": 4, "fps": 4, "loop": true, "commands": [
+    { "cmd": "use", "name": "dot", "translate": { "keys": [[0, [10, 50]], [3, [70, 50]]] } },
+    { "cmd": "group", "name": "jumper", "translate": { "keys": [[0, [20, 20]], [1, [20, 20], "step"], [2, [80, 80]]] }, "commands": [
+      { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "#202020" } ] },
+    { "cmd": "group", "name": "steady", "translate": { "keys": [[0, [50, 10]], [2, [50, 14]], [4, [50, 10]]] }, "commands": [
+      { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "#202020" } ] }
+  ] } } }"##;
+
+#[test]
+fn the_motion_summary_shows_steps_and_warns_about_jumps_and_pops() {
+    let out = folder("motion");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("motion.json");
+    std::fs::write(&script, BAD_MOTION).unwrap();
+    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    assert!(check.status.success());
+    let text = String::from_utf8_lossy(&check.stdout);
+    for expected in [
+        "motion in \"bad\" (4 frames, loops):",
+        "command 1 (use \"dot\"): middle (10, 50) in frame 0 to (70, 50) in frame 3; biggest step 20 px (frame 0 to 1)",
+        "command 3 (group \"steady\"): middle (52, 12) in frame 0 to (52, 14) in frame 3; biggest step 2 px",
+        "animation \"bad\": the loop pops: command 1 (use \"dot\") moves 60 px from frame 3 back to frame 0 (its biggest step inside the loop is 20 px)",
+        "animation \"bad\": command 2 (group \"jumper\") jumps 85 px between frames 1 and 2",
+    ] {
+        assert!(
+            text.contains(expected),
+            "{expected:?} missing from:\n{text}"
+        );
+    }
+    assert!(
+        !text.contains("steady\") jumps") && !text.contains("pops: command 3"),
+        "{text}"
+    );
+
+    // The frame sheet, onion skin and GIF are saved with their names.
+    let render = |extra: &[&str]| {
+        let output = art_cli()
+            .arg("render")
+            .arg(&script)
+            .args(["--out", out.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    render(&["--frame-sheet", "2"]);
+    assert!(out.join("motion-bad-frames.png").exists());
+    render(&["--gif"]);
+    let gif = std::fs::read(out.join("motion-bad.gif")).unwrap();
+    assert!(gif.starts_with(b"GIF89a"));
+    assert_eq!(
+        gif.windows(3).filter(|w| w == b"\x21\xf9\x04").count(),
+        4,
+        "four frames"
+    );
+    render(&["--frame", "0", "--onion"]);
+    assert!(out.join("motion-bad-000-onion.png").exists());
+    let usage = art_cli()
+        .arg("render")
+        .arg(&script)
+        .args(["--out", out.to_str().unwrap(), "--onion"])
+        .output()
+        .unwrap();
+    assert_eq!(usage.status.code(), Some(2));
+    std::fs::remove_dir_all(out).ok();
+}

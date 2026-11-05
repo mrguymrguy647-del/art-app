@@ -767,3 +767,24 @@ pixel; easings match their formulas; a parameter gives the pixels of
 the hand-written pose; shift gives the far leg's frame; upright feet
 land where the ankle does, flat, also mirrored. `examples/duck-animated.json`
 is an 8-frame walk and a 4-frame idle from one `use` each.
+
+## 52. Seeing an animation without watching it (phase 2, step 3)
+An agent can't watch a GIF, and a person shouldn't have to watch eight
+of them to find the frame that's wrong. So `check` reads the motion
+first: it already plays every frame; now it keeps each frame's report
+and, for every named group and `use`, follows the middle of its box
+from frame to frame. The summary prints the first and last place and
+the biggest step; warnings name a jump bigger than a quarter of the
+canvas, a part that draws nothing in some frames, and a looping
+animation whose last-to-first move is far bigger than any step inside
+it (the loop pops). Middles come from the boxes the player already
+works out, so this costs nothing extra and needs no pixels.
+
+For eyes: `--frame-sheet` puts every frame (or every Nth) in one
+numbered picture at the frames' own size, `--onion` draws one frame
+over its neighbours tinted red (before) and blue (after) at a third
+strength, and `--gif` writes an animated GIF with the `gif` crate
+(MIT/Apache; its colour quantizer reduces a painted frame to 256
+colours; pixel art already has fewer). Half see-through pixels become
+opaque in a GIF, which can't blend: `--bg` is the way to show a
+see-through sprite in one.

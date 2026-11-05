@@ -200,6 +200,17 @@ impl Image {
         }
     }
 
+    /// The same shapes in one flat `color`, `opacity` (0 to 1) as strong as
+    /// they were: for showing another frame faintly behind this one.
+    pub fn tinted(&self, color: [u8; 3], opacity: f32) -> Image {
+        let mut out = self.clone();
+        for pixel in &mut out.pixels {
+            let alpha = (f32::from(pixel[3]) * opacity.clamp(0.0, 1.0)).round() as u8;
+            *pixel = [color[0], color[1], color[2], alpha];
+        }
+        out
+    }
+
     /// This image laid over a plain `color`: see-through parts show it.
     pub fn on_color(&self, color: Color) -> Image {
         let mut out = Image::new(self.width, self.height, color);

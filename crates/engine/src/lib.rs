@@ -10,6 +10,7 @@ pub mod color;
 pub mod document;
 pub mod file;
 pub mod fill;
+pub mod gif;
 pub mod history;
 pub mod image;
 pub mod layer;

@@ -529,10 +529,26 @@ keyframes, so one symbol covers every pose of a walk. There's no arithmetic (`"-
 turned leg still moves with the leg (its position is turned) but stays flat on the ground. It still
 mirrors and resizes with the groups around it.
 
+### Seeing an animation without watching it
+
 `art-cli render` paints frame 0 of the first animation unless told otherwise: `--frame 3`,
 `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation. Frames are
-saved as `name-walk-003.png`. `art-cli check` plays every frame of every animation, so a mistake
-in any of them is found. Mistakes say where they are: `animation "walk" > command 2 (use "duck"): ...`.
+saved as `name-walk-003.png`. Then:
+
+- `--frame-sheet` (or `--frame-sheet 2` for every 2nd frame): every frame in one numbered
+  picture, `name-walk-frames.png`, to judge a whole walk at a glance.
+- `--frame 3 --onion`: frame 3 with frame 2 faint in red and frame 4 faint in blue behind it,
+  `name-walk-003-onion.png` (in a loop the neighbours wrap round).
+- `--gif`: the animation as `name-walk.gif`, at its fps, looping if it loops, for showing a
+  person. `--bg` puts a colour behind see-through frames; `--zoom 4` enlarges with sharp pixels.
+
+`art-cli check` plays every frame of every animation, so a mistake in any of them is found
+(`animation "walk" > command 2 (use "duck"): ...`), and prints a **motion summary**: for each
+named group and `use`, where its middle is in the first and last frame and its biggest step
+between two frames. Warnings follow: a part that jumps more than a quarter of the canvas between
+two frames, a part that draws nothing in some frames, and for loops, a part that moves much
+further from the last frame back to the first than in any step inside (the loop "pops"). Boxes
+are geometry, so a part faded to `opacity` 0 still counts as drawn.
 
 ## Areas
 

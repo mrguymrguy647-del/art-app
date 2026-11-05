@@ -268,6 +268,9 @@ When you look at a render, ask:
 5. Zoom in (`--crop … --zoom 3`) on faces, outlines and joins: holes, halos, wrong layer order?
 6. Do the numbers agree? The boxes from `check` say where each layer, group and symbol ended up;
    use `--grid` to read positions off the picture, and `--layers` to look at one layer alone.
+   For an animation, read `check`'s motion summary first (biggest steps, jumps, loop pops), then
+   `--frame-sheet` to see every frame at once, `--onion` for one frame between its neighbours,
+   and `--gif` only when a person wants to watch.
 7. `art-cli info out/x.artapp` or `art-cli check`: are the layers what you expect, in the right
    order, with the right blend modes? Any warnings?
 

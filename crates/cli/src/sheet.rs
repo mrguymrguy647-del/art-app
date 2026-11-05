@@ -73,6 +73,47 @@ pub fn contact_sheet(title: &str, entries: &[Entry]) -> Image {
     sheet
 }
 
+/// Every frame of an animation side by side (`columns` per row), each
+/// with its number above it, at the frames' own size.
+pub fn frame_sheet(title: &str, frames: &[(u32, Image)], columns: usize) -> Image {
+    let columns = columns.clamp(1, frames.len().max(1));
+    let rows = frames.len().div_ceil(columns).max(1);
+    let cell_width = frames
+        .iter()
+        .map(|(_, f)| f.width())
+        .max()
+        .unwrap_or(1)
+        .max(24);
+    let cell_height = frames.iter().map(|(_, f)| f.height()).max().unwrap_or(1);
+    let gap = 8;
+    let label_height = text_height(1) + 4;
+    let title_height = text_height(TEXT_SCALE) + gap;
+    let width = gap + columns as u32 * (cell_width + gap);
+    let height = gap + title_height + rows as u32 * (label_height + cell_height + gap);
+    let mut sheet = Image::new(width, height, BACKGROUND);
+    let title = fit_text(title, width - 2 * gap, TEXT_SCALE);
+    draw_text(
+        &mut sheet, &title, gap as i32, gap as i32, TEXT_SCALE, DIM_TEXT,
+    );
+    for (i, (number, frame)) in frames.iter().enumerate() {
+        let (column, row) = ((i % columns) as u32, (i / columns) as u32);
+        let left = gap + column * (cell_width + gap);
+        let top = gap + title_height + row * (label_height + cell_height + gap);
+        draw_text(
+            &mut sheet,
+            &number.to_string(),
+            left as i32,
+            top as i32,
+            1,
+            TEXT,
+        );
+        let mut backing = checkerboard(frame.width(), frame.height());
+        backing.paste(frame, 0, 0);
+        sheet.paste(&backing, left as i32, (top + label_height) as i32);
+    }
+    sheet
+}
+
 /// Light and darker grey squares, the usual sign for "see-through".
 fn checkerboard(width: u32, height: u32) -> Image {
     let mut image = Image::new(width, height, [204, 204, 204, 255]);
@@ -105,5 +146,16 @@ mod tests {
         assert_eq!(five.width(), GAP + 3 * (THUMB_WIDTH + GAP));
         assert!(five.height() > one.height());
         assert_eq!(one.width(), GAP + THUMB_WIDTH + GAP);
+    }
+
+    #[test]
+    fn frames_sit_in_rows_at_their_own_size() {
+        let frame = |n: u32| (n, Image::new(32, 32, [255, 0, 0, 255]));
+        let sheet = frame_sheet("walk", &(0..10).map(frame).collect::<Vec<_>>(), 8);
+        // 8 per row, two rows.
+        assert_eq!(sheet.width(), 8 + 8 * (32 + 8));
+        let one_row = frame_sheet("walk", &(0..3).map(frame).collect::<Vec<_>>(), 8);
+        assert_eq!(one_row.width(), 8 + 3 * (32 + 8));
+        assert!(sheet.height() > one_row.height());
     }
 }
