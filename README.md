@@ -1,5 +1,8 @@
 # Art App
 
+**Painting with scripts, or an AI assistant painting?** Start with the
+[quick start](docs/QUICKSTART.md): a first script and the commands to render it, on one page.
+
 A digital painting app for Windows, written in Rust.
 
 **Status:** Phase 1 is complete, plus a paint bucket, gradients, blend modes, and **painting
@@ -75,8 +78,8 @@ Huion, …) has a "Use Windows Ink" option, keep it switched on.
 
 A painting script is a JSON file describing a picture step by step: layers, gradients, shapes,
 strokes, hatching and more. The format, with examples, is in
-[docs/script-format.md](docs/script-format.md). Full examples: [examples/sunset.json](examples/sunset.json)
-and [examples/night-hills.json](examples/night-hills.json).
+[docs/script-format.md](docs/script-format.md). Full examples: [examples/sunset.json](examples/sunset.json),
+[examples/night-hills.json](examples/night-hills.json) and [examples/two-ducks.json](examples/two-ducks.json).
 
 **Painting with an AI assistant:** [docs/AI_GUIDE.md](docs/AI_GUIDE.md) is a practical manual for an
 AI (like Claude) painting with these scripts on a machine without a screen: how to build `art-cli`,
@@ -114,7 +117,8 @@ Build it with `cargo build --release -p art_cli`; the program is `target/release
 art-app/
 ├── Cargo.toml            workspace: lists the two crates below
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
-├── examples/             example painting scripts (sunset, night hills)
+├── examples/             example painting scripts (sunset, night hills, two ducks)
+├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page
 ├── docs/decisions.md     why we chose things, in plain words
 ├── docs/script-format.md painting scripts: every command, with examples
 ├── docs/AI_GUIDE.md      how an AI assistant paints with scripts and art-cli

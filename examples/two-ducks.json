@@ -1,0 +1,22 @@
+{
+  "palette": { "sky": "#8EC5E8", "water": "#3F7FB0", "yellow": "#F2C230",
+               "beak": "#E08020", "ink": "#202020", "white": "#FFFFFF" },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 360, "paper": "white" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 220], "colors": ["#5A9BD0", "sky"] },
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "rect", "x": -10, "y": 220, "width": 660, "height": 150, "fill": "water" },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "layer", "name": "Ducks" },
+      { "cmd": "ellipse", "center": [0, 0], "radius": [34, 22], "fill": "yellow", "outline": "ink", "outline_size": 3 },
+      { "cmd": "ellipse", "center": [26, -26], "radius": 15, "fill": "yellow", "outline": "ink", "outline_size": 3 },
+      { "cmd": "polygon", "points": [[38, -29], [56, -24], [38, -18]], "fill": "beak" },
+      { "cmd": "ellipse", "center": [31, -30], "radius": 3, "fill": "ink" }
+    ] },
+    { "cmd": "use", "name": "duck", "translate": [200, 230] },
+    { "cmd": "use", "name": "duck", "translate": [440, 240], "mirror": "x", "colors": { "yellow": "#C04040" } },
+    { "cmd": "layer", "name": "Words" },
+    { "cmd": "text", "text": "Two ducks", "at": [320, 24], "size": 48, "color": "white", "align": "center", "outline": "ink", "outline_size": 3 }
+  ]
+}

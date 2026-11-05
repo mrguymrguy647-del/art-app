@@ -1,5 +1,8 @@
 # Painting with Art App: a guide for AI assistants
 
+**New to Art App scripts? Read the [quick start](QUICKSTART.md) first** (one page: a first script,
+the loop, the rules that matter). This guide goes further.
+
 You can paint pictures with Art App by writing **painting scripts** (JSON) and rendering them with
 **`art-cli`**, a command-line program that needs no screen or graphics card. You can look at the
 PNGs it saves, so you can judge your own work and improve it, step by step, like a painter

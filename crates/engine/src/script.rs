@@ -1080,10 +1080,18 @@ mod tests {
     /// typo there can't teach anyone (or any AI) the wrong thing.
     #[test]
     fn the_examples_in_the_documentation_are_valid() {
+        let quick_start = include_str!("../../../docs/QUICKSTART.md");
         let docs = [
             include_str!("../../../docs/script-format.md"),
             include_str!("../../../docs/AI_GUIDE.md"),
+            quick_start,
         ];
+        // The quick start's first script is the example file, word for word.
+        let example = include_str!("../../../examples/two-ducks.json");
+        assert!(
+            quick_start.contains(example.trim()),
+            "QUICKSTART.md and two-ducks.json differ"
+        );
         let mut checked = 0;
         for doc in docs {
             for block in doc.split("```json\n").skip(1) {
@@ -1092,7 +1100,17 @@ mod tests {
                     continue; // has placeholders, like [x, y] ...
                 }
                 if block.starts_with("{\n") && block.contains("\"commands\"") {
-                    parse(block).unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
+                    // A whole script: it must also play without mistakes.
+                    let script = parse(block).unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
+                    let options = PlayOptions {
+                        dry_run: true,
+                        ..PlayOptions::default()
+                    };
+                    let mut player = Player::new(script, options).unwrap();
+                    let mut document = player.create_document().unwrap();
+                    player
+                        .run(&mut document, |_, _| {})
+                        .unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
                     checked += 1;
                     continue;
                 }

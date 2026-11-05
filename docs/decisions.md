@@ -600,3 +600,16 @@ it's almost certainly one.
   name ("duck 2") that the `use`s after it use. A test plays a script
   with all of them twice, the way the app does, exports it, and checks
   that the export paints the same picture.
+
+## 45. A one-page quick start, and every example tested
+`docs/QUICKSTART.md` is the first thing to read (README and the AI
+guide both point to it from their first lines): building art-cli, one
+complete script, the check-render loop with what the output means, the
+few rules that cause most mistakes, and the commands used most. It's
+kept under 120 lines on purpose: everything else is one link away.
+
+Its script is `examples/two-ducks.json` word for word (a test checks
+that), so it can be rendered straight away. The test that reads the
+JSON examples in the docs now covers the quick start too, and whole
+scripts in the docs are also played, so a wrong colour name or a `use`
+of a symbol that isn't defined is caught, not only typos.
