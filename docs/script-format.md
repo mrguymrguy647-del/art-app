@@ -336,6 +336,7 @@ filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-an
 | `outline_size` | How wide that border is, in pixels (default 2). |
 | `rotate` | Degrees clockwise, around `at`. |
 | `opacity` | Default 1. |
+| `fit` | A width in pixels: the text is shrunk (never enlarged) so its widest line fits. `art-cli measure "the text" --size 32 --fit 180` says the size beforehand. |
 
 Inside a [`repeat`](#repeat--copies-with-a-step), `{i}` in the text becomes the copy number (1, 2,
 3...) and `{i0}` the same counted from 0.
@@ -456,6 +457,15 @@ as before, and random patterns differ from copy to copy.
 The innermost `repeat` counts, also from inside a group or a symbol used in the repeat. Outside
 any `repeat`, `{i}` is a mistake.
 
+**Values that differ per copy:** `each` lists them, and each copy gets one as a `"$name"`
+parameter, round and round if there are more copies than values:
+
+```json
+{ "cmd": "repeat", "count": 6, "step": { "translate": [30, 0] }, "each": { "paint": ["yellow", "wing", "beak"] }, "commands": [
+  { "cmd": "rect", "x": 100, "y": 350, "width": 24, "height": 24, "fill": "$paint", "outline": "ink" }
+] }
+```
+
 ## Animations: frames and timing
 
 ```json
@@ -520,7 +530,8 @@ are read at frame 0. To animate text or a shape, put it in a group.
 ```
 
 `define` takes `params`: names and their defaults. Inside the symbol, `"$angle"` stands for the
-value, anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`). A `use` gives
+value, anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`), and in any
+colour field (`"fill": "$paint"`), so a symbol can take its colours as parameters. A `use` gives
 values with `with`; a name the symbol doesn't have is a mistake. A value in `with` may be
 keyframes, so one symbol covers every pose of a walk. There's no arithmetic (`"-$angle"`): use
 `shift`, a second parameter or `mirror`.

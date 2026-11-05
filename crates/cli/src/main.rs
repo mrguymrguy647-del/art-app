@@ -59,6 +59,8 @@ USAGE
   art-cli info <script.json>               the same for the picture a script
                                            paints, with the commands that
                                            painted on each layer
+  art-cli measure \"some text\" [--size n]  how wide and high a text would be
+                                           (and the size that fits --fit width)
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -133,6 +135,7 @@ fn main() -> ExitCode {
                 "info needs one .artapp file or painting script".into(),
             )),
         },
+        Some("measure") => measure(&args[1..]),
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
             Ok(())
@@ -1677,6 +1680,78 @@ fn print_findings(layers: &[LayerBox], report: &Report, warnings: &[String], det
             say!("    ...and {} more", warnings.len() - limit);
         }
     }
+}
+
+// ---- measure --------------------------------------------------------------------
+
+/// `measure "text" [--size n] [--fit width]`: the text's size in pixels,
+/// before painting it.
+fn measure(args: &[String]) -> Result<(), Problem> {
+    let mut text = None;
+    let mut size = 32.0;
+    let mut fit = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let mut number = |name: &str| -> Result<f32, Problem> {
+            let value = rest
+                .next()
+                .ok_or_else(|| Problem::Usage(format!("{name} needs a number")))?;
+            value
+                .parse::<f32>()
+                .ok()
+                .filter(|n| *n > 0.0)
+                .ok_or_else(|| {
+                    Problem::Usage(format!("{name} must be a number above 0, not {value}"))
+                })
+        };
+        match arg.as_str() {
+            "--size" => size = number("--size")?,
+            "--fit" => fit = Some(number("--fit")?),
+            flag if flag.starts_with("--") => {
+                return Err(Problem::Usage(format!("unknown option {flag}")));
+            }
+            words if text.is_none() => text = Some(words.replace("\\n", "\n")),
+            extra => {
+                return Err(Problem::Usage(format!(
+                    "measure takes one text (in quotes); also got {extra}"
+                )));
+            }
+        }
+    }
+    let Some(text) = text else {
+        return Err(Problem::Usage(
+            "measure needs the text, in quotes: art-cli measure \"Duck Forge\" --size 48".into(),
+        ));
+    };
+    let shape = art_engine::text::layout(&text, size, art_engine::text::Align::Left, 1.0);
+    let lines: Vec<&str> = text.split('\n').collect();
+    say!(
+        "\"{}\" at size {size}: {:.0} x {:.0} px ({} line{}, each {:.1} px high)",
+        text.replace('\n', "\\n"),
+        shape.width.ceil(),
+        shape.height.ceil(),
+        lines.len(),
+        if lines.len() == 1 { "" } else { "s" },
+        shape.height / lines.len() as f32
+    );
+    if lines.len() > 1 {
+        for (i, line) in lines.iter().enumerate() {
+            let width =
+                art_engine::text::layout(line, size, art_engine::text::Align::Left, 1.0).width;
+            say!("  line {}: {:.0} px wide", i + 1, width.ceil());
+        }
+    }
+    if let Some(fit) = fit {
+        if shape.width <= fit {
+            say!("  it fits in {fit} px at size {size}");
+        } else {
+            let smaller = (size * fit / shape.width * 10.0).floor() / 10.0;
+            say!(
+                "  to fit in {fit} px, use size {smaller} (or \"fit\": {fit} on the text command)"
+            );
+        }
+    }
+    Ok(())
 }
 
 // ---- info -----------------------------------------------------------------------

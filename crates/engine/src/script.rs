@@ -608,6 +608,10 @@ pub struct TextCmd {
     pub rotate: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
+    /// Shrinks the text (never enlarges it) so its widest line is at
+    /// most this many pixels wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<f32>,
 }
 
 /// `group`: draws its `commands` moved (`translate`), resized (`scale`),
@@ -702,6 +706,11 @@ pub struct UseCmd {
 pub struct RepeatCmd {
     pub count: u32,
     pub step: StepCmd,
+    /// Values that differ per copy: `{"color": ["red", "green", "blue"]}`
+    /// gives copy 1 `"$color"` = red, copy 2 green, ... (round and round
+    /// if there are more copies than values).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub each: Option<BTreeMap<String, Vec<Value>>>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }

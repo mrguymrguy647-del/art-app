@@ -851,3 +851,21 @@ app (it's big until the end), so the player refuses that with a plain
 message; the app plays it on a new picture or shows its frames.
 `examples/duck-pixel.json` is the 32-pixel duck, idle and walk, six
 colours, from the same kind of symbols as the painted one.
+
+## 56. Phase 1 leftovers (phase 2, step 6)
+- **Text width before painting:** `art-cli measure "words" --size 32`
+  prints the width and height (and each line's width), and `--fit 180`
+  the size that fits. On the `text` command, `"fit": 180` shrinks the
+  text to fit a width and never enlarges it, so a label can't run out
+  of its panel. Both use the engine's own layout, so they're exact.
+- **`repeat` with values per copy:** `"each": {"paint": ["yellow",
+  "wing", "beak"]}` gives copy 1 `"$paint"` = yellow, and so on, round
+  and round. It reuses symbol parameters: a repeat's copy is a frame
+  with those parameters set, so nothing new to learn inside it.
+- **Colours as parameters:** `"fill": "$paint"` now works anywhere a
+  colour is written, from a symbol's `params`/`with` or a repeat's
+  `each`. The pixel duck wanted this for its far leg before `colors`
+  did the job; now both ways work.
+Left alone: overlapping outlines where two shapes meet (hide the seam
+with a shape, as before) and arithmetic in parameters (`shift`,
+`each` and `fit` cover what was wanted).

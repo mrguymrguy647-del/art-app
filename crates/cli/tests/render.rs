@@ -710,3 +710,18 @@ fn export_writes_the_sheet_its_json_frames_and_a_gif() {
     assert!(String::from_utf8_lossy(&wrong.stderr).contains("no animations"));
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn measure_says_how_big_a_text_is_before_painting() {
+    let output = art_cli()
+        .args(["measure", "Duck Forge", "--size", "48", "--fit", "180"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.starts_with("\"Duck Forge\" at size 48: "), "{text}");
+    assert!(text.contains(" px (1 line, each 58.1 px high)"), "{text}");
+    assert!(text.contains("to fit in 180 px, use size 33."), "{text}");
+    let usage = art_cli().args(["measure"]).output().unwrap();
+    assert_eq!(usage.status.code(), Some(2));
+}

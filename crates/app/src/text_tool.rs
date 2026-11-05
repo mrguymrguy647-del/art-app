@@ -102,6 +102,7 @@ impl TextEdit {
                 .then(|| (settings.outline_size * 10.0).round() / 10.0),
             rotate: None,
             opacity: None,
+            fit: None,
         })
     }
 

@@ -288,6 +288,19 @@ struct Copies {
     base_brush_scale: f32,
     /// Randomness for the repeat command itself (each copy mixes in its number).
     seed: u64,
+    /// Values that differ per copy (`each`), as `$name` parameters.
+    each: BTreeMap<String, Vec<Value>>,
+}
+
+/// The parameters a `repeat`'s copy number `copy` gets from `each`.
+fn each_params(each: &BTreeMap<String, Vec<Value>>, copy: u32) -> BTreeMap<String, Value> {
+    each.iter()
+        .filter(|(_, values)| !values.is_empty())
+        .map(|(name, values)| {
+            let value = values[copy as usize % values.len()].clone();
+            (name.clone(), value)
+        })
+        .collect()
 }
 
 /// What a new frame plays and how.
@@ -862,6 +875,9 @@ impl Player {
         frame.detail = copies.base_detail * copies.so_far.size_factor();
         frame.brush_scale = copies.base_brush_scale * copies.so_far.size_factor();
         frame.seed_base = Some(Random::mix(copies.seed, copies.current as u64 + 1));
+        if !copies.each.is_empty() {
+            frame.params = Some(Arc::new(each_params(&copies.each, copies.current)));
+        }
         if let Some((_, label)) = &mut frame.label {
             *label = format!("repeat, copy {}", copies.current + 1);
         }
@@ -1467,11 +1483,22 @@ impl Player {
             params: None,
             upright: false,
         };
+        let each = command.each.clone().unwrap_or_default();
+        for (name, values) in &each {
+            if values.is_empty() {
+                return Err(format!(
+                    "`each`: \"{name}\" needs a list with at least one value"
+                ));
+            }
+        }
         self.push_frame(document, new)?;
         let frame = self.frames.last_mut().expect("just pushed");
         // Its commands are numbered by copy in messages.
         if let Some((_, label)) = &mut frame.label {
             *label = "repeat, copy 1".to_owned();
+        }
+        if !each.is_empty() {
+            frame.params = Some(Arc::new(each_params(&each, 0)));
         }
         frame.copies = Some(Copies {
             count: command.count,
@@ -1482,6 +1509,7 @@ impl Player {
             base_detail: frame.detail,
             base_brush_scale: frame.brush_scale,
             seed: self.current_seed,
+            each,
         });
         Ok(())
     }
@@ -2015,7 +2043,17 @@ impl Player {
         let (x, y) = pt(command.at)?;
         let words = self.with_copy_number(&command.text)?;
 
-        let shape = text::layout(&words, size, align, self.detail());
+        let mut shape = text::layout(&words, size, align, self.detail());
+        if let Some(fit) = command.fit {
+            if fit <= 0.0 || fit.is_nan() {
+                return Err("`fit` is a width in pixels, more than 0".into());
+            }
+            if shape.width > fit {
+                // Smaller, so the widest line fits (never bigger).
+                let smaller = size * fit / shape.width;
+                shape = text::layout(&words, smaller, align, self.detail());
+            }
+        }
         let place = Transform::rotate(rotate)
             .then(Transform::translate(x, y))
             .then(self.frame().place);
@@ -2539,6 +2577,13 @@ impl Player {
     fn base_color(&self, text: &str) -> Result<Rgba, String> {
         if text == "transparent" {
             return Ok([0, 0, 0, 0]);
+        }
+        // A parameter (of a symbol, or a repeat's `each`) holding a colour.
+        if let Some(name) = text.strip_prefix('$') {
+            return match self.param(name)? {
+                Value::String(color) if !color.starts_with('$') => self.base_color(&color),
+                other => Err(format!("\"{text}\" must be a colour, not {other}")),
+            };
         }
         if text.starts_with('#') {
             if self.pixel.is_some() {
@@ -4700,5 +4745,77 @@ mod tests {
         let painted =
             |grid: &Vec<Vec<[u8; 4]>>| grid.iter().flatten().filter(|p| p[3] == 255).count();
         assert_eq!(painted(&moved(2.4)), 9, "still exactly 3 x 3");
+    }
+
+    // ---- Phase 1 leftovers --------------------------------------------------------
+
+    #[test]
+    fn fit_shrinks_text_to_a_width_and_never_enlarges_it() {
+        let wide = play(&small(
+            r##"{ "cmd": "text", "text": "A rather long label", "at": [0, 10], "size": 40, "color": "ink", "fit": 100 }"##,
+        ));
+        let area = wide.active_layer().surface.painted_area().unwrap();
+        assert!(area.right - area.left <= 101, "{area:?}");
+        assert!(area.right - area.left > 90, "{area:?}");
+        // Already narrow: the same as without `fit`.
+        let short = play(&small(
+            r##"{ "cmd": "text", "text": "Hi", "at": [0, 10], "size": 40, "color": "ink", "fit": 500 }"##,
+        ));
+        let plain = play(&small(
+            r##"{ "cmd": "text", "text": "Hi", "at": [0, 10], "size": 40, "color": "ink" }"##,
+        ));
+        assert_eq!(png(&short), png(&plain));
+    }
+
+    #[test]
+    fn each_gives_every_copy_of_a_repeat_its_own_values() {
+        let row = play(&small(
+            r##"{ "cmd": "repeat", "count": 4, "step": { "translate": [30, 0] },
+                 "each": { "color": ["red", "ink"], "size": [10, 20, 30] }, "commands": [
+                { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "$color" },
+                { "cmd": "group", "translate": [0, "$size"], "commands": [
+                    { "cmd": "rect", "x": 10, "y": 60, "width": 20, "height": 5, "fill": "$color" } ] } ] }"##,
+        ));
+        // Colours go round: red, ink, red, ink; sizes 10, 20, 30, then 10 again.
+        let by_hand = play(&small(
+            r##"{ "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "red" },
+                { "cmd": "rect", "x": 10, "y": 70, "width": 20, "height": 5, "fill": "red" },
+                { "cmd": "rect", "x": 40, "y": 10, "width": 20, "height": 20, "fill": "ink" },
+                { "cmd": "rect", "x": 40, "y": 80, "width": 20, "height": 5, "fill": "ink" },
+                { "cmd": "rect", "x": 70, "y": 10, "width": 20, "height": 20, "fill": "red" },
+                { "cmd": "rect", "x": 70, "y": 90, "width": 20, "height": 5, "fill": "red" },
+                { "cmd": "rect", "x": 100, "y": 10, "width": 20, "height": 20, "fill": "ink" },
+                { "cmd": "rect", "x": 100, "y": 70, "width": 20, "height": 5, "fill": "ink" }"##,
+        ));
+        assert_eq!(png(&row), png(&by_hand));
+        let problem = error(&small(
+            r##"{ "cmd": "repeat", "count": 2, "step": {}, "each": { "color": [] }, "commands": [] }"##,
+        ));
+        assert!(
+            problem.contains("`each`: \"color\" needs a list"),
+            "{problem}"
+        );
+    }
+
+    #[test]
+    fn a_symbol_parameter_can_be_a_colour() {
+        let used = play(&small(
+            r##"{ "cmd": "define", "name": "dot", "params": { "paint": "red" }, "commands": [
+                    { "cmd": "ellipse", "center": [50, 50], "radius": 10, "fill": "$paint", "outline": "$paint" } ] },
+                { "cmd": "use", "name": "dot", "with": { "paint": "#2020E0" } }"##,
+        ));
+        let by_hand = play(&small(
+            r##"{ "cmd": "ellipse", "center": [50, 50], "radius": 10, "fill": "#2020E0", "outline": "#2020E0" }"##,
+        ));
+        assert_eq!(png(&used), png(&by_hand));
+        let problem = error(&small(
+            r##"{ "cmd": "define", "name": "dot", "params": { "paint": 5 }, "commands": [
+                    { "cmd": "ellipse", "center": [50, 50], "radius": 10, "fill": "$paint" } ] },
+                { "cmd": "use", "name": "dot" }"##,
+        ));
+        assert!(
+            problem.contains("\"$paint\" must be a colour, not 5"),
+            "{problem}"
+        );
     }
 }

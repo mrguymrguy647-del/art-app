@@ -307,7 +307,8 @@ Write down what's wrong, change only that, and render again.
   turn a drawing in place, set `origin` to its middle.
 - **Symbols are defined before they're used**, only at the top level, and each name once.
 - **Text `at` is the top of the line, not the baseline.** Letters start a little below it. Give
-  `size` in pixels (it's the font size; a line is 1.21 × that high).
+  `size` in pixels (it's the font size; a line is 1.21 × that high). Width before painting:
+  `art-cli measure "the words" --size 32`, or `"fit": 180` to shrink it into a space.
 - **Colour swaps only work on colours the symbol uses.** Give symbols palette colours, and swap by
   those names.
 
