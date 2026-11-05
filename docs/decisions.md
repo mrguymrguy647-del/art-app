@@ -788,3 +788,16 @@ strength, and `--gif` writes an animated GIF with the `gif` crate
 colours; pixel art already has fewer). Half see-through pixels become
 opaque in a GIF, which can't blend: `--bg` is the way to show a
 see-through sprite in one.
+
+## 53. Three review fixes before the exports
+- **"Never used" counts every frame of every animation.** A symbol
+  swapped in at frame 9 (a blink) or a colour used only in the "hurt"
+  animation is used. The report now carries what each frame defined
+  and used, and `unused_warnings` is worked out over all the reports;
+  for a single picture that's one report, as before.
+- **Frame warnings say their frame, once.** Something drawn off the
+  canvas in frames 5, 6 and 7 is one line: `animation "walk", frames
+  5-7: ...`, not three.
+- **`check` says which frame it shows** and takes `--animation` and
+  `--frame` to show another. Before, it silently showed frame 0 of the
+  first animation alphabetically.

@@ -534,3 +534,74 @@ fn the_motion_summary_shows_steps_and_warns_about_jumps_and_pops() {
     assert_eq!(usage.status.code(), Some(2));
     std::fs::remove_dir_all(out).ok();
 }
+
+/// Symbols and colours used only in later frames or other animations,
+/// and a part that leaves the canvas for frames 2 to 4.
+const LATER_USE: &str = r##"{ "palette": { "ink": "#202020", "red": "#E02020", "blue": "#2020E0" }, "commands": [
+    { "cmd": "canvas", "width": 50, "height": 50 },
+    { "cmd": "define", "name": "open", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 4, "fill": "ink" } ] },
+    { "cmd": "define", "name": "blink", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 1, "fill": "ink" } ] },
+    { "cmd": "define", "name": "never", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 1, "fill": "blue" } ] },
+    { "cmd": "define", "name": "face", "params": { "eye": "open" }, "commands": [
+        { "cmd": "use", "name": "$eye", "translate": [10, 10] } ] }
+  ], "animations": {
+    "idle": { "frames": 6, "commands": [
+        { "cmd": "use", "name": "face", "with": { "eye": { "keys": [[0, "open"], [5, "blink"]] } } },
+        { "cmd": "group", "name": "flyer", "translate": { "keys": [[0, [20, 20]], [2, [80, 80], "step"], [5, [20, 20], "step"]] }, "commands": [
+            { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" } ] } ] },
+    "hurt": { "frames": 1, "commands": [
+        { "cmd": "rect", "x": 20, "y": 20, "width": 4, "height": 4, "fill": "red" } ] }
+  } }"##;
+
+#[test]
+fn check_counts_use_over_every_frame_and_says_which_frames_warn() {
+    let out = folder("later-use");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("later.json");
+    std::fs::write(&script, LATER_USE).unwrap();
+    let check = |extra: &[&str]| {
+        let output = art_cli()
+            .arg("check")
+            .arg(&script)
+            .args(extra)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let (code, text, _) = check(&[]);
+    assert_eq!(code, Some(0));
+    // "blink" (frame 5) and "red" (the other animation) are used; "never" and "blue" aren't.
+    assert!(!text.contains("\"blink\""), "{text}");
+    assert!(!text.contains("colour \"red\""), "{text}");
+    assert!(
+        text.contains("symbol \"never\" (command 4) is defined but never used"),
+        "{text}"
+    );
+    assert!(
+        text.contains("palette colour \"blue\" is never used"),
+        "{text}"
+    );
+    // The flyer is off the canvas in frames 2 to 4: one warning, with the range.
+    assert!(
+        text.contains("animation \"idle\", frames 2-4: command 2 (group \"flyer\") > 1 (rect) draws entirely outside the canvas (x 80..85, y 80..85)"),
+        "{text}"
+    );
+    assert_eq!(text.matches("draws entirely outside").count(), 1, "{text}");
+    // Which frame the summary shows, and how to pick another.
+    assert!(text.contains("(the layers and parts below are frame 0 of \"hurt\"; --animation and --frame show another)"), "{text}");
+    let (code, text, _) = check(&["--animation", "idle", "--frame", "3"]);
+    assert_eq!(code, Some(0));
+    assert!(text.contains("frame 3 of \"idle\""), "{text}");
+    assert!(
+        text.contains("command 2 (group \"flyer\"): x 80..85, y 80..85"),
+        "{text}"
+    );
+    let (code, _, errors) = check(&["--animation", "idle", "--frame", "9"]);
+    assert_eq!(code, Some(1));
+    assert!(errors.contains("no frame 9"), "{errors}");
+    std::fs::remove_dir_all(out).ok();
+}

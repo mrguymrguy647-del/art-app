@@ -28,7 +28,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use player::{Event, Part, PlayOptions, Player, Progress, Report, layer_named};
+pub use player::{
+    Event, Part, PlayOptions, Player, Progress, Report, layer_named, unused_warnings,
+};
 
 /// Written at the top of every script, so it can be recognised.
 pub const FORMAT_NAME: &str = "artapp-script";

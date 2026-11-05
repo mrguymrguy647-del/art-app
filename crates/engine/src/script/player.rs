@@ -110,6 +110,36 @@ pub struct Report {
     /// painted (or erased) on it, in order. A group, `use` or `repeat`
     /// counts as one command. Clearing a layer starts its list again.
     pub painted_by: HashMap<LayerId, Vec<usize>>,
+    /// Every symbol defined, with its command number, and the symbols
+    /// and palette colours used in this frame: see [`unused_warnings`].
+    pub defined: Vec<(String, usize)>,
+    pub used_symbols: BTreeSet<String>,
+    pub used_colors: BTreeSet<String>,
+    pub palette: BTreeSet<String>,
+}
+
+/// Warnings about symbols defined but never used and palette colours
+/// never used, counted over all of `reports` (every frame of every
+/// animation): a symbol swapped in at frame 9 is used.
+pub fn unused_warnings(reports: &[&Report]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let Some(first) = reports.first() else {
+        return warnings;
+    };
+    let used = |name: &str| reports.iter().any(|r| r.used_symbols.contains(name));
+    for (name, command) in &first.defined {
+        if !used(name) {
+            warnings.push(format!(
+                "symbol \"{name}\" (command {command}) is defined but never used"
+            ));
+        }
+    }
+    for name in &first.palette {
+        if !reports.iter().any(|r| r.used_colors.contains(name)) {
+            warnings.push(format!("palette colour \"{name}\" is never used"));
+        }
+    }
+    warnings
 }
 
 /// A named group or a `use`, and where its drawing went.
@@ -890,28 +920,13 @@ impl Player {
     /// What was drawn where, and what looks like a mistake. Complete once
     /// the script has finished (before that, it's what's known so far).
     pub fn report(&self) -> Report {
-        let mut warnings = self.warnings.clone();
-        for (name, command) in &self.defined {
-            if !self.used_symbols.contains(name) {
-                warnings.push(format!(
-                    "symbol \"{name}\" (command {command}) is defined but never used"
-                ));
-            }
-        }
-        let used = self.used_colors.borrow();
-        let mut unused: Vec<&str> = self
-            .palette
-            .keys()
-            .map(String::as_str)
-            .filter(|name| !used.contains(*name))
-            .collect();
-        unused.sort_unstable();
-        for name in unused {
-            warnings.push(format!("palette colour \"{name}\" is never used"));
-        }
         Report {
             parts: self.parts.clone(),
-            warnings,
+            warnings: self.warnings.clone(),
+            defined: self.defined.clone(),
+            used_symbols: self.used_symbols.iter().cloned().collect(),
+            used_colors: self.used_colors.borrow().iter().cloned().collect(),
+            palette: self.palette.keys().cloned().collect(),
             painted_by: self
                 .painted_by
                 .iter()
@@ -3870,13 +3885,60 @@ mod tests {
                 { "cmd": "rect", "x": 0, "y": 0, "width": 10, "height": 10, "fill": "ink" }"##,
         ));
         assert_eq!(
-            report.warnings,
+            unused_warnings(&[&report]),
             [
                 r#"symbol "tree" (command 2) is defined but never used"#,
                 // Only used inside the symbol that's never used.
                 r#"palette colour "red" is never used"#,
             ]
         );
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn use_in_any_frame_of_any_animation_counts() {
+        // "blink" is only used at frame 3 (through a keyframed parameter),
+        // and "red" only in the second animation.
+        let text = r##"{ "palette": { "ink": "#202020", "red": "#E02020", "blue": "#2020E0" }, "commands": [
+            { "cmd": "canvas", "width": 50, "height": 50 },
+            { "cmd": "define", "name": "open", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 4, "fill": "ink" } ] },
+            { "cmd": "define", "name": "blink", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 1, "fill": "ink" } ] },
+            { "cmd": "define", "name": "never", "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 1, "fill": "blue" } ] },
+            { "cmd": "define", "name": "face", "params": { "eye": "open" }, "commands": [
+                { "cmd": "use", "name": "$eye", "translate": [10, 10] } ] }
+          ], "animations": {
+            "idle": { "frames": 4, "commands": [
+                { "cmd": "use", "name": "face", "with": { "eye": { "keys": [[0, "open"], [3, "blink"]] } } } ] },
+            "hurt": { "frames": 1, "commands": [
+                { "cmd": "rect", "x": 20, "y": 20, "width": 4, "height": 4, "fill": "red" } ] }
+          } }"##;
+        let mut reports = Vec::new();
+        for (animation, frames) in [("idle", 4), ("hurt", 1)] {
+            for frame in 0..frames {
+                let mut player = Player::new(
+                    Script::parse(text).unwrap(),
+                    PlayOptions {
+                        animation: Some(animation.to_owned()),
+                        frame,
+                        ..PlayOptions::default()
+                    },
+                )
+                .unwrap();
+                let mut document = player.create_document().unwrap();
+                player.run(&mut document, |_, _| {}).unwrap();
+                reports.push(player.report());
+            }
+        }
+        let all: Vec<&Report> = reports.iter().collect();
+        assert_eq!(
+            unused_warnings(&all),
+            [
+                r#"symbol "never" (command 4) is defined but never used"#,
+                r#"palette colour "blue" is never used"#
+            ]
+        );
+        // Frame 0 alone would have blamed "blink" and "red" too.
+        assert_eq!(unused_warnings(&all[..1]).len(), 4);
     }
 
     #[test]

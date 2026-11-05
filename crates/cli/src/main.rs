@@ -36,7 +36,7 @@ use art_engine::file::{self, FILE_EXTENSION};
 use art_engine::gif::save_gif;
 use art_engine::image::{Color, Image, unpremultiply};
 use art_engine::layer::Layer;
-use art_engine::script::{Event, PlayOptions, Player, Report, Script, parse_hex};
+use art_engine::script::{Event, PlayOptions, Player, Report, Script, parse_hex, unused_warnings};
 use art_engine::surface::PixelRect;
 
 use grid::{View, draw_grid};
@@ -50,7 +50,8 @@ USAGE
   art-cli check <script.json> [--detail]   paint without saving: where everything
                                            went, and what looks like a mistake
                                            (--detail: every group and use, also
-                                           the ones inside others)
+                                           the ones inside others; --animation
+                                           and --frame choose the frame shown)
   art-cli info <picture.artapp>            describe a saved picture: its layers
   art-cli info <script.json>               the same for the picture a script
                                            paints, with the commands that
@@ -105,15 +106,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("render") => parse_render(&args[1..]).and_then(|options| render(&options)),
-        Some("check") => match &args[1..] {
-            [script] if !script.starts_with("--") => check(Path::new(script), false),
-            [script, flag] | [flag, script] if flag == "--detail" && !script.starts_with("--") => {
-                check(Path::new(script), true)
-            }
-            _ => Err(Problem::Usage(
-                "check needs one script file (and maybe --detail)".into(),
-            )),
-        },
+        Some("check") => parse_check(&args[1..]).and_then(|options| check(&options)),
         Some("info") => match &args[1..] {
             [picture] => info(Path::new(picture)),
             _ => Err(Problem::Usage(
@@ -1093,6 +1086,7 @@ fn describe_box(area: Option<PixelRect>) -> String {
 /// The player's warnings, and empty layers.
 fn warnings(report: &Report, layers: &[LayerBox]) -> Vec<String> {
     let mut warnings = report.warnings.clone();
+    warnings.extend(unused_warnings(&[report]));
     for layer in layers.iter().filter(|layer| layer.area.is_none()) {
         warnings.push(format!("layer \"{}\" is empty", layer.name));
     }
@@ -1166,8 +1160,60 @@ fn layer_names(document: &Document) -> String {
 /// a mistake anywhere is found), and the picture and report are frame 0
 /// of the first animation.
 fn paint(path: &Path) -> Result<(Document, Report, Vec<String>), Problem> {
-    let (document, report, snapshots, _) = paint_all(path)?;
+    let (document, report, snapshots, _) = paint_all(path, None, 0)?;
     Ok((document, report, snapshots))
+}
+
+/// The warnings found while painting the frames, each saying its
+/// animation and frame; one that repeats over frames in a row says the
+/// range: `animation "walk", frames 5-7: ...`.
+fn frame_warnings(motions: &[Motion]) -> Vec<String> {
+    let mut out = Vec::new();
+    for motion in motions {
+        // Each distinct warning, with the frames it was found in (in order
+        // of first appearance).
+        let own_prefix = format!("animation \"{}\" > ", motion.name);
+        let mut found: Vec<(String, Vec<u32>)> = Vec::new();
+        for (frame, report) in motion.reports.iter().enumerate() {
+            for warning in &report.warnings {
+                let text = warning.strip_prefix(&own_prefix).unwrap_or(warning);
+                match found.iter_mut().find(|(t, _)| t == text) {
+                    Some((_, frames)) => frames.push(frame as u32),
+                    None => found.push((text.to_owned(), vec![frame as u32])),
+                }
+            }
+        }
+        for (text, frames) in found {
+            let mut ranges: Vec<(u32, u32)> = Vec::new();
+            for frame in frames {
+                match ranges.last_mut() {
+                    Some((_, end)) if *end + 1 == frame => *end = frame,
+                    _ => ranges.push((frame, frame)),
+                }
+            }
+            let ranges: Vec<String> = ranges
+                .iter()
+                .map(|(a, b)| {
+                    if a == b {
+                        a.to_string()
+                    } else {
+                        format!("{a}-{b}")
+                    }
+                })
+                .collect();
+            let word = if ranges.len() == 1 && !ranges[0].contains('-') {
+                "frame"
+            } else {
+                "frames"
+            };
+            out.push(format!(
+                "animation \"{}\", {word} {}: {text}",
+                motion.name,
+                ranges.join(", ")
+            ));
+        }
+    }
+    out
 }
 
 /// What every frame of one animation drew: its report, frame by frame.
@@ -1179,11 +1225,37 @@ struct Motion {
 
 /// Like [`paint`], and also every frame's report of every animation,
 /// for the motion summary.
-fn paint_all(path: &Path) -> Result<(Document, Report, Vec<String>, Vec<Motion>), Problem> {
+/// The picture and report returned are the `shown` animation's (the first,
+/// if `None`) at frame `shown_frame`.
+fn paint_all(
+    path: &Path,
+    shown: Option<&str>,
+    shown_frame: u32,
+) -> Result<(Document, Report, Vec<String>, Vec<Motion>), Problem> {
     let script = load(path)?;
     let folder = path.parent().map(Path::to_path_buf);
     let mut motions = Vec::new();
     let mut first = None;
+    let shown = match shown {
+        Some(name) => Some(name.to_owned()),
+        None => script.animations.keys().next().cloned(),
+    };
+    if let Some(name) = &shown {
+        let Some(animation) = script.animations.get(name) else {
+            let names: Vec<&str> = script.animations.keys().map(String::as_str).collect();
+            return Err(failed(format!(
+                "there's no animation called \"{name}\" (animations: {})",
+                names.join(", ")
+            )));
+        };
+        if shown_frame >= animation.frames {
+            return Err(failed(format!(
+                "animation \"{name}\" has {} frames (0 to {}), so there's no frame {shown_frame}",
+                animation.frames,
+                animation.frames - 1
+            )));
+        }
+    }
     for (name, animation) in &script.animations {
         let mut reports = Vec::with_capacity(animation.frames as usize);
         for frame in 0..animation.frames {
@@ -1195,7 +1267,7 @@ fn paint_all(path: &Path) -> Result<(Document, Report, Vec<String>, Vec<Motion>)
             };
             let (document, report, snapshots) = paint_frame(path, &script, options)?;
             reports.push(report.clone());
-            if first.is_none() {
+            if shown.as_deref() == Some(name) && frame == shown_frame {
                 first = Some((document, report, snapshots));
             }
         }
@@ -1376,30 +1448,93 @@ fn paint_frame(
     Ok((document, player.report(), snapshots))
 }
 
-fn check(path: &Path, detail: bool) -> Result<(), Problem> {
+/// What `check` was asked for.
+struct CheckOptions {
+    script: PathBuf,
+    detail: bool,
+    /// Which animation and frame the layers and parts are shown for.
+    animation: Option<String>,
+    frame: u32,
+}
+
+fn parse_check(args: &[String]) -> Result<CheckOptions, Problem> {
+    let mut options = CheckOptions {
+        script: PathBuf::new(),
+        detail: false,
+        animation: None,
+        frame: 0,
+    };
+    let mut script = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let mut value = |name: &str| {
+            rest.next()
+                .cloned()
+                .ok_or_else(|| Problem::Usage(format!("{name} needs a value")))
+        };
+        match arg.as_str() {
+            "--detail" => options.detail = true,
+            "--animation" => options.animation = Some(value("--animation")?),
+            "--frame" => {
+                let text = value("--frame")?;
+                options.frame = text.parse::<u32>().map_err(|_| {
+                    Problem::Usage(format!("--frame is a frame number from 0, not {text}"))
+                })?;
+            }
+            flag if flag.starts_with("--") => {
+                return Err(Problem::Usage(format!("unknown option {flag}")));
+            }
+            file if script.is_none() => script = Some(PathBuf::from(file)),
+            extra => {
+                return Err(Problem::Usage(format!(
+                    "only one script at a time (also got {extra})"
+                )));
+            }
+        }
+    }
+    options.script = script.ok_or_else(|| {
+        Problem::Usage(
+            "check needs one script file (and maybe --detail, --animation, --frame)".into(),
+        )
+    })?;
+    Ok(options)
+}
+
+fn check(options: &CheckOptions) -> Result<(), Problem> {
+    let path = options.script.as_path();
+    let detail = options.detail;
     let started = Instant::now();
     let command_count = load(path)?.commands.len();
     // It really paints (at full size), so what it reports is exactly
     // what `render` would make.
     let script = load(path)?;
-    let (document, report, snapshots, motions) = paint_all(path)?;
-    let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));
-    let mut warnings = warnings(&report, &layers);
-    // Warnings from the other frames too (each once).
-    for motion in &motions {
-        for frame_report in &motion.reports {
-            for warning in &frame_report.warnings {
-                if !warnings.contains(warning) {
-                    warnings.push(warning.clone());
-                }
-            }
-        }
+    if script.animations.is_empty() && (options.animation.is_some() || options.frame > 0) {
+        return Err(failed(
+            "this script has no animations (--animation and --frame are for scripts with an \
+             \"animations\" section)",
+        ));
     }
-    // Where everything moves: printed after the summary line, and its
-    // warnings join the rest.
-    let mut motion_lines: Vec<(&Motion, Vec<String>)> = Vec::new();
+    let (document, report, snapshots, motions) =
+        paint_all(path, options.animation.as_deref(), options.frame)?;
+    let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));
+    // What the shown frame drew outside the canvas, empty layers, then
+    // (over every frame of every animation) what's never used and what
+    // the other frames drew outside the canvas.
+    let mut warnings: Vec<String> = Vec::new();
+    if motions.is_empty() {
+        warnings.extend(report.warnings.iter().cloned());
+    }
+    for layer in layers.iter().filter(|layer| layer.area.is_none()) {
+        warnings.push(format!("layer \"{}\" is empty", layer.name));
+    }
+    let all_reports: Vec<&Report> = if motions.is_empty() {
+        vec![&report]
+    } else {
+        motions.iter().flat_map(|m| m.reports.iter()).collect()
+    };
+    warnings.extend(unused_warnings(&all_reports));
+    warnings.extend(frame_warnings(&motions));
     let canvas = (document.width(), document.height());
-    let _ = &mut motion_lines;
 
     say!(
         "OK: {} (painted in {:.2} s{})",
@@ -1436,8 +1571,15 @@ fn check(path: &Path, detail: bool) -> Result<(), Problem> {
             "  animations (every frame painted without mistakes): {}",
             list.join("; ")
         );
-        let first = script.animations.keys().next().expect("not empty");
-        say!("  (the layers and parts below are frame 0 of \"{first}\")");
+        let shown = options
+            .animation
+            .clone()
+            .unwrap_or_else(|| script.animations.keys().next().cloned().expect("not empty"));
+        say!(
+            "  (the layers and parts below are frame {} of \"{shown}\"; --animation and --frame \
+             show another)",
+            options.frame
+        );
     }
     let mut motion_warnings = Vec::new();
     for motion in &motions {
