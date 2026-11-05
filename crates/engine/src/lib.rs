@@ -17,6 +17,7 @@ pub mod layer;
 pub mod layer_commands;
 pub mod layer_transform;
 pub mod pen;
+pub mod pixels;
 pub mod random;
 pub mod script;
 pub mod smoothing;

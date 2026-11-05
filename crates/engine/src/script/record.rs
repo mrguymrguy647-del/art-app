@@ -325,6 +325,11 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             option(&mut c.color, f);
             option(&mut c.outline, f);
         }
+        Command::Pixels(c) => {
+            for color in c.colors.values_mut() {
+                f(color);
+            }
+        }
         Command::Group(c) => {
             for inner in &mut c.commands {
                 for_each_color(inner, f);
@@ -512,6 +517,7 @@ pub fn script(
         height: Some(height),
         paper: Some(hex([paper.r, paper.g, paper.b, 255])),
         open: None,
+        pixel: None,
     })];
     commands.extend(unique_symbols(tidy(recorded)));
     Script {

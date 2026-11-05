@@ -31,8 +31,8 @@ use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
-    MoveLayerCmd, PathCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError,
-    StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
+    MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script,
+    ScriptError, StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
 use crate::document::{Document, MAX_CANVAS_SIDE};
@@ -47,6 +47,7 @@ use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
 };
 use crate::layer_transform::transform_layer;
+use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
 use crate::surface::PixelRect;
@@ -370,6 +371,11 @@ pub struct Player {
     frame: u32,
     /// The frame and the animation's length, for keyframes.
     clock: Clock,
+    /// A pixel canvas: painted this many times bigger, then shrunk.
+    pixel: Option<PixelMode>,
+    /// How many painted pixels one canvas pixel is: the preview scale
+    /// times the pixel canvas's supersample.
+    paint_scale: f32,
 }
 
 impl Player {
@@ -428,7 +434,7 @@ impl Player {
             length: animation.as_ref().map(|(_, a)| (a.frames, a.looping)),
         };
         let animation = animation.map(|(name, a)| (name, Arc::new(a.commands.clone())));
-        let palette = script
+        let palette: HashMap<String, Rgba> = script
             .palette
             .iter()
             .map(|(name, color)| {
@@ -438,6 +444,12 @@ impl Player {
                 ))
             })
             .collect::<Result<_, ScriptError>>()?;
+        let pixel = match script.commands.first() {
+            Some(Command::Canvas(canvas)) => pixel_mode(canvas, &palette)
+                .map_err(|m| ScriptError::in_command(0, Some("canvas"), m))?,
+            _ => None,
+        };
+        let paint_scale = options.scale * pixel.as_ref().map_or(1.0, |p| p.supersample as f32);
         Ok(Self {
             commands: Arc::new(script.commands),
             palette,
@@ -467,6 +479,8 @@ impl Player {
             painted_by: HashMap::new(),
             frame: options.frame,
             clock,
+            pixel,
+            paint_scale,
             animation,
             pending_animation: None,
             options,
@@ -531,7 +545,7 @@ impl Player {
                         "the canvas must be between 1 and {MAX_CANVAS_SIDE} pixels wide and high"
                     )));
                 }
-                let scaled = |side: u32| ((side as f32 * self.options.scale).round() as u32).max(1);
+                let scaled = |side: u32| ((side as f32 * self.paint_scale).round() as u32).max(1);
                 let mut document = Document::new(scaled(width), scaled(height));
                 if let Some(paper) = &canvas.paper {
                     document.set_paper(self.paper_color(paper).map_err(error)?);
@@ -553,6 +567,14 @@ impl Player {
     /// The canvas's paper colour is applied; its size isn't checked here
     /// (see `canvas_size`) and `open` is ignored.
     pub fn start_on(&mut self, document: &mut Document) -> Result<(), ScriptError> {
+        if self.pixel.is_some() {
+            return Err(ScriptError::in_command(
+                0,
+                Some("canvas"),
+                "a pixel canvas is painted bigger and shrunk at the end, so it can't be played \
+                 onto an open picture: play it on a new one, or export its frames",
+            ));
+        }
         if let Some(paper) = self.canvas().paper.clone() {
             let color = self
                 .paper_color(&paper)
@@ -568,7 +590,7 @@ impl Player {
     /// The bottom frame: the script's own commands, after `canvas`. A
     /// preview is everything shrunk around the canvas's top-left corner.
     fn start_frames(&mut self) {
-        let scale = self.options.scale;
+        let scale = self.paint_scale;
         self.frames = vec![Frame {
             commands: Arc::clone(&self.commands),
             next: 1,
@@ -630,7 +652,7 @@ impl Player {
                 }
             } else if let Some(commands) = self.pending_animation.take() {
                 // The script's own commands are done: now the animation's.
-                let scale = self.options.scale;
+                let scale = self.paint_scale;
                 let name = self.animation.as_ref().map(|(name, _)| name.clone());
                 self.frames.push(Frame {
                     commands,
@@ -672,10 +694,33 @@ impl Player {
         loop {
             match self.advance(document, f32::INFINITY)? {
                 Progress::Event(event) => on_event(&event, document),
-                Progress::Finished => return Ok(()),
+                Progress::Finished => {
+                    self.finish_pixels(document);
+                    return Ok(());
+                }
                 Progress::Working => {}
             }
         }
+    }
+
+    /// On a pixel canvas, once the script has finished: shrinks the
+    /// painting to the canvas's real size, crisp and in palette colours.
+    /// (Done by `run`; a caller of `advance` does it when `Finished`.)
+    pub fn finish_pixels(&self, document: &mut Document) {
+        let Some(pixel) = &self.pixel else {
+            return;
+        };
+        let s = pixel.supersample.max(1);
+        let (width, height) = (
+            (document.width() / s).max(1),
+            (document.height() / s).max(1),
+        );
+        *document = pixel.shrink(document, width, height);
+    }
+
+    /// True for a pixel canvas (see `pixels.rs`).
+    pub fn is_pixel(&self) -> bool {
+        self.pixel.is_some()
     }
 
     /// How far along the script's own commands: (started, all of them).
@@ -968,7 +1013,7 @@ impl Player {
     /// A box in the pixels being painted, in canvas pixels (they differ
     /// when painting smaller, for a preview).
     fn canvas_box(&self, (left, top, right, bottom): Extent) -> PixelRect {
-        let scale = self.options.scale;
+        let scale = self.paint_scale;
         PixelRect::new(
             (left / scale).floor() as i32,
             (top / scale).floor() as i32,
@@ -1209,7 +1254,7 @@ impl Player {
                 };
                 // In canvas pixels, whatever group it's in; in a preview,
                 // shrunk like everything else.
-                let scale = self.options.scale;
+                let scale = self.paint_scale;
                 let mut transform = command.transform()?;
                 if scale != 1.0 {
                     transform = Transform::scale(1.0 / scale, 1.0 / scale)
@@ -1239,6 +1284,7 @@ impl Player {
             Command::Hatch(hatch) => self.hatch(document, hatch),
             Command::Scatter(scatter) => self.scatter(document, scatter),
             Command::Text(text) => self.text(document, text),
+            Command::Pixels(pixels) => self.pixels(document, pixels),
             Command::Snapshot(snapshot) => {
                 self.painted = None; // the snapshot already shows that layer
                 self.events
@@ -2026,6 +2072,63 @@ impl Player {
         Ok(())
     }
 
+    /// `pixels`: rows of characters, each one canvas pixel in a palette
+    /// colour (runs of one colour become one rectangle each).
+    fn pixels(&mut self, document: &Document, command: &PixelsCmd) -> Result<(), String> {
+        let (left, top) = pt(command.at)?;
+        if command.rows.is_empty() {
+            return Err("`rows` needs at least one row of characters".into());
+        }
+        let mut colors: HashMap<char, Rgba> = HashMap::new();
+        for (key, color) in &command.colors {
+            let mut chars = key.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if c != '.' => {
+                    colors.insert(c, self.color(color)?);
+                }
+                _ => {
+                    return Err(format!(
+                        "`colors` keys are single characters (not \".\"), like \"y\": not \"{key}\""
+                    ));
+                }
+            }
+        }
+        let layer = document.active_id();
+        let opacity = self.frame().opacity;
+        for (row, text) in command.rows.iter().enumerate() {
+            let chars: Vec<char> = text.chars().collect();
+            let mut column = 0;
+            while column < chars.len() {
+                let c = chars[column];
+                if c == '.' || c == ' ' {
+                    column += 1;
+                    continue;
+                }
+                let Some(&color) = colors.get(&c) else {
+                    return Err(format!(
+                        "row {} has \"{c}\", which isn't in `colors` (\".\" is see-through)",
+                        row + 1
+                    ));
+                };
+                let start = column;
+                while column < chars.len() && chars[column] == c {
+                    column += 1;
+                }
+                let (x0, y0) = (left + start as f32, top + row as f32);
+                let (x1, y1) = (left + column as f32, top + row as f32 + 1.0);
+                let ring = vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                self.jobs.push_back(Job::Area {
+                    layer,
+                    shape: Some(vec![self.place_polygon(ring)]),
+                    paint: Paint::Color(color),
+                    opacity,
+                    mode: BrushMode::Paint,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// `text` with "{i}" replaced by the copy number of the `repeat` it's
     /// in (1, 2, 3...) and "{i0}" by the same counted from 0 (0, 1, 2...).
     /// The innermost `repeat` counts, even from inside a group or symbol.
@@ -2404,8 +2507,13 @@ impl Player {
             Some(v) => Some(self.string(v, "mirror")?),
             None => None,
         };
+        let mut translate = self.pair(translate, "translate")?;
+        if self.pixel.is_some() {
+            // Pixel art moves by whole pixels, so it stays crisp.
+            translate = translate.map(|[x, y]| [x.round(), y.round()]);
+        }
         placement(
-            self.pair(translate, "translate")?,
+            translate,
             scale.as_ref(),
             self.number(rotate, "rotate")?,
             mirror.as_deref(),
@@ -2433,6 +2541,12 @@ impl Player {
             return Ok([0, 0, 0, 0]);
         }
         if text.starts_with('#') {
+            if self.pixel.is_some() {
+                return Err(format!(
+                    "on a pixel canvas every colour is a palette name, so the picture stays in \
+                     its colours: add \"{text}\" to the \"palette\" and use its name"
+                ));
+            }
             return parse_hex(text);
         }
         if self.palette.contains_key(text) {
@@ -2736,6 +2850,67 @@ fn name_seed(name: &str) -> u64 {
     name.bytes().fold(0xCBF2_9CE4_8422_2325, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01B3)
     })
+}
+
+/// How the `canvas` command's `pixel` field reads: `true`, `false`, or
+/// `{"supersample": 8, "outline": "ink"}`.
+fn pixel_mode(
+    canvas: &super::CanvasCmd,
+    palette: &HashMap<String, Rgba>,
+) -> Result<Option<PixelMode>, String> {
+    let (supersample, outline) = match &canvas.pixel {
+        None | Some(Value::Bool(false)) => return Ok(None),
+        Some(Value::Bool(true)) => (4, None),
+        Some(Value::Object(fields)) => {
+            for field in fields.keys() {
+                if !matches!(field.as_str(), "supersample" | "outline") {
+                    return Err(format!(
+                        "`pixel` has `supersample` and `outline`, not `{field}`"
+                    ));
+                }
+            }
+            let supersample = match fields.get("supersample") {
+                None => 4,
+                Some(Value::Number(n)) => match n.as_u64() {
+                    Some(s) if (1..=u64::from(MAX_SUPERSAMPLE)).contains(&s) => s as u32,
+                    _ => {
+                        return Err(format!(
+                            "`supersample` is a whole number from 1 to {MAX_SUPERSAMPLE} (how many \
+                             times bigger to paint before shrinking)"
+                        ));
+                    }
+                },
+                Some(_) => return Err("`supersample` is a whole number".into()),
+            };
+            let outline = match fields.get("outline") {
+                None => None,
+                Some(Value::String(name)) => Some(*palette.get(name).ok_or_else(|| {
+                    format!("`outline` is a palette colour's name, and there's no \"{name}\"")
+                })?),
+                Some(_) => return Err("`outline` is a palette colour's name".into()),
+            };
+            (supersample, outline)
+        }
+        Some(_) => {
+            return Err("`pixel` is true, or {\"supersample\": 8, \"outline\": \"ink\"}".into());
+        }
+    };
+    if canvas.open.is_some() {
+        return Err("a pixel canvas starts new: it can't `open` a picture".into());
+    }
+    let mut colors: Vec<Rgba> = palette.values().copied().filter(|c| c[3] > 0).collect();
+    colors.sort_unstable();
+    colors.dedup();
+    if colors.is_empty() {
+        return Err(
+            "a pixel canvas needs a \"palette\": every pixel ends up in one of its colours".into(),
+        );
+    }
+    Ok(Some(PixelMode {
+        supersample,
+        outline,
+        palette: colors,
+    }))
 }
 
 /// A position, checked to be real numbers (in drawing units).
@@ -4374,5 +4549,156 @@ mod tests {
         let error =
             problem(r##"{ "cmd": "use", "name": "box", "translate": { "keys": [[0, 5]] } }"##);
         assert!(error.contains("`translate` must be [x, y]"), "{error}");
+    }
+
+    // ---- Pixel canvases -------------------------------------------------------
+
+    fn pixel_script(canvas_extra: &str, commands: &str) -> String {
+        format!(
+            r##"{{ "palette": {{ "ink": "#202020", "red": "#E02020", "blue": "#2020E0" }}, "commands": [
+                {{ "cmd": "canvas", "width": 16, "height": 16, "pixel": {canvas_extra} }}, {commands} ] }}"##
+        )
+    }
+
+    /// Every pixel as a straight colour.
+    fn pixel_grid(document: &Document) -> Vec<Vec<[u8; 4]>> {
+        (0..document.height() as i32)
+            .map(|y| {
+                (0..document.width() as i32)
+                    .map(|x| {
+                        crate::image::unpremultiply(document.active_layer().surface.pixel(x, y))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pixel_canvas_paints_whole_crisp_pixels_in_palette_colours() {
+        let document = play(&pixel_script(
+            "true",
+            r##"{ "cmd": "ellipse", "center": [8, 8], "radius": 5.5, "fill": "red", "outline": "ink", "outline_size": 1 },
+                { "cmd": "line", "from": [0, 0], "to": [15, 15], "size": 1, "color": "blue", "taper": 0 }"##,
+        ));
+        assert_eq!(
+            (document.width(), document.height()),
+            (16, 16),
+            "shrunk to its real size"
+        );
+        let grid = pixel_grid(&document);
+        let palette = [
+            [0x20, 0x20, 0x20, 255],
+            [0xE0, 0x20, 0x20, 255],
+            [0x20, 0x20, 0xE0, 255],
+        ];
+        let mut painted = 0;
+        for row in &grid {
+            for &p in row {
+                assert!(
+                    p[3] == 0 || p[3] == 255,
+                    "no half see-through pixels: {p:?}"
+                );
+                assert!(
+                    p[3] == 0 || palette.contains(&p),
+                    "only palette colours: {p:?}"
+                );
+                painted += usize::from(p[3] == 255);
+            }
+        }
+        assert!(painted > 80 && painted < 130, "{painted} pixels painted");
+        assert_eq!(
+            grid[8][8],
+            [0x20, 0x20, 0xE0, 255],
+            "the line runs through the middle"
+        );
+        assert_eq!(grid[8][5], [0xE0, 0x20, 0x20, 255], "beside it, red");
+        assert_eq!(
+            grid[8][2],
+            [0x20, 0x20, 0x20, 255],
+            "the edge is the outline"
+        );
+    }
+
+    #[test]
+    fn hex_colours_are_refused_on_a_pixel_canvas() {
+        let problem = error(&pixel_script(
+            "true",
+            r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 4, "fill": "#FF00FF" }"##,
+        ));
+        assert!(
+            problem.contains("every colour is a palette name"),
+            "{problem}"
+        );
+        let rect = r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 4, "height": 4, "fill": "red" }"##;
+        let problem = Script::parse(&pixel_script("{ \"outline\": \"gold\" }", rect))
+            .map(|s| Player::new(s, PlayOptions::default()).err());
+        let problem = problem.unwrap().unwrap().to_string();
+        assert!(problem.contains("no \"gold\""), "{problem}");
+        let no_palette =
+            r##"{ "commands": [ { "cmd": "canvas", "width": 8, "height": 8, "pixel": true } ] }"##;
+        let problem = Player::new(Script::parse(no_palette).unwrap(), PlayOptions::default())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(problem.contains("needs a \"palette\""), "{problem}");
+    }
+
+    #[test]
+    fn pixel_rows_paint_one_pixel_per_character() {
+        let document = play(&pixel_script(
+            "true",
+            r##"{ "cmd": "pixels", "at": [2, 3], "colors": { "r": "red", "k": "ink" }, "rows": [
+                ".rr.", "rkkr", "....", "r..r" ] }"##,
+        ));
+        let grid = pixel_grid(&document);
+        let red = [0xE0, 0x20, 0x20, 255];
+        let ink = [0x20, 0x20, 0x20, 255];
+        assert_eq!(grid[3][2], [0, 0, 0, 0]);
+        assert_eq!(grid[3][3], red);
+        assert_eq!(grid[4][3], ink);
+        assert_eq!(grid[4][5], red);
+        assert_eq!(grid[5][3], [0, 0, 0, 0]);
+        assert_eq!(grid[6][2], red);
+        assert_eq!(grid[6][3], [0, 0, 0, 0]);
+        let painted: usize = grid.iter().flatten().filter(|p| p[3] == 255).count();
+        assert_eq!(painted, 8);
+        let problem = error(&pixel_script(
+            "true",
+            r##"{ "cmd": "pixels", "at": [0, 0], "colors": { "r": "red" }, "rows": ["rx"] }"##,
+        ));
+        assert!(problem.contains("row 1 has \"x\""), "{problem}");
+    }
+
+    #[test]
+    fn the_outline_option_and_supersample_are_read_from_the_canvas() {
+        let document = play(&pixel_script(
+            r##"{ "supersample": 8, "outline": "ink" }"##,
+            r##"{ "cmd": "rect", "x": 4, "y": 4, "width": 6, "height": 6, "fill": "red" }"##,
+        ));
+        let grid = pixel_grid(&document);
+        assert_eq!(grid[4][4], [0xE0, 0x20, 0x20, 255]);
+        assert_eq!(grid[3][4], [0x20, 0x20, 0x20, 255], "outline above");
+        assert_eq!(grid[4][10], [0x20, 0x20, 0x20, 255], "outline right");
+        assert_eq!(grid[3][3], [0, 0, 0, 0], "not the corner");
+    }
+
+    #[test]
+    fn pixel_art_moves_by_whole_pixels_when_animated() {
+        let moved = |dx: f32| {
+            let text = format!(
+                r##"{{ "palette": {{ "red": "#E02020" }}, "commands": [
+                    {{ "cmd": "canvas", "width": 16, "height": 8, "pixel": true }} ],
+                  "animations": {{ "slide": {{ "frames": 1, "commands": [
+                    {{ "cmd": "group", "translate": [{dx}, 0], "commands": [
+                        {{ "cmd": "rect", "x": 2, "y": 2, "width": 3, "height": 3, "fill": "red" }} ] }} ] }} }} }}"##
+            );
+            pixel_grid(&play_frame(&text, None, 0).unwrap())
+        };
+        assert_eq!(moved(2.4), moved(2.0), "2.4 pixels is 2 pixels");
+        assert_eq!(moved(2.6), moved(3.0), "2.6 pixels is 3 pixels");
+        assert_ne!(moved(2.0), moved(3.0));
+        let painted =
+            |grid: &Vec<Vec<[u8; 4]>>| grid.iter().flatten().filter(|p| p[3] == 255).count();
+        assert_eq!(painted(&moved(2.4)), 9, "still exactly 3 x 3");
     }
 }

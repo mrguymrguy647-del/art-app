@@ -127,6 +127,8 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `animations` (top level) | Named animations: `frames`, `fps`, `loop`, and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
 | keyframes | Any number of a `group` or `use` as `{"keys": [[0, 0], [4, 20]], "ease": "in-out", "shift": 4}`. |
 | `params` / `with` / `"$name"` | A symbol's parameters with defaults; a `use` sets them (keyframes allowed); `"upright": true` keeps a foot flat. |
+| `"pixel"` on `canvas` | Pixel art: painted bigger, shrunk to whole pixels in the palette's colours; `{"supersample": 8, "outline": "ink"}`. |
+| `pixels` | Rows of characters, one canvas pixel each: `"rows": ["..kk.."]`, `"colors": {"k": "ink"}`. |
 
 Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [cx, cy, r]}`,
 `{"polygon": [[x, y], ...]}`.

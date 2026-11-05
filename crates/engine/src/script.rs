@@ -143,6 +143,7 @@ pub enum Command {
     Hatch(HatchCmd),
     Scatter(ScatterCmd),
     Text(TextCmd),
+    Pixels(PixelsCmd),
     Snapshot(SnapshotCmd),
     Group(GroupCmd),
     Define(DefineCmd),
@@ -175,6 +176,7 @@ impl Command {
             Command::Hatch(_) => "hatch",
             Command::Scatter(_) => "scatter",
             Command::Text(_) => "text",
+            Command::Pixels(_) => "pixels",
             Command::Snapshot(_) => "snapshot",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
@@ -211,6 +213,11 @@ pub struct CanvasCmd {
     pub paper: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<String>,
+    /// A pixel canvas: `true`, or `{"supersample": 8, "outline": "ink"}`.
+    /// Everything is painted bigger and shrunk to crisp whole pixels in
+    /// the palette's colours (see `pixels.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pixel: Option<Value>,
 }
 
 /// `paper`: changes the paper colour.
@@ -712,6 +719,17 @@ pub struct StepCmd {
     pub scale: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<[f32; 2]>,
+}
+
+/// `pixels`: art written as rows of characters, each a palette colour
+/// from `colors` (`.` is transparent), with the top-left pixel at `at`:
+/// `"rows": ["..kk..", ".kyyk."]`. Every character is one canvas pixel.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PixelsCmd {
+    pub at: [f32; 2],
+    pub rows: Vec<String>,
+    pub colors: BTreeMap<String, String>,
 }
 
 /// `snapshot`: a named checkpoint. The command-line renderer can save a

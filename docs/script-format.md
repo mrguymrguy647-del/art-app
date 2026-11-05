@@ -555,6 +555,41 @@ two frames, a part that draws nothing in some frames, and for loops, a part that
 further from the last frame back to the first than in any step inside (the loop "pops"). Boxes
 are geometry, so a part faded to `opacity` 0 still counts as drawn.
 
+## Pixel art
+
+```json
+{ "cmd": "canvas", "width": 32, "height": 32, "pixel": true }
+{ "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 8, "outline": "ink" } }
+```
+
+A **pixel canvas** gives crisp pixel art from ordinary commands. It's painted `supersample` times
+bigger (4 unless given; up to 16) with everything the script says, shapes, strokes, text, symbols
+and transforms alike, then shrunk to its real size: each pixel is painted if more than half of its
+samples were, in the palette colour that the most of them had. So every pixel is whole, there are
+no blurry or half see-through edges, and the picture only ever has the palette's colours. An
+`outline` colour (a palette name) is put on every see-through pixel next to a painted one, on each
+layer, after shrinking. Positions are in canvas pixels, decimals allowed (`"radius": 5.5`).
+
+- **The palette is locked:** on a pixel canvas every colour is a palette name; a `#RRGGBB` is a
+  mistake, and a pixel canvas needs a palette. `transparent` is allowed.
+- **Animation moves by whole pixels:** `translate` is rounded, so a moving sprite stays crisp.
+- A pixel canvas can't `open` a picture, and in the app it can't be played onto an open picture
+  (it's painted big and shrunk at the end): play it on a new picture, or export its frames.
+- Previews (`--preview`) and `--zoom` work as usual; export with `--scale 8` for people.
+
+### `pixels` — rows of characters
+
+```json
+{ "cmd": "pixels", "at": [12, 8], "colors": { "y": "yellow", "k": "ink" }, "rows": [
+  "..kkk...", ".kyyyk..", "kyyykyy.", ".kyyyk..", "..kkk..." ] }
+```
+
+Paints each character as one canvas pixel, the top-left one at `at`: `.` (or a space) is
+see-through, every other character is a palette colour from `colors` (keys are single characters).
+It works on any canvas (on a big one the "pixels" are canvas pixels too). Single pixels, lines,
+rectangles, circles and the paint bucket need nothing new: `rect`, `line`, `ellipse`, `polygon`
+and `fill` already come out crisp on a pixel canvas.
+
 ## Areas
 
 `gradient`, `hatch` and `scatter` take an `area`:

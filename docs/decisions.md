@@ -820,3 +820,34 @@ ffmpeg, the frames are written and the exact command printed: better
 than a dependency on a video library in the engine. `--scale` enlarges
 with sharp pixels, and the JSON records it, so a sheet exported at 8×
 for people is as usable as one at 1× for the game.
+
+## 55. Pixel art: paint big, then vote (phase 2, step 5)
+A test of game sprites showed that shrinking a painted character to
+32 pixels gives blurry, see-through edges and an unreadable eye. The
+fix had to be one mechanism, not a crisp version of every rasterizer.
+
+A pixel canvas is painted `supersample` times bigger (4 by default)
+with every ordinary command, which is the existing preview machinery
+run the other way (the player already scales everything by one
+number). When the script has finished, each block of samples becomes
+one pixel: painted if more than half its samples are, in the palette
+colour the most of them had. The vote, not an average: at the edge
+between an outline and a fill, an average is a muddy colour that would
+snap to a third palette entry. Shades from anti-aliasing snap to their
+nearest palette colour before voting, so they count for it. An
+`outline` is a one-pixel line put on see-through pixels next to paint,
+per layer, after shrinking.
+
+So shapes, strokes, text, symbols, keyframes and transforms all work
+unchanged on a pixel canvas, animation moves by whole pixels because
+`translate` is rounded, and the picture can only have palette colours,
+which is why the palette is locked (a hex colour is refused with the
+fix to make). The one new command, `pixels`, is for art that's natural
+to type: rows of characters, each a palette colour, painted as
+rectangles like anything else.
+
+The cost: a pixel script can't be played onto an open picture in the
+app (it's big until the end), so the player refuses that with a plain
+message; the app plays it on a new picture or shows its frames.
+`examples/duck-pixel.json` is the 32-pixel duck, idle and walk, six
+colours, from the same kind of symbols as the painted one.

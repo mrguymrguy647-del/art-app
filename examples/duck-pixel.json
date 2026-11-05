@@ -1,0 +1,44 @@
+{
+  "title": "Pixel duck: 32 x 32, 6 colours, idle and walk",
+  "notes": "Painted 8 times bigger with ordinary shapes, then shrunk to crisp pixels in the palette. Render with --transparent; export with --scale 8 for people.",
+  "pivot": [16, 30],
+  "palette": {
+    "yellow": "#F2C230", "wing": "#D9A21E", "ink": "#2A2420",
+    "beak": "#E8892B", "leg_far": "#B8601A", "eye": "#FFFFFF"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 8, "outline": "ink" } },
+    { "cmd": "define", "name": "leg", "params": { "angle": 0 }, "commands": [
+      { "cmd": "group", "name": "thigh", "rotate": "$angle", "commands": [
+        { "cmd": "line", "from": [0, 0], "to": [0, 4], "size": 1.2, "color": "beak", "taper": 0 },
+        { "cmd": "group", "name": "foot", "translate": [0, 4], "upright": true, "commands": [
+          { "cmd": "rect", "x": -1, "y": 0, "width": 3, "height": 1, "fill": "beak" } ] }
+      ] }
+    ] },
+    { "cmd": "define", "name": "body", "commands": [
+      { "cmd": "polygon", "points": [[-7, -8], [-11, -11], [-8, -5]], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [0, -6], "radius": [7.5, 5], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [5.5, -13], "radius": 3.5, "fill": "yellow" },
+      { "cmd": "ellipse", "center": [4, -9], "radius": [2, 2.5], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [-1.5, -6], "radius": [4, 2.2], "rotation": -12, "fill": "wing" },
+      { "cmd": "polygon", "points": [[8.5, -14], [12.5, -12.5], [8.5, -11.5]], "fill": "beak" },
+      { "cmd": "pixels", "at": [6, -15], "colors": { "k": "ink", "w": "eye" }, "rows": ["kw"] }
+    ] },
+    { "cmd": "define", "name": "duck", "params": { "near": 0, "far": 0, "bob": 0 }, "commands": [
+      { "cmd": "use", "name": "leg", "translate": [-1, 0], "with": { "angle": "$far" }, "colors": { "beak": "leg_far" } },
+      { "cmd": "use", "name": "body", "translate": [0, "$bob"] },
+      { "cmd": "use", "name": "leg", "translate": [1, 0], "with": { "angle": "$near" } }
+    ] }
+  ],
+  "animations": {
+    "idle": { "frames": 4, "fps": 4, "loop": true, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [16, 25], "with": { "bob": { "keys": [[0, 0], [2, 1], [4, 0]], "ease": "step" } } }
+    ] },
+    "walk": { "frames": 6, "fps": 10, "loop": true, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [16, 25],
+        "with": { "near": { "keys": [[0, -30], [3, 30], [6, -30]] },
+                  "far": { "keys": [[0, -30], [3, 30], [6, -30]], "shift": 3 },
+                  "bob": { "keys": [[0, 0], [1, -1], [3, 0], [4, -1], [6, 0]], "ease": "step" } } }
+    ] }
+  }
+}
