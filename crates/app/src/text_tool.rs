@@ -87,6 +87,7 @@ impl TextEdit {
         }
         let [r, g, b] = settings.outline_color;
         Some(TextCmd {
+            name: None,
             text: self.text.clone(),
             at: [round(self.at.x), round(self.at.y)],
             size: Some((settings.size * 10.0).round() / 10.0),

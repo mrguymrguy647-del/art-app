@@ -347,6 +347,9 @@ struct Frame {
     /// Where randomness starts for this frame's commands (`None` for the
     /// script itself, where it's simply the command's number).
     seed_base: Option<u64>,
+    /// A named single shape's frame: its one command gets `seed_base`
+    /// itself, the seed it would have had without the name.
+    keep_seed: bool,
     /// What to put back when the frame ends.
     restore: Option<Saved>,
     /// The symbol being played, if this frame is a `use`.
@@ -843,6 +846,7 @@ impl Player {
             brush_scale: scale,
             opacity: 1.0,
             seed_base: None,
+            keep_seed: false,
             restore: None,
             symbol: None,
             swaps: Vec::new(),
@@ -926,6 +930,7 @@ impl Player {
                     brush_scale: scale,
                     opacity: 1.0,
                     seed_base: None,
+                    keep_seed: false,
                     restore: None,
                     symbol: None,
                     swaps: Vec::new(),
@@ -1064,8 +1069,10 @@ impl Player {
     /// at the script's top level its number (as it always was), inside a
     /// group a mix of the group's and the command's.
     fn default_seed(&self, index: usize) -> u64 {
-        match self.frames.last().and_then(|frame| frame.seed_base) {
+        let frame = self.frames.last();
+        match frame.and_then(|frame| frame.seed_base) {
             None => index as u64 + 1,
+            Some(base) if frame.is_some_and(|f| f.keep_seed) => base,
             Some(base) => Random::mix(base, index as u64 + 1),
         }
     }
@@ -1154,6 +1161,7 @@ impl Player {
                 parent.opacity * new.placement.opacity
             },
             seed_base: Some(new.seed_base),
+            keep_seed: false,
             restore: Some(Saved {
                 layer: document.active_id(),
                 brush: self.brush,
@@ -2098,6 +2106,9 @@ impl Player {
             // (and the like) are skipped: only its silhouette matters.
             return Ok(());
         }
+        if command.shape_name().is_some() {
+            return self.named_shape(document, command);
+        }
         match command {
             Command::Canvas(_) => Err("only the first command can be `canvas`".into()),
             Command::Paper(paper) => {
@@ -2264,6 +2275,40 @@ impl Player {
             outline: command.outline.clone(),
         };
         self.push_frame(document, new)
+    }
+
+    /// A single shape with a `name`: played as a named part of its own
+    /// (so `check`, `critique` and `views` list it), painting exactly as
+    /// it would without the name.
+    fn named_shape(&mut self, document: &Document, command: &Command) -> Result<(), String> {
+        let new = NewFrame {
+            commands: Arc::new(vec![command.without_shape_name()]),
+            label: command.label(),
+            placement: Placement {
+                transform: Transform::IDENTITY,
+                opacity: 1.0,
+                scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
+                origin: (0.0, 0.0),
+            },
+            // Its own seed, kept (see `Frame::keep_seed`).
+            seed_base: self.current_seed,
+            symbol: None,
+            swaps: Vec::new(),
+            part: true,
+            params: None,
+            upright: false,
+            mask: None,
+            capture: None,
+            filter: None,
+            outline: None,
+        };
+        self.push_frame(document, new)?;
+        if let Some(frame) = self.frames.last_mut() {
+            frame.keep_seed = true;
+        }
+        Ok(())
     }
 
     /// `use`: plays a symbol's commands, placed like a group, with some
@@ -9361,5 +9406,52 @@ mod tests {
         // A value that doesn't fit says which use gave it.
         let problem = error(&script.replace(r#""w": 12"#, r#""w": "big""#));
         assert!(problem.contains("with these `with` values"), "{problem}");
+    }
+
+    #[test]
+    fn a_single_shape_can_have_a_name_and_paints_the_same() {
+        let named = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "rect", "name": "door", "x": 20, "y": 30, "width": 40, "height": 60, "fill": "#804020", "jitter": 3 },
+            { "cmd": "group", "name": "house", "commands": [
+                { "cmd": "ellipse", "name": "window", "center": [120, 50], "radius": 12, "fill": "#80C0FF" },
+                { "cmd": "stroke", "name": "smoke", "points": [[150, 20], [170, 5]], "size": 6, "jitter": 2 }
+            ] }
+          ] }"##;
+        let plain = named
+            .replace(r#""name": "door", "#, "")
+            .replace(r#""name": "window", "#, "")
+            .replace(r#""name": "smoke", "#, "");
+        assert_eq!(
+            png(&play(named)),
+            png(&play(&plain)),
+            "a name changes nothing painted"
+        );
+        let parsed = Script::parse(named).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let paths: Vec<&str> = report.parts.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"command 2 (rect \"door\")"), "{paths:?}");
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("(ellipse \"window\")") && p.contains("group \"house\"")),
+            "{paths:?}"
+        );
+        let door = report
+            .parts
+            .iter()
+            .find(|p| p.path.contains("door"))
+            .unwrap();
+        let area = door.area.unwrap();
+        assert!(
+            area.left <= 20 && area.right >= 60 && area.top <= 30,
+            "{area:?}"
+        );
+        // Mistakes say its name.
+        let problem = error(&named.replace(r##""fill": "#80C0FF""##, r#""fill": "nope""#));
+        assert!(problem.contains("(ellipse \"window\")"), "{problem}");
     }
 }

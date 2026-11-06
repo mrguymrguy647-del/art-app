@@ -516,8 +516,49 @@ impl Command {
             }) => format!("group \"{name}\""),
             Command::Define(define) => format!("define \"{}\"", define.name),
             Command::Use(using) => format!("use \"{}\"", using.name),
-            other => other.kind().to_owned(),
+            other => match other.shape_name() {
+                Some(name) => format!("{} \"{name}\"", other.kind()),
+                None => other.kind().to_owned(),
+            },
         }
+    }
+
+    /// A single shape's (or stroke's) `name`, if it has one.
+    pub fn shape_name(&self) -> Option<&str> {
+        match self {
+            Command::Stroke(c) | Command::Erase(c) => c.name.as_deref(),
+            Command::Line(c) => c.name.as_deref(),
+            Command::Path(c) => c.name.as_deref(),
+            Command::Rect(c) => c.name.as_deref(),
+            Command::Ellipse(c) => c.name.as_deref(),
+            Command::Polygon(c) => c.name.as_deref(),
+            Command::Text(c) => c.name.as_deref(),
+            Command::Hatch(c) => c.name.as_deref(),
+            Command::Scatter(c) => c.name.as_deref(),
+            Command::Stamp(c) => c.name.as_deref(),
+            Command::Pixels(c) => c.name.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The same command without its shape `name`.
+    pub fn without_shape_name(&self) -> Command {
+        let mut command = self.clone();
+        match &mut command {
+            Command::Stroke(c) | Command::Erase(c) => c.name = None,
+            Command::Line(c) => c.name = None,
+            Command::Path(c) => c.name = None,
+            Command::Rect(c) => c.name = None,
+            Command::Ellipse(c) => c.name = None,
+            Command::Polygon(c) => c.name = None,
+            Command::Text(c) => c.name = None,
+            Command::Hatch(c) => c.name = None,
+            Command::Scatter(c) => c.name = None,
+            Command::Stamp(c) => c.name = None,
+            Command::Pixels(c) => c.name = None,
+            _ => {}
+        }
+        command
     }
 }
 
@@ -764,6 +805,10 @@ pub struct DynamicsCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StampCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The symbol to copy (placed like a `use` at each spot)...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
@@ -873,6 +918,10 @@ pub struct IncludeCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrokeCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
@@ -911,6 +960,10 @@ pub struct SymmetryCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub from: [f32; 2],
     pub to: [f32; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -937,6 +990,10 @@ pub struct LineCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
@@ -968,6 +1025,10 @@ pub struct PathCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RectCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -998,6 +1059,10 @@ pub struct RectCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EllipseCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub center: [f32; 2],
     pub radius: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1024,6 +1089,10 @@ pub struct EllipseCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolygonCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<[f32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Value>,
@@ -1095,6 +1164,10 @@ pub struct GradientCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HatchCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub area: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub angle: Option<f32>,
@@ -1126,6 +1199,10 @@ pub struct HatchCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScatterCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub area: Value,
     pub count: u32,
     /// "dab" (the default) or "stroke".
@@ -1160,6 +1237,10 @@ pub struct ScatterCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub text: String,
     pub at: [f32; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1418,6 +1499,10 @@ pub struct StepCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PixelsCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub at: [f32; 2],
     pub rows: Vec<String>,
     pub colors: BTreeMap<String, String>,
@@ -1876,7 +1961,26 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
 fn label_of(value: &Value) -> Option<String> {
     let kind = value.get("cmd")?.as_str()?;
     match value.get("name").and_then(Value::as_str) {
-        Some(name) if matches!(kind, "group" | "define" | "use") => {
+        Some(name)
+            if matches!(
+                kind,
+                "group"
+                    | "define"
+                    | "use"
+                    | "stroke"
+                    | "erase"
+                    | "line"
+                    | "path"
+                    | "rect"
+                    | "ellipse"
+                    | "polygon"
+                    | "text"
+                    | "hatch"
+                    | "scatter"
+                    | "stamp"
+                    | "pixels"
+            ) =>
+        {
             Some(format!("{kind} \"{name}\""))
         }
         _ => Some(kind.to_owned()),

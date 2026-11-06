@@ -434,7 +434,7 @@ of `hatch` and `scatter`.
 | Field | |
 |---|---|
 | `commands` | The commands to draw inside the group (needed). Groups can hold groups. |
-| `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. |
+| `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. A single shape or stroke (`rect`, `ellipse`, `polygon`, `path`, `line`, `stroke`, `erase`, `text`, `hatch`, `scatter`, `stamp`, `pixels`) can have a `name` too, without a group around it: `check`, `critique` and `views` list it as a part (`rect "door"`), and it paints exactly the same. |
 | `translate` | Move by `[x, y]`. |
 | `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. `0` shrinks the part to nothing (it paints nothing, with no error: handy for something that grows in, in an animation); below 0 is an error (use `mirror`). |
 | `rotate` | Turn by this many degrees, clockwise. |

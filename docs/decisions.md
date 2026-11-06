@@ -1986,3 +1986,9 @@ two false alarms. Every finding, before and after:
   from the commands as written, so the `"$name"`s survive Export
   strokes. A `"$name"` where a number is expected outside such a define
   now says it would be a parameter, and where.
+- **Names on single shapes.** Shape and stroke commands take a `name`.
+  A named one is played as a named part of its own (a frame holding
+  just that command), so the report, the critique and the views
+  silhouettes treat it like a named group. That frame hands its command
+  the very seed it would have had without the name (`keep_seed`), so
+  naming a jittered shape doesn't change a pixel.
