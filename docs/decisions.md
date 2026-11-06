@@ -1634,3 +1634,69 @@ two false alarms. Every finding, before and after:
   measure.
 - **Overall appeal is never a number.** The numbers' row leaves it
   blank; only the agent and the person give it.
+
+## 78. Prove it: three pieces painted with the process (phase 4, step 9)
+
+- **Scripts in stage order.** All three gallery pieces (`sunset-pond-v3`,
+  `duck-portrait-v2`, `forest-at-dawn`) create their layers first, empty,
+  and then each stage selects them by name: values (grey shapes, a
+  `values` snapshot), colour, light and form, detail, finish. The
+  process sheet therefore shows the painter's stages, not the layer
+  order, and `views` and `critique` were run on the script cut at each
+  snapshot. Two things this exposed: a shape painted twice (grey, then
+  colour) must jitter with the same `seed` or a grey sliver shows; and a
+  values-stage shape on a screen layer stays visible under the colour
+  (the pond's grey "egg" under the sun).
+- **The critique judges a named part's flatness on the picture inside
+  it.** The process puts a part's shading on clipped layers above its
+  flat local colour, so the portrait's head was "flat over 100%" and
+  "no light and dark side" on its own paint while it was plainly shaded.
+  Now a named part's `flat` and `squint_range` come from the picture's
+  field inside the part; a layer's still come from its own paint (the
+  earlier decision stands: a thin cloud layer over a gradient must not
+  borrow the gradient's light and dark). Grain, marks and blotches stay
+  on the own paint. The reference tests and the layer test pass
+  unchanged.
+- **Named parts inside a part merge by construction.** `head`, `beak`
+  and `wing` inside a yellow `duck` were "merging with their
+  surroundings" at 96 px, because their surroundings are the same
+  yellow. The readability score counts named parts, so the portrait
+  names only `duck` and puts the focal point at `[600, 400]` (the
+  intent's `focal` takes a point). The lesson is in the notes; the
+  measure is unchanged.
+- **A drop-shadow filter is part of the part's own paint.** The pond's
+  duck was "blotchy over 80%" because its `shadow` filter is a soft blob
+  with no direction inside the part's mask. The shadow is now its own
+  shape on its own layer under the duck. Deliberate: a part's own paint
+  is what the group painted, filters included, and the critique is
+  right that a drop shadow is a blob; the painting changed, not the
+  sense.
+- **The blind reads all read**, by fresh readers given only the packet:
+  "a lake scene at sunset ... my eye goes first to the duck", "a
+  cartoon-like yellow duck ... the eye and beak", "a misty forest ... a
+  small dark silhouette of a four-legged animal ... something like a
+  deer or a young fawn". Each reader also named real weaknesses
+  (the pond's duck painted in a different style from the cut-paper
+  rest, the portrait's wing "a scribbled blotch", the deer "crudely
+  drawn", two warm trunks that look like an unfinished pass), kept in
+  each piece's `notes.md`.
+- **The benchmark after.** Numbers: pond v3 4, 5, 4, 5, 5 (v2 was
+  4, 5, 2, 4, 4); portrait v2 5, 4, 5, 4, 4 (v1 was 2, 4, 5, 5, 3);
+  forest 5, 5, 4, 5, 3. A separate judge, stricter than the baseline's:
+  pond v3 4, 3, 4, 4, 3, overall 3; portrait v2 4, 3, 4, 4, 3, overall
+  3; forest 4, 4, 4, 5, 4, overall 4. The same judge re-scored the two
+  phase 3 pieces in the same sitting: pond 3, 3, 3, 2, 2, overall 2;
+  portrait 4, 3, 3, 3, 2, overall 2. So with one reader the repaints
+  gained one to two steps on focal point, colour and detail, nothing on
+  values (the lights still go to the sun, the clouds, the bokeh: lesson
+  3), and went from "only for the lesson" to "fine". The forest, painted
+  fresh with the process, got "yes". The honest reading: the process
+  removes mistakes and puts the eye where it was meant to go; it does
+  not yet put the lightest light on the subject, and "fine" is not
+  "show it".
+- **Mistakes closed.** All six entries in `mistakes.md` have an after
+  picture from the repaints; five are closed by the critique
+  (`out of key: nothing`, no blotchy, no edge finding) and one (the
+  rope feathers) is only half closed: no rope, but the wing still reads
+  as a smear. Lessons 8, 9, 11, 16 and 19 carry their before/after
+  numbers.

@@ -1,0 +1,3816 @@
+{
+ "title": "Forest at dawn",
+ "notes": [
+  "A path into a misty forest at dawn, painted with the phase 4 process: values first, then flat colour in a cool key with one warm light,",
+  "then the light and the mist between the trunks, then detail (most of it at the deer and the end of the path: stones, tufts, fur, the rim",
+  "of light; bark and ferns elsewhere, fewer), then the finish. The deer stands on the path against the brightest light."
+ ],
+ "seed": 7,
+ "intent": {
+  "subject": "a path into a misty forest at dawn, with a deer on the path",
+  "focal": "deer",
+  "light": [
+   1180,
+   560
+  ],
+  "mood": "still, cold, hopeful",
+  "key_colors": [
+   "dawn",
+   "mist_blue",
+   "trunk"
+  ]
+ },
+ "palette": {
+  "sky_top": "#4E6080",
+  "sky_mid": "#8FA2BA",
+  "sky_low": "#E6D4B8",
+  "dawn": "#F5CC86",
+  "dawn_core": "#FFF0CC",
+  "mist": "#C6CED8",
+  "mist_blue": "#6E8FB4",
+  "mist_warm": "#EAD8BC",
+  "trunk": "#2A2E3C",
+  "trunk_light": "#4A4650",
+  "trunk_mid": "#56607A",
+  "trunk_far": "#9AA6BA",
+  "canopy": "#222A38",
+  "canopy_light": "#3A4A4E",
+  "path": "#B8AA98",
+  "path_dark": "#6E6456",
+  "path_light": "#E2D4BC",
+  "ground": "#2E3630",
+  "ground_light": "#5A6A58",
+  "ground_far": "#C0C8D2",
+  "fern": "#4E6A48",
+  "fern_light": "#7A9458",
+  "deer": "#2A2220",
+  "deer_rim": "#FFE0B090",
+  "mood_dark": "#1A2232",
+  "mood_mid": "#8A7A6A",
+  "mood_light": "#FFF4E0",
+  "vignette": "#101820",
+  "v_sky": "#9A9A9A",
+  "v_glow": "#E8E8E8",
+  "v_trunk": "#2A2A2A",
+  "v_mid": "#5A5A5A",
+  "v_far": "#8A8A8A",
+  "v_path": "#B0B0B0",
+  "v_ground": "#4A4A4A",
+  "v_deer": "#1A1A1A"
+ },
+ "commands": [
+  {
+   "cmd": "canvas",
+   "width": 1920,
+   "height": 1080,
+   "paper": "sky_mid"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far trunks"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far mist"
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid trunks"
+  },
+  {
+   "cmd": "layer",
+   "name": "Ground"
+  },
+  {
+   "cmd": "layer",
+   "name": "Path"
+  },
+  {
+   "cmd": "layer",
+   "name": "Path light",
+   "clip": true,
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid mist"
+  },
+  {
+   "cmd": "layer",
+   "name": "Glow",
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer"
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer rim",
+   "clip": true,
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Near trunks"
+  },
+  {
+   "cmd": "layer",
+   "name": "Canopy"
+  },
+  {
+   "cmd": "layer",
+   "name": "Rays",
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Ferns"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    0
+   ],
+   "to": [
+    0,
+    1080
+   ],
+   "colors": [
+    "#707070",
+    "v_sky"
+   ]
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1180,
+    560
+   ],
+   "to": [
+    1180,
+    100
+   ],
+   "colors": [
+    "v_glow",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Far trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     640,
+     1100
+    ],
+    [
+     641.6,
+     520.0
+    ],
+    [
+     644,
+     -60
+    ]
+   ],
+   "size": 18,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     830,
+     1100
+    ],
+    [
+     827.6,
+     520.0
+    ],
+    [
+     824,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1000,
+     1100
+    ],
+    [
+     1000.8,
+     520.0
+    ],
+    [
+     1002,
+     -60
+    ]
+   ],
+   "size": 14,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1070,
+     1100
+    ],
+    [
+     1068.4,
+     520.0
+    ],
+    [
+     1066,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1265,
+     1100
+    ],
+    [
+     1267.4,
+     520.0
+    ],
+    [
+     1271,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1330,
+     1100
+    ],
+    [
+     1328.8,
+     520.0
+    ],
+    [
+     1327,
+     -60
+    ]
+   ],
+   "size": 14,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1440,
+     1100
+    ],
+    [
+     1442.0,
+     520.0
+    ],
+    [
+     1445,
+     -60
+    ]
+   ],
+   "size": 18,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1180,
+     1100
+    ],
+    [
+     1180.0,
+     520.0
+    ],
+    [
+     1180,
+     -60
+    ]
+   ],
+   "size": 12,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1120,
+     1100
+    ],
+    [
+     1120.8,
+     520.0
+    ],
+    [
+     1122,
+     -60
+    ]
+   ],
+   "size": 10,
+   "color": "v_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     520,
+     1100
+    ],
+    [
+     516.0,
+     520.0
+    ],
+    [
+     510,
+     -60
+    ]
+   ],
+   "size": 42,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     760,
+     1100
+    ],
+    [
+     765.6,
+     520.0
+    ],
+    [
+     774,
+     -60
+    ]
+   ],
+   "size": 36,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     905,
+     1100
+    ],
+    [
+     902.6,
+     520.0
+    ],
+    [
+     899,
+     -60
+    ]
+   ],
+   "size": 26,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1390,
+     1100
+    ],
+    [
+     1393.2,
+     520.0
+    ],
+    [
+     1398,
+     -60
+    ]
+   ],
+   "size": 38,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1490,
+     1100
+    ],
+    [
+     1485.2,
+     520.0
+    ],
+    [
+     1478,
+     -60
+    ]
+   ],
+   "size": 28,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     60,
+     1100
+    ],
+    [
+     63.2,
+     520.0
+    ],
+    [
+     68,
+     -60
+    ]
+   ],
+   "size": 30,
+   "color": "v_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "layer",
+   "name": "Ground"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     640
+    ],
+    [
+     1920,
+     640
+    ],
+    [
+     1920,
+     1100
+    ],
+    [
+     0,
+     1100
+    ]
+   ],
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     0,
+     600
+    ],
+    "to": [
+     0,
+     1080
+    ],
+    "colors": [
+     "#8A8A8A",
+     "v_ground"
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Path"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     560,
+     1100
+    ],
+    [
+     1320,
+     1100
+    ],
+    [
+     1222,
+     780
+    ],
+    [
+     1192,
+     660
+    ],
+    [
+     1170,
+     612
+    ],
+    [
+     1138,
+     660
+    ],
+    [
+     1092,
+     780
+    ]
+   ],
+   "fill": "v_path"
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer"
+  },
+  {
+   "cmd": "group",
+   "commands": [
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1096,
+       640
+      ],
+      [
+       1110,
+       616
+      ],
+      [
+       1150,
+       606
+      ],
+      [
+       1190,
+       614
+      ],
+      [
+       1204,
+       632
+      ],
+      [
+       1200,
+       660
+      ],
+      [
+       1172,
+       670
+      ],
+      [
+       1122,
+       670
+      ],
+      [
+       1100,
+       660
+      ]
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       628
+      ],
+      [
+       1202,
+       588
+      ],
+      [
+       1216,
+       590
+      ],
+      [
+       1204,
+       644
+      ]
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      1214,
+      582
+     ],
+     "radius": [
+      17,
+      12
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1224,
+       578
+      ],
+      [
+       1250,
+       588
+      ],
+      [
+       1226,
+       594
+      ]
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1204,
+       574
+      ],
+      [
+       1196,
+       552
+      ],
+      [
+       1212,
+       568
+      ]
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1214,
+       572
+      ],
+      [
+       1222,
+       550
+      ],
+      [
+       1226,
+       570
+      ]
+     ],
+     "fill": "v_deer"
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1186,
+       664
+      ],
+      [
+       1188,
+       684
+      ],
+      [
+       1190,
+       706
+      ]
+     ],
+     "size": 7,
+     "color": "v_deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1170,
+       666
+      ],
+      [
+       1168,
+       686
+      ],
+      [
+       1166,
+       706
+      ]
+     ],
+     "size": 6,
+     "color": "v_deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1116,
+       664
+      ],
+      [
+       1112,
+       686
+      ],
+      [
+       1108,
+       706
+      ]
+     ],
+     "size": 7,
+     "color": "v_deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1134,
+       666
+      ],
+      [
+       1130,
+       686
+      ],
+      [
+       1128,
+       706
+      ]
+     ],
+     "size": 6,
+     "color": "v_deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1098,
+       642
+      ],
+      [
+       1088,
+       650
+      ]
+     ],
+     "size": 5,
+     "color": "v_deer",
+     "taper": [
+      0,
+      0.8
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Near trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     130,
+     1100
+    ],
+    [
+     118.0,
+     520.0
+    ],
+    [
+     100,
+     -60
+    ]
+   ],
+   "size": 120,
+   "color": "v_trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     340,
+     1100
+    ],
+    [
+     348.0,
+     520.0
+    ],
+    [
+     360,
+     -60
+    ]
+   ],
+   "size": 74,
+   "color": "v_trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1720,
+     1100
+    ],
+    [
+     1732.0,
+     520.0
+    ],
+    [
+     1750,
+     -60
+    ]
+   ],
+   "size": 110,
+   "color": "v_trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1580,
+     1100
+    ],
+    [
+     1573.6,
+     520.0
+    ],
+    [
+     1564,
+     -60
+    ]
+   ],
+   "size": 62,
+   "color": "v_trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "layer",
+   "name": "Canopy"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    300,
+    -60
+   ],
+   "radius": [
+    560,
+    260
+   ],
+   "fill": "v_trunk"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    1500,
+    -100
+   ],
+   "radius": [
+    620,
+    290
+   ],
+   "fill": "v_trunk"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    900,
+    -160
+   ],
+   "radius": [
+    500,
+    240
+   ],
+   "fill": "v_trunk"
+  },
+  {
+   "cmd": "snapshot",
+   "name": "values"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    0
+   ],
+   "to": [
+    0,
+    720
+   ],
+   "stops": [
+    [
+     0,
+     "sky_top"
+    ],
+    [
+     0.5,
+     "sky_mid"
+    ],
+    [
+     1,
+     "sky_low"
+    ]
+   ]
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1180,
+    560
+   ],
+   "to": [
+    620,
+    560
+   ],
+   "colors": [
+    "dawn",
+    "transparent"
+   ],
+   "opacity": 0.9
+  },
+  {
+   "cmd": "layer",
+   "name": "Far trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     640,
+     1100
+    ],
+    [
+     641.6,
+     520.0
+    ],
+    [
+     644,
+     -60
+    ]
+   ],
+   "size": 18,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     830,
+     1100
+    ],
+    [
+     827.6,
+     520.0
+    ],
+    [
+     824,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1000,
+     1100
+    ],
+    [
+     1000.8,
+     520.0
+    ],
+    [
+     1002,
+     -60
+    ]
+   ],
+   "size": 14,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1070,
+     1100
+    ],
+    [
+     1068.4,
+     520.0
+    ],
+    [
+     1066,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1265,
+     1100
+    ],
+    [
+     1267.4,
+     520.0
+    ],
+    [
+     1271,
+     -60
+    ]
+   ],
+   "size": 16,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1330,
+     1100
+    ],
+    [
+     1328.8,
+     520.0
+    ],
+    [
+     1327,
+     -60
+    ]
+   ],
+   "size": 14,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1440,
+     1100
+    ],
+    [
+     1442.0,
+     520.0
+    ],
+    [
+     1445,
+     -60
+    ]
+   ],
+   "size": 18,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1180,
+     1100
+    ],
+    [
+     1180.0,
+     520.0
+    ],
+    [
+     1180,
+     -60
+    ]
+   ],
+   "size": 12,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1120,
+     1100
+    ],
+    [
+     1120.8,
+     520.0
+    ],
+    [
+     1122,
+     -60
+    ]
+   ],
+   "size": 10,
+   "color": "trunk_far",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     520,
+     1100
+    ],
+    [
+     516.0,
+     520.0
+    ],
+    [
+     510,
+     -60
+    ]
+   ],
+   "size": 42,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     760,
+     1100
+    ],
+    [
+     765.6,
+     520.0
+    ],
+    [
+     774,
+     -60
+    ]
+   ],
+   "size": 36,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     905,
+     1100
+    ],
+    [
+     902.6,
+     520.0
+    ],
+    [
+     899,
+     -60
+    ]
+   ],
+   "size": 26,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1390,
+     1100
+    ],
+    [
+     1393.2,
+     520.0
+    ],
+    [
+     1398,
+     -60
+    ]
+   ],
+   "size": 38,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1490,
+     1100
+    ],
+    [
+     1485.2,
+     520.0
+    ],
+    [
+     1478,
+     -60
+    ]
+   ],
+   "size": 28,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     60,
+     1100
+    ],
+    [
+     63.2,
+     520.0
+    ],
+    [
+     68,
+     -60
+    ]
+   ],
+   "size": 30,
+   "color": "trunk_mid",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "layer",
+   "name": "Ground"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     620
+    ],
+    [
+     1920,
+     620
+    ],
+    [
+     1920,
+     1100
+    ],
+    [
+     0,
+     1100
+    ]
+   ],
+   "jitter": 3,
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     0,
+     600
+    ],
+    "to": [
+     0,
+     1080
+    ],
+    "stops": [
+     [
+      0,
+      "ground_far"
+     ],
+     [
+      0.45,
+      "ground_light"
+     ],
+     [
+      1,
+      "ground"
+     ]
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Path"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     560,
+     1100
+    ],
+    [
+     1320,
+     1100
+    ],
+    [
+     1222,
+     780
+    ],
+    [
+     1192,
+     660
+    ],
+    [
+     1170,
+     612
+    ],
+    [
+     1138,
+     660
+    ],
+    [
+     1092,
+     780
+    ]
+   ],
+   "jitter": 4,
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     1170,
+     600
+    ],
+    "to": [
+     900,
+     1080
+    ],
+    "colors": [
+     "path_light",
+     "path"
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer"
+  },
+  {
+   "cmd": "group",
+   "name": "deer",
+   "commands": [
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1096,
+       640
+      ],
+      [
+       1110,
+       616
+      ],
+      [
+       1150,
+       606
+      ],
+      [
+       1190,
+       614
+      ],
+      [
+       1204,
+       632
+      ],
+      [
+       1200,
+       660
+      ],
+      [
+       1172,
+       670
+      ],
+      [
+       1122,
+       670
+      ],
+      [
+       1100,
+       660
+      ]
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       628
+      ],
+      [
+       1202,
+       588
+      ],
+      [
+       1216,
+       590
+      ],
+      [
+       1204,
+       644
+      ]
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      1214,
+      582
+     ],
+     "radius": [
+      17,
+      12
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1224,
+       578
+      ],
+      [
+       1250,
+       588
+      ],
+      [
+       1226,
+       594
+      ]
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1204,
+       574
+      ],
+      [
+       1196,
+       552
+      ],
+      [
+       1212,
+       568
+      ]
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1214,
+       572
+      ],
+      [
+       1222,
+       550
+      ],
+      [
+       1226,
+       570
+      ]
+     ],
+     "fill": "deer"
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1186,
+       664
+      ],
+      [
+       1188,
+       684
+      ],
+      [
+       1190,
+       706
+      ]
+     ],
+     "size": 7,
+     "color": "deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1170,
+       666
+      ],
+      [
+       1168,
+       686
+      ],
+      [
+       1166,
+       706
+      ]
+     ],
+     "size": 6,
+     "color": "deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1116,
+       664
+      ],
+      [
+       1112,
+       686
+      ],
+      [
+       1108,
+       706
+      ]
+     ],
+     "size": 7,
+     "color": "deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1134,
+       666
+      ],
+      [
+       1130,
+       686
+      ],
+      [
+       1128,
+       706
+      ]
+     ],
+     "size": 6,
+     "color": "deer",
+     "taper": [
+      0,
+      0.3
+     ]
+    },
+    {
+     "cmd": "path",
+     "points": [
+      [
+       1098,
+       642
+      ],
+      [
+       1088,
+       650
+      ]
+     ],
+     "size": 5,
+     "color": "deer",
+     "taper": [
+      0,
+      0.8
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Near trunks"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     130,
+     1100
+    ],
+    [
+     118.0,
+     520.0
+    ],
+    [
+     100,
+     -60
+    ]
+   ],
+   "size": 120,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     340,
+     1100
+    ],
+    [
+     348.0,
+     520.0
+    ],
+    [
+     360,
+     -60
+    ]
+   ],
+   "size": 74,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1720,
+     1100
+    ],
+    [
+     1732.0,
+     520.0
+    ],
+    [
+     1750,
+     -60
+    ]
+   ],
+   "size": 110,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1580,
+     1100
+    ],
+    [
+     1573.6,
+     520.0
+    ],
+    [
+     1564,
+     -60
+    ]
+   ],
+   "size": 62,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.4
+   ],
+   "hardness": 0.95
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     150,
+     420
+    ],
+    [
+     300,
+     330
+    ],
+    [
+     420,
+     300
+    ]
+   ],
+   "size": 22,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.7
+   ]
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1700,
+     380
+    ],
+    [
+     1560,
+     300
+    ],
+    [
+     1440,
+     280
+    ]
+   ],
+   "size": 20,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.7
+   ]
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     340,
+     520
+    ],
+    [
+     430,
+     470
+    ],
+    [
+     500,
+     462
+    ]
+   ],
+   "size": 12,
+   "color": "trunk",
+   "taper": [
+    0,
+    0.7
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Canopy"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    300,
+    -60
+   ],
+   "radius": [
+    560,
+    260
+   ],
+   "fill": "canopy"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    1500,
+    -100
+   ],
+   "radius": [
+    620,
+    290
+   ],
+   "fill": "canopy"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    900,
+    -160
+   ],
+   "radius": [
+    500,
+    240
+   ],
+   "fill": "canopy"
+  },
+  {
+   "cmd": "snapshot",
+   "name": "colour"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far mist"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    260
+   ],
+   "to": [
+    0,
+    640
+   ],
+   "colors": [
+    "transparent",
+    "mist"
+   ],
+   "opacity": 0.6
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    640
+   ],
+   "to": [
+    0,
+    1000
+   ],
+   "colors": [
+    "mist",
+    "transparent"
+   ],
+   "opacity": 0.6
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    560
+   ],
+   "to": [
+    0,
+    900
+   ],
+   "colors": [
+    "transparent",
+    "mist_blue"
+   ],
+   "opacity": 0.25,
+   "area": {
+    "rect": [
+     0,
+     560,
+     1920,
+     340
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid mist"
+  },
+  {
+   "cmd": "group",
+   "filter": {
+    "blur": 36
+   },
+   "opacity": 0.85,
+   "commands": [
+    {
+     "cmd": "rect",
+     "x": -100,
+     "y": 540,
+     "width": 2120,
+     "height": 170,
+     "fill": "mist"
+    }
+   ]
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    540
+   ],
+   "to": [
+    0,
+    840
+   ],
+   "stops": [
+    [
+     0,
+     "transparent"
+    ],
+    [
+     0.35,
+     "mist"
+    ],
+    [
+     1,
+     "transparent"
+    ]
+   ],
+   "opacity": 0.6
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1180,
+    680
+   ],
+   "to": [
+    660,
+    680
+   ],
+   "colors": [
+    "mist_warm",
+    "transparent"
+   ],
+   "opacity": 0.5
+  },
+  {
+   "cmd": "layer",
+   "name": "Glow"
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1180,
+    560
+   ],
+   "to": [
+    1180,
+    40
+   ],
+   "stops": [
+    [
+     0,
+     "dawn_core"
+    ],
+    [
+     0.3,
+     "#F5CC8680"
+    ],
+    [
+     1,
+     "transparent"
+    ]
+   ],
+   "opacity": 0.85
+  },
+  {
+   "cmd": "layer",
+   "name": "Path light"
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1170,
+    640
+   ],
+   "to": [
+    1170,
+    1000
+   ],
+   "colors": [
+    "#FFF0CCA0",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Ground"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    1920,
+    700
+   ],
+   "to": [
+    1100,
+    900
+   ],
+   "colors": [
+    "#F5CC8650",
+    "transparent"
+   ],
+   "area": {
+    "rect": [
+     1000,
+     700,
+     920,
+     400
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Rays"
+  },
+  {
+   "cmd": "group",
+   "filter": {
+    "blur": 30
+   },
+   "opacity": 0.14,
+   "commands": [
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       560
+      ],
+      [
+       -200,
+       1100
+      ],
+      [
+       140,
+       1100
+      ]
+     ],
+     "fill": "dawn"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       560
+      ],
+      [
+       300,
+       1100
+      ],
+      [
+       470,
+       1100
+      ]
+     ],
+     "fill": "dawn"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       560
+      ],
+      [
+       600,
+       1100
+      ],
+      [
+       700,
+       1100
+      ]
+     ],
+     "fill": "dawn"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       560
+      ],
+      [
+       1680,
+       1100
+      ],
+      [
+       1790,
+       1100
+      ]
+     ],
+     "fill": "dawn"
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       1180,
+       560
+      ],
+      [
+       1960,
+       1100
+      ],
+      [
+       2120,
+       1100
+      ]
+     ],
+     "fill": "dawn"
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer rim"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    1242,
+    584
+   ],
+   "to": [
+    1218,
+    600
+   ],
+   "colors": [
+    "deer_rim",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "snapshot",
+   "name": "light"
+  },
+  {
+   "cmd": "layer",
+   "name": "Deer"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "polygon": [
+     [
+      1096,
+      640
+     ],
+     [
+      1110,
+      616
+     ],
+     [
+      1150,
+      606
+     ],
+     [
+      1190,
+      614
+     ],
+     [
+      1204,
+      632
+     ],
+     [
+      1200,
+      660
+     ],
+     [
+      1172,
+      670
+     ],
+     [
+      1122,
+      670
+     ],
+     [
+      1100,
+      660
+     ]
+    ]
+   },
+   "commands": [
+    {
+     "cmd": "scatter",
+     "area": {
+      "polygon": [
+       [
+        1096,
+        640
+       ],
+       [
+        1110,
+        616
+       ],
+       [
+        1150,
+        606
+       ],
+       [
+        1190,
+        614
+       ],
+       [
+        1204,
+        632
+       ],
+       [
+        1200,
+        660
+       ],
+       [
+        1172,
+        670
+       ],
+       [
+        1122,
+        670
+       ],
+       [
+        1100,
+        660
+       ]
+      ]
+     },
+     "count": 60,
+     "kind": "stroke",
+     "length": [
+      6,
+      16
+     ],
+     "angle": [
+      -20,
+      10
+     ],
+     "size": [
+      1.5,
+      2.5
+     ],
+     "colors": [
+      "#4A3A30",
+      "#3A2E28"
+     ],
+     "opacity": [
+      0.3,
+      0.6
+     ],
+     "hardness": 0.6,
+     "seed": 51
+    }
+   ]
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     1206,
+     586
+    ],
+    [
+     1214,
+     584
+    ]
+   ],
+   "size": 3,
+   "color": "#FFF0CC",
+   "opacity": 0.9
+  },
+  {
+   "cmd": "layer",
+   "name": "Path"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Path"
+   },
+   "commands": [
+    {
+     "cmd": "scatter",
+     "area": {
+      "polygon": [
+       [
+        560,
+        1100
+       ],
+       [
+        1320,
+        1100
+       ],
+       [
+        1222,
+        780
+       ],
+       [
+        1192,
+        660
+       ],
+       [
+        1170,
+        612
+       ],
+       [
+        1138,
+        660
+       ],
+       [
+        1092,
+        780
+       ]
+      ]
+     },
+     "count": 60,
+     "kind": "stroke",
+     "length": [
+      20,
+      90
+     ],
+     "angle": [
+      -6,
+      6
+     ],
+     "size": [
+      2,
+      5
+     ],
+     "colors": [
+      "path_dark",
+      "path_light"
+     ],
+     "opacity": [
+      0.15,
+      0.4
+     ],
+     "hardness": 0.4,
+     "seed": 21
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "polygon": [
+       [
+        1100,
+        690
+       ],
+       [
+        1230,
+        690
+       ],
+       [
+        1260,
+        800
+       ],
+       [
+        1070,
+        800
+       ]
+      ]
+     },
+     "count": 70,
+     "size": [
+      3,
+      9
+     ],
+     "colors": [
+      "path_dark",
+      "#8A7E6E",
+      "path_light"
+     ],
+     "opacity": [
+      0.4,
+      0.8
+     ],
+     "hardness": 0.8,
+     "seed": 22
+    },
+    {
+     "cmd": "gradient",
+     "from": [
+      0,
+      1080
+     ],
+     "to": [
+      0,
+      700
+     ],
+     "colors": [
+      "#6E645680",
+      "transparent"
+     ]
+    },
+    {
+     "cmd": "group",
+     "filter": {
+      "blur": 4
+     },
+     "commands": [
+      {
+       "cmd": "ellipse",
+       "center": [
+        940,
+        980
+       ],
+       "radius": [
+        150,
+        12
+       ],
+       "fill": "#FFF0CC70"
+      }
+     ],
+     "opacity": 0.35
+    },
+    {
+     "cmd": "group",
+     "filter": {
+      "blur": 6
+     },
+     "opacity": 0.6,
+     "commands": [
+      {
+       "cmd": "ellipse",
+       "center": [
+        1150,
+        708
+       ],
+       "radius": [
+        70,
+        9
+       ],
+       "fill": "#1A1A20"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Near trunks"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Near trunks"
+   },
+   "commands": [
+    {
+     "cmd": "scatter",
+     "area": {
+      "rect": [
+       60,
+       0,
+       140,
+       1080
+      ]
+     },
+     "count": 110,
+     "kind": "stroke",
+     "length": [
+      30,
+      120
+     ],
+     "angle": [
+      84,
+      96
+     ],
+     "size": [
+      2,
+      5
+     ],
+     "colors": [
+      "trunk_light",
+      "#1A1C26"
+     ],
+     "opacity": [
+      0.2,
+      0.5
+     ],
+     "hardness": 0.5,
+     "seed": 11
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "rect": [
+       300,
+       0,
+       80,
+       1080
+      ]
+     },
+     "count": 60,
+     "kind": "stroke",
+     "length": [
+      30,
+      100
+     ],
+     "angle": [
+      82,
+      98
+     ],
+     "size": [
+      2,
+      4
+     ],
+     "colors": [
+      "trunk_light",
+      "#1A1C26"
+     ],
+     "opacity": [
+      0.2,
+      0.45
+     ],
+     "hardness": 0.5,
+     "seed": 12
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "rect": [
+       1650,
+       0,
+       130,
+       1080
+      ]
+     },
+     "count": 100,
+     "kind": "stroke",
+     "length": [
+      30,
+      120
+     ],
+     "angle": [
+      84,
+      96
+     ],
+     "size": [
+      2,
+      5
+     ],
+     "colors": [
+      "trunk_light",
+      "#1A1C26"
+     ],
+     "opacity": [
+      0.2,
+      0.5
+     ],
+     "hardness": 0.5,
+     "seed": 13
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "rect": [
+       1545,
+       0,
+       70,
+       1080
+      ]
+     },
+     "count": 55,
+     "kind": "stroke",
+     "length": [
+      30,
+      100
+     ],
+     "angle": [
+      82,
+      98
+     ],
+     "size": [
+      2,
+      4
+     ],
+     "colors": [
+      "trunk_light",
+      "#1A1C26"
+     ],
+     "opacity": [
+      0.2,
+      0.45
+     ],
+     "hardness": 0.5,
+     "seed": 14
+    },
+    {
+     "cmd": "gradient",
+     "from": [
+      1640,
+      0
+     ],
+     "to": [
+      1790,
+      0
+     ],
+     "colors": [
+      "#F5CC8660",
+      "transparent"
+     ],
+     "area": {
+      "rect": [
+       1620,
+       0,
+       200,
+       1080
+      ]
+     }
+    },
+    {
+     "cmd": "gradient",
+     "from": [
+      1600,
+      0
+     ],
+     "to": [
+      1540,
+      0
+     ],
+     "colors": [
+      "#F5CC8650",
+      "transparent"
+     ],
+     "area": {
+      "rect": [
+       1530,
+       0,
+       100,
+       1080
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Mid trunks"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Mid trunks"
+   },
+   "commands": [
+    {
+     "cmd": "gradient",
+     "from": [
+      1420,
+      0
+     ],
+     "to": [
+      1360,
+      0
+     ],
+     "colors": [
+      "#F5CC8670",
+      "transparent"
+     ],
+     "area": {
+      "rect": [
+       1340,
+       0,
+       200,
+       1080
+      ]
+     }
+    },
+    {
+     "cmd": "gradient",
+     "from": [
+      1520,
+      0
+     ],
+     "to": [
+      1470,
+      0
+     ],
+     "colors": [
+      "#F5CC8660",
+      "transparent"
+     ],
+     "area": {
+      "rect": [
+       1450,
+       0,
+       120,
+       1080
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Ferns"
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     0,
+     1010
+    ],
+    [
+     260,
+     1000
+    ],
+    [
+     520,
+     1040
+    ]
+   ],
+   "spacing": 20,
+   "size": [
+    40,
+    100
+   ],
+   "angle": [
+    -20,
+    20
+   ],
+   "follow": false,
+   "scatter": 18,
+   "colors": [
+    "fern",
+    "fern_light"
+   ],
+   "seed": 31
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1360,
+     1050
+    ],
+    [
+     1620,
+     1010
+    ],
+    [
+     1920,
+     1030
+    ]
+   ],
+   "spacing": 20,
+   "size": [
+    40,
+    100
+   ],
+   "angle": [
+    -20,
+    20
+   ],
+   "follow": false,
+   "scatter": 18,
+   "colors": [
+    "fern",
+    "fern_light"
+   ],
+   "seed": 32
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1040,
+     770
+    ],
+    [
+     1095,
+     748
+    ]
+   ],
+   "spacing": 6,
+   "size": [
+    16,
+    34
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 5,
+   "colors": [
+    "ground",
+    "fern"
+   ],
+   "seed": 35
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1225,
+     745
+    ],
+    [
+     1300,
+     770
+    ]
+   ],
+   "spacing": 6,
+   "size": [
+    16,
+    36
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 5,
+   "colors": [
+    "fern",
+    "fern_light"
+   ],
+   "seed": 36
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1060,
+     700
+    ],
+    [
+     1090,
+     690
+    ]
+   ],
+   "spacing": 6,
+   "size": [
+    10,
+    22
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 4,
+   "colors": [
+    "ground_light",
+    "fern"
+   ],
+   "seed": 37
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1215,
+     715
+    ],
+    [
+     1260,
+     730
+    ],
+    [
+     1310,
+     760
+    ]
+   ],
+   "spacing": 5,
+   "size": [
+    12,
+    30
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 5,
+   "colors": [
+    "fern",
+    "fern_light"
+   ],
+   "seed": 38
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     1020,
+     790
+    ],
+    [
+     1075,
+     765
+    ],
+    [
+     1100,
+     740
+    ]
+   ],
+   "spacing": 5,
+   "size": [
+    14,
+    34
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 6,
+   "colors": [
+    "ground",
+    "fern"
+   ],
+   "seed": 39
+  },
+  {
+   "cmd": "scatter",
+   "area": {
+    "polygon": [
+     [
+      1000,
+      700
+     ],
+     [
+      1300,
+      700
+     ],
+     [
+      1340,
+      820
+     ],
+     [
+      980,
+      820
+     ]
+    ]
+   },
+   "count": 50,
+   "kind": "stroke",
+   "length": [
+    8,
+    26
+   ],
+   "angle": [
+    -30,
+    30
+   ],
+   "size": [
+    1.5,
+    3
+   ],
+   "colors": [
+    "ground",
+    "path_dark",
+    "fern_light"
+   ],
+   "opacity": [
+    0.3,
+    0.7
+   ],
+   "hardness": 0.7,
+   "seed": 58
+  },
+  {
+   "cmd": "layer",
+   "name": "Canopy"
+  },
+  {
+   "cmd": "brush",
+   "tip": "leaf",
+   "angle": 0,
+   "hardness": 0.9,
+   "dynamics": {}
+  },
+  {
+   "cmd": "scatter",
+   "area": {
+    "polygon": [
+     [
+      851,
+      -10
+     ],
+     [
+      833,
+      28
+     ],
+     [
+      803,
+      65
+     ],
+     [
+      764,
+      100
+     ],
+     [
+      716,
+      131
+     ],
+     [
+      660,
+      159
+     ],
+     [
+      597,
+      183
+     ],
+     [
+      528,
+      201
+     ],
+     [
+      454,
+      215
+     ],
+     [
+      378,
+      223
+     ],
+     [
+      300,
+      226
+     ],
+     [
+      222,
+      223
+     ],
+     [
+      146,
+      215
+     ],
+     [
+      72,
+      201
+     ],
+     [
+      3,
+      183
+     ],
+     [
+      -60,
+      159
+     ],
+     [
+      -116,
+      131
+     ],
+     [
+      -164,
+      100
+     ],
+     [
+      -203,
+      65
+     ],
+     [
+      -233,
+      28
+     ],
+     [
+      -251,
+      -10
+     ],
+     [
+      -251,
+      -20
+     ],
+     [
+      -233,
+      11
+     ],
+     [
+      -203,
+      41
+     ],
+     [
+      -164,
+      69
+     ],
+     [
+      -116,
+      94
+     ],
+     [
+      -60,
+      116
+     ],
+     [
+      3,
+      135
+     ],
+     [
+      72,
+      150
+     ],
+     [
+      146,
+      161
+     ],
+     [
+      222,
+      168
+     ],
+     [
+      300,
+      170
+     ],
+     [
+      378,
+      168
+     ],
+     [
+      454,
+      161
+     ],
+     [
+      528,
+      150
+     ],
+     [
+      597,
+      135
+     ],
+     [
+      660,
+      116
+     ],
+     [
+      716,
+      94
+     ],
+     [
+      764,
+      69
+     ],
+     [
+      803,
+      41
+     ],
+     [
+      833,
+      11
+     ],
+     [
+      851,
+      -20
+     ]
+    ]
+   },
+   "count": 110,
+   "size": [
+    16,
+    34
+   ],
+   "colors": [
+    "canopy",
+    "canopy_light"
+   ],
+   "opacity": [
+    0.7,
+    1.0
+   ],
+   "seed": 40
+  },
+  {
+   "cmd": "scatter",
+   "area": {
+    "polygon": [
+     [
+      2111,
+      -45
+     ],
+     [
+      2090,
+      -2
+     ],
+     [
+      2057,
+      39
+     ],
+     [
+      2014,
+      77
+     ],
+     [
+      1961,
+      111
+     ],
+     [
+      1899,
+      142
+     ],
+     [
+      1829,
+      168
+     ],
+     [
+      1752,
+      189
+     ],
+     [
+      1671,
+      204
+     ],
+     [
+      1586,
+      213
+     ],
+     [
+      1500,
+      216
+     ],
+     [
+      1414,
+      213
+     ],
+     [
+      1329,
+      204
+     ],
+     [
+      1248,
+      189
+     ],
+     [
+      1171,
+      168
+     ],
+     [
+      1101,
+      142
+     ],
+     [
+      1039,
+      111
+     ],
+     [
+      986,
+      77
+     ],
+     [
+      943,
+      39
+     ],
+     [
+      910,
+      -2
+     ],
+     [
+      889,
+      -45
+     ],
+     [
+      889,
+      -55
+     ],
+     [
+      910,
+      -20
+     ],
+     [
+      943,
+      14
+     ],
+     [
+      986,
+      45
+     ],
+     [
+      1039,
+      74
+     ],
+     [
+      1101,
+      99
+     ],
+     [
+      1171,
+      120
+     ],
+     [
+      1248,
+      138
+     ],
+     [
+      1329,
+      150
+     ],
+     [
+      1414,
+      157
+     ],
+     [
+      1500,
+      160
+     ],
+     [
+      1586,
+      157
+     ],
+     [
+      1671,
+      150
+     ],
+     [
+      1752,
+      138
+     ],
+     [
+      1829,
+      120
+     ],
+     [
+      1899,
+      99
+     ],
+     [
+      1961,
+      74
+     ],
+     [
+      2014,
+      45
+     ],
+     [
+      2057,
+      14
+     ],
+     [
+      2090,
+      -20
+     ],
+     [
+      2111,
+      -55
+     ]
+    ]
+   },
+   "count": 120,
+   "size": [
+    16,
+    34
+   ],
+   "colors": [
+    "canopy",
+    "canopy_light"
+   ],
+   "opacity": [
+    0.7,
+    1.0
+   ],
+   "seed": 41
+  },
+  {
+   "cmd": "scatter",
+   "area": {
+    "polygon": [
+     [
+      1392,
+      -114
+     ],
+     [
+      1376,
+      -78
+     ],
+     [
+      1349,
+      -43
+     ],
+     [
+      1315,
+      -11
+     ],
+     [
+      1272,
+      18
+     ],
+     [
+      1221,
+      44
+     ],
+     [
+      1165,
+      66
+     ],
+     [
+      1103,
+      83
+     ],
+     [
+      1038,
+      96
+     ],
+     [
+      970,
+      103
+     ],
+     [
+      900,
+      106
+     ],
+     [
+      830,
+      103
+     ],
+     [
+      762,
+      96
+     ],
+     [
+      697,
+      83
+     ],
+     [
+      635,
+      66
+     ],
+     [
+      579,
+      44
+     ],
+     [
+      528,
+      18
+     ],
+     [
+      485,
+      -11
+     ],
+     [
+      451,
+      -43
+     ],
+     [
+      424,
+      -78
+     ],
+     [
+      408,
+      -114
+     ],
+     [
+      408,
+      -124
+     ],
+     [
+      424,
+      -95
+     ],
+     [
+      451,
+      -68
+     ],
+     [
+      485,
+      -43
+     ],
+     [
+      528,
+      -19
+     ],
+     [
+      579,
+      1
+     ],
+     [
+      635,
+      18
+     ],
+     [
+      697,
+      32
+     ],
+     [
+      762,
+      42
+     ],
+     [
+      830,
+      48
+     ],
+     [
+      900,
+      50
+     ],
+     [
+      970,
+      48
+     ],
+     [
+      1038,
+      42
+     ],
+     [
+      1103,
+      32
+     ],
+     [
+      1165,
+      18
+     ],
+     [
+      1221,
+      1
+     ],
+     [
+      1272,
+      -19
+     ],
+     [
+      1315,
+      -43
+     ],
+     [
+      1349,
+      -68
+     ],
+     [
+      1376,
+      -95
+     ],
+     [
+      1392,
+      -124
+     ]
+    ]
+   },
+   "count": 90,
+   "size": [
+    16,
+    34
+   ],
+   "colors": [
+    "canopy",
+    "canopy_light"
+   ],
+   "opacity": [
+    0.7,
+    1.0
+   ],
+   "seed": 42
+  },
+  {
+   "cmd": "brush",
+   "reset": true
+  },
+  {
+   "cmd": "snapshot",
+   "name": "detail"
+  },
+  {
+   "cmd": "layer",
+   "name": "Mood",
+   "from": "below",
+   "opacity": 0.16
+  },
+  {
+   "cmd": "filter",
+   "gradient_map": {
+    "stops": [
+     [
+      0,
+      "mood_dark"
+     ],
+     [
+      0.5,
+      "mood_mid"
+     ],
+     [
+      1,
+      "mood_light"
+     ]
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Vignette",
+   "blend": "multiply",
+   "opacity": 0.45
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1100,
+    600
+   ],
+   "to": [
+    1100,
+    -300
+   ],
+   "stops": [
+    [
+     0,
+     "transparent"
+    ],
+    [
+     0.55,
+     "transparent"
+    ],
+    [
+     1,
+     "vignette"
+    ]
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Paper",
+   "blend": "multiply",
+   "opacity": 0.14
+  },
+  {
+   "cmd": "rect",
+   "x": 0,
+   "y": 0,
+   "width": 1920,
+   "height": 1080,
+   "fill": {
+    "texture": "paper"
+   }
+  },
+  {
+   "cmd": "snapshot",
+   "name": "finish"
+  }
+ ]
+}

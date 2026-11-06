@@ -1,0 +1,2735 @@
+{
+ "title": "Sunset pond v3",
+ "notes": [
+  "The sunset pond repainted with the phase 4 process: values first (grey shapes, snapshot \"values\"), then flat colour,",
+  "then light and form, then detail at the duck, then the finish. The duck sits on the sun's path of broken glints, backlit,",
+  "with a rim of light; the clouds are shapes lit from below; the far hills stay crisp and take their haze inside the silhouette;",
+  "the lily pads are an olive mixed from the key. The loop drifts the clouds and water, bobs the duck and sways the reeds."
+ ],
+ "seed": 11,
+ "intent": {
+  "subject": "a duck on a pond at sunset",
+  "focal": "duck",
+  "light": [
+   1300,
+   575
+  ],
+  "mood": "calm, warm, end of the day",
+  "key_colors": [
+   "sky_low",
+   "sun",
+   "water_dark"
+  ]
+ },
+ "palette": {
+  "sky_top": "#2A2448",
+  "sky_mid": "#C4583C",
+  "sky_low": "#F7B25A",
+  "cloud_light": "#FFD8B0",
+  "cloud_shade": "#C08898",
+  "sun": "#FFD98A",
+  "sun_core": "#FFF0C8",
+  "hill_far": "#6B4B6E",
+  "hill_far_light": "#A77A86",
+  "hill": "#33334A",
+  "hill_light": "#5A4A62",
+  "water_dark": "#2A3560",
+  "water_mid": "#5E5478",
+  "water_light": "#9A7A80",
+  "glint": "#FFE9A8",
+  "bank": "#3E3A2E",
+  "grass_dark": "#6A6A2E",
+  "grass_light": "#C2A84E",
+  "pad": "#6E6A38",
+  "pad_light": "#A89A48",
+  "pad_dark": "#4A4428",
+  "duck_body": "#E6B646",
+  "duck_light": "#FFD36A",
+  "duck_dark": "#9A7426",
+  "beak": "#E8892B",
+  "ink": "#2A2018",
+  "pond_reed": "#5A5A38",
+  "pond_reed_head": "#4A3222",
+  "mood_dark": "#1B1A33",
+  "mood_mid": "#C2651C",
+  "mood_light": "#FFF3DC",
+  "vignette": "#1A1020",
+  "v_sky": "#8A8A8A",
+  "v_hill_far": "#5A5A5A",
+  "v_hill": "#3A3A3A",
+  "v_water": "#4A4A4A",
+  "v_sun": "#D0D0D0",
+  "v_duck": "#C0C0C0",
+  "v_bank": "#2A2A2A",
+  "cloud_top": "#9A6678"
+ },
+ "commands": [
+  {
+   "cmd": "canvas",
+   "width": 1920,
+   "height": 1080,
+   "paper": "sky_low"
+  },
+  {
+   "cmd": "include",
+   "file": "../../library/duck.json"
+  },
+  {
+   "cmd": "include",
+   "file": "../../library/reed.json"
+  },
+  {
+   "cmd": "define",
+   "name": "cloudshape",
+   "commands": [
+    {
+     "cmd": "ellipse",
+     "center": [
+      -70,
+      -10
+     ],
+     "radius": [
+      60,
+      42
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      -10,
+      -30
+     ],
+     "radius": [
+      72,
+      54
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      60,
+      -14
+     ],
+     "radius": [
+      58,
+      40
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      104,
+      2
+     ],
+     "radius": [
+      42,
+      28
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      -112,
+      4
+     ],
+     "radius": [
+      40,
+      26
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      0,
+      8
+     ],
+     "radius": [
+      128,
+      26
+     ],
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       0,
+       -84
+      ],
+      "to": [
+       0,
+       20
+      ],
+      "colors": [
+       "cloud_top",
+       "cloud_shade"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "cmd": "define",
+   "name": "cloud",
+   "commands": [
+    {
+     "cmd": "use",
+     "name": "cloudshape"
+    },
+    {
+     "cmd": "group",
+     "mask": {
+      "symbol": "cloudshape"
+     },
+     "commands": [
+      {
+       "cmd": "gradient",
+       "kind": "radial",
+       "from": [
+        0,
+        44
+       ],
+       "to": [
+        0,
+        -46
+       ],
+       "colors": [
+        "cloud_light",
+        "transparent"
+       ],
+       "area": {
+        "rect": [
+         -170,
+         -100,
+         340,
+         150
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun glow",
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills haze",
+   "clip": true
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills light",
+   "clip": true,
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Hills"
+  },
+  {
+   "cmd": "layer",
+   "name": "Hills light",
+   "clip": true,
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Water"
+  },
+  {
+   "cmd": "layer",
+   "name": "Water depth",
+   "clip": true,
+   "blend": "multiply"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun path",
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck reflection"
+  },
+  {
+   "cmd": "layer",
+   "name": "Ripples"
+  },
+  {
+   "cmd": "layer",
+   "name": "Pads"
+  },
+  {
+   "cmd": "layer",
+   "name": "Bank"
+  },
+  {
+   "cmd": "layer",
+   "name": "Reeds"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck shadow"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck shade",
+   "clip": true,
+   "blend": "multiply"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck light",
+   "clip": true,
+   "blend": "screen"
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck marks",
+   "clip": true
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    0
+   ],
+   "to": [
+    0,
+    720
+   ],
+   "colors": [
+    "#3A3A3A",
+    "v_sky"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    1300,
+    575
+   ],
+   "radius": 78,
+   "fill": "v_sun"
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    380,
+    780
+   ],
+   "radius": [
+    760,
+    200
+   ],
+   "fill": "v_hill_far"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    1540,
+    800
+   ],
+   "radius": [
+    640,
+    200
+   ],
+   "fill": "v_hill_far"
+  },
+  {
+   "cmd": "layer",
+   "name": "Hills"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     700
+    ],
+    [
+     300,
+     640
+    ],
+    [
+     700,
+     690
+    ],
+    [
+     1000,
+     650
+    ],
+    [
+     1250,
+     690
+    ],
+    [
+     1500,
+     676
+    ],
+    [
+     1920,
+     660
+    ],
+    [
+     1920,
+     722
+    ],
+    [
+     0,
+     722
+    ]
+   ],
+   "fill": "v_hill",
+   "jitter": 3,
+   "seed": 101
+  },
+  {
+   "cmd": "layer",
+   "name": "Water"
+  },
+  {
+   "cmd": "rect",
+   "x": 0,
+   "y": 718,
+   "width": 1920,
+   "height": 362,
+   "fill": "v_water"
+  },
+  {
+   "cmd": "layer",
+   "name": "Water"
+  },
+  {
+   "cmd": "gradient",
+   "area": {
+    "ellipse": [
+     1300,
+     900,
+     110,
+     170
+    ]
+   },
+   "from": [
+    1300,
+    718
+   ],
+   "to": [
+    1300,
+    1060
+   ],
+   "colors": [
+    "#8A8A8A",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Bank"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     700
+    ],
+    [
+     420,
+     690
+    ],
+    [
+     560,
+     730
+    ],
+    [
+     380,
+     760
+    ],
+    [
+     0,
+     770
+    ]
+   ],
+   "fill": "v_bank",
+   "jitter": 4,
+   "seed": 102
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck"
+  },
+  {
+   "cmd": "use",
+   "name": "duck",
+   "translate": [
+    1230,
+    850
+   ],
+   "scale": 2.7,
+   "with": {
+    "color": "v_duck",
+    "color2": "#A0A0A0",
+    "beak": "v_duck",
+    "ink": "#101010"
+   }
+  },
+  {
+   "cmd": "snapshot",
+   "name": "values"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sky"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    0
+   ],
+   "to": [
+    0,
+    660
+   ],
+   "stops": [
+    [
+     0,
+     "sky_top"
+    ],
+    [
+     0.45,
+     "sky_mid"
+    ],
+    [
+     1,
+     "sky_low"
+    ]
+   ]
+  },
+  {
+   "cmd": "group",
+   "name": "clouds",
+   "translate": {
+    "keys": [
+     [
+      0,
+      [
+       0,
+       0
+      ]
+     ],
+     [
+      24,
+      [
+       -18,
+       0
+      ],
+      "in-out"
+     ],
+     [
+      47,
+      [
+       0,
+       0
+      ],
+      "in-out"
+     ]
+    ]
+   },
+   "commands": [
+    {
+     "cmd": "use",
+     "name": "cloud",
+     "translate": [
+      420,
+      150
+     ],
+     "scale": 1.3
+    },
+    {
+     "cmd": "use",
+     "name": "cloud",
+     "translate": [
+      1100,
+      110
+     ],
+     "scale": 1.0
+    },
+    {
+     "cmd": "use",
+     "name": "cloud",
+     "translate": [
+      1650,
+      230
+     ],
+     "scale": 0.8
+    },
+    {
+     "cmd": "use",
+     "name": "cloud",
+     "translate": [
+      760,
+      330
+     ],
+     "scale": 0.55
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun"
+  },
+  {
+   "cmd": "group",
+   "name": "sun",
+   "commands": [
+    {
+     "cmd": "ellipse",
+     "center": [
+      1300,
+      575
+     ],
+     "radius": 78,
+     "fill": "sun"
+    },
+    {
+     "cmd": "ellipse",
+     "center": [
+      1300,
+      575
+     ],
+     "radius": 56,
+     "fill": "sun_core"
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills"
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    380,
+    780
+   ],
+   "radius": [
+    760,
+    200
+   ],
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     0,
+     580
+    ],
+    "to": [
+     0,
+     780
+    ],
+    "colors": [
+     "hill_far_light",
+     "hill_far"
+    ]
+   }
+  },
+  {
+   "cmd": "ellipse",
+   "center": [
+    1540,
+    800
+   ],
+   "radius": [
+    640,
+    200
+   ],
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     0,
+     600
+    ],
+    "to": [
+     0,
+     800
+    ],
+    "colors": [
+     "hill_far_light",
+     "hill_far"
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Hills"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     700
+    ],
+    [
+     300,
+     640
+    ],
+    [
+     700,
+     690
+    ],
+    [
+     1000,
+     650
+    ],
+    [
+     1250,
+     690
+    ],
+    [
+     1500,
+     676
+    ],
+    [
+     1920,
+     660
+    ],
+    [
+     1920,
+     722
+    ],
+    [
+     0,
+     722
+    ]
+   ],
+   "jitter": 3,
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     1500,
+     660
+    ],
+    "to": [
+     200,
+     700
+    ],
+    "colors": [
+     "hill_light",
+     "hill"
+    ]
+   },
+   "seed": 101
+  },
+  {
+   "cmd": "layer",
+   "name": "Water"
+  },
+  {
+   "cmd": "rect",
+   "x": 0,
+   "y": 718,
+   "width": 1920,
+   "height": 362,
+   "fill": {
+    "noise": {
+     "scale": 260,
+     "detail": 2,
+     "contrast": 0.7,
+     "seed": 4,
+     "stops": [
+      [
+       0,
+       "water_dark"
+      ],
+      [
+       0.55,
+       "water_mid"
+      ],
+      [
+       1,
+       "water_light"
+      ]
+     ],
+     "offset": {
+      "keys": [
+       [
+        0,
+        [
+         0,
+         0
+        ]
+       ],
+       [
+        47,
+        [
+         90,
+         0
+        ]
+       ]
+      ]
+     }
+    }
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Pads"
+  },
+  {
+   "cmd": "group",
+   "name": "lilypads",
+   "commands": [
+    {
+     "cmd": "group",
+     "filter": {
+      "shadow": {
+       "offset": [
+        0,
+        6
+       ],
+       "blur": 6,
+       "color": "#1A102060"
+      }
+     },
+     "commands": [
+      {
+       "cmd": "polygon",
+       "points": [
+        [
+         520,
+         1000
+        ],
+        [
+         597.7,
+         1032.7
+        ],
+        [
+         587.8,
+         1038.2
+        ],
+        [
+         576.5,
+         1042.9
+        ],
+        [
+         564.0,
+         1046.7
+        ],
+        [
+         550.6,
+         1049.5
+        ],
+        [
+         536.5,
+         1051.3
+        ],
+        [
+         522.1,
+         1052.0
+        ],
+        [
+         507.6,
+         1051.6
+        ],
+        [
+         493.4,
+         1050.1
+        ],
+        [
+         479.8,
+         1047.6
+        ],
+        [
+         467.0,
+         1044.1
+        ],
+        [
+         455.3,
+         1039.7
+        ],
+        [
+         445.0,
+         1034.4
+        ],
+        [
+         436.2,
+         1028.4
+        ],
+        [
+         429.2,
+         1021.8
+        ],
+        [
+         424.1,
+         1014.8
+        ],
+        [
+         421.0,
+         1007.4
+        ],
+        [
+         420.0,
+         999.9
+        ],
+        [
+         421.1,
+         992.4
+        ],
+        [
+         424.2,
+         985.1
+        ],
+        [
+         429.4,
+         978.0
+        ],
+        [
+         436.4,
+         971.5
+        ],
+        [
+         445.2,
+         965.5
+        ],
+        [
+         455.6,
+         960.2
+        ],
+        [
+         467.3,
+         955.8
+        ],
+        [
+         480.1,
+         952.3
+        ],
+        [
+         493.8,
+         949.8
+        ],
+        [
+         508.0,
+         948.4
+        ],
+        [
+         522.4,
+         948.0
+        ],
+        [
+         536.8,
+         948.7
+        ],
+        [
+         550.9,
+         950.5
+        ],
+        [
+         564.3,
+         953.4
+        ],
+        [
+         576.8,
+         957.2
+        ],
+        [
+         588.1,
+         961.9
+        ],
+        [
+         597.9,
+         967.4
+        ],
+        [
+         606.2,
+         973.6
+        ],
+        [
+         612.6,
+         980.4
+        ],
+        [
+         617.1,
+         987.5
+        ],
+        [
+         619.5,
+         994.9
+        ],
+        [
+         619.9,
+         1002.4
+        ],
+        [
+         618.2,
+         1009.9
+        ]
+       ],
+       "jitter": 2,
+       "fill": {
+        "gradient": "linear",
+        "from": [
+         560,
+         960
+        ],
+        "to": [
+         460,
+         1040
+        ],
+        "colors": [
+         "pad_light",
+         "pad"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "cmd": "group",
+     "filter": {
+      "shadow": {
+       "offset": [
+        0,
+        6
+       ],
+       "blur": 6,
+       "color": "#1A102060"
+      }
+     },
+     "commands": [
+      {
+       "cmd": "polygon",
+       "points": [
+        [
+         760,
+         1040
+        ],
+        [
+         681.2,
+         1051.6
+        ],
+        [
+         678.7,
+         1045.6
+        ],
+        [
+         678.0,
+         1039.6
+        ],
+        [
+         679.0,
+         1033.5
+        ],
+        [
+         681.7,
+         1027.6
+        ],
+        [
+         686.0,
+         1021.9
+        ],
+        [
+         691.9,
+         1016.6
+        ],
+        [
+         699.2,
+         1011.8
+        ],
+        [
+         707.7,
+         1007.6
+        ],
+        [
+         717.4,
+         1004.1
+        ],
+        [
+         728.0,
+         1001.3
+        ],
+        [
+         739.2,
+         999.4
+        ],
+        [
+         750.9,
+         998.3
+        ],
+        [
+         762.7,
+         998.0
+        ],
+        [
+         774.5,
+         998.7
+        ],
+        [
+         786.0,
+         1000.2
+        ],
+        [
+         797.0,
+         1002.5
+        ],
+        [
+         807.2,
+         1005.6
+        ],
+        [
+         816.3,
+         1009.5
+        ],
+        [
+         824.4,
+         1014.0
+        ],
+        [
+         831.0,
+         1019.0
+        ],
+        [
+         836.2,
+         1024.5
+        ],
+        [
+         839.8,
+         1030.3
+        ],
+        [
+         841.7,
+         1036.3
+        ],
+        [
+         841.9,
+         1042.3
+        ],
+        [
+         840.4,
+         1048.4
+        ],
+        [
+         837.2,
+         1054.2
+        ],
+        [
+         832.3,
+         1059.8
+        ],
+        [
+         826.0,
+         1064.9
+        ],
+        [
+         818.3,
+         1069.5
+        ],
+        [
+         809.3,
+         1073.5
+        ],
+        [
+         799.4,
+         1076.8
+        ],
+        [
+         788.6,
+         1079.4
+        ],
+        [
+         777.2,
+         1081.1
+        ],
+        [
+         765.4,
+         1081.9
+        ],
+        [
+         753.6,
+         1081.9
+        ],
+        [
+         741.8,
+         1081.0
+        ],
+        [
+         730.5,
+         1079.2
+        ],
+        [
+         719.7,
+         1076.6
+        ],
+        [
+         709.9,
+         1073.2
+        ],
+        [
+         701.0,
+         1069.2
+        ]
+       ],
+       "jitter": 2,
+       "fill": {
+        "gradient": "linear",
+        "from": [
+         800,
+         1010
+        ],
+        "to": [
+         720,
+         1070
+        ],
+        "colors": [
+         "pad_light",
+         "pad"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "cmd": "polygon",
+     "points": [
+      [
+       300,
+       1020
+      ],
+      [
+       245.3,
+       1001.0
+      ],
+      [
+       251.2,
+       997.1
+      ],
+      [
+       258.1,
+       993.7
+      ],
+      [
+       265.9,
+       990.9
+      ],
+      [
+       274.4,
+       988.7
+      ],
+      [
+       283.5,
+       987.1
+      ],
+      [
+       292.9,
+       986.2
+      ],
+      [
+       302.4,
+       986.0
+      ],
+      [
+       311.9,
+       986.6
+      ],
+      [
+       321.2,
+       987.8
+      ],
+      [
+       330.0,
+       989.7
+      ],
+      [
+       338.1,
+       992.3
+      ],
+      [
+       345.5,
+       995.4
+      ],
+      [
+       351.9,
+       999.0
+      ],
+      [
+       357.3,
+       1003.1
+      ],
+      [
+       361.4,
+       1007.5
+      ],
+      [
+       364.3,
+       1012.2
+      ],
+      [
+       365.8,
+       1017.1
+      ],
+      [
+       365.9,
+       1022.0
+      ],
+      [
+       364.6,
+       1026.9
+      ],
+      [
+       362.0,
+       1031.6
+      ],
+      [
+       358.1,
+       1036.1
+      ],
+      [
+       353.0,
+       1040.3
+      ],
+      [
+       346.8,
+       1044.0
+      ],
+      [
+       339.5,
+       1047.2
+      ],
+      [
+       331.5,
+       1049.9
+      ],
+      [
+       322.8,
+       1051.9
+      ],
+      [
+       313.6,
+       1053.3
+      ],
+      [
+       304.1,
+       1053.9
+      ],
+      [
+       294.6,
+       1053.9
+      ],
+      [
+       285.2,
+       1053.1
+      ],
+      [
+       276.0,
+       1051.7
+      ],
+      [
+       267.4,
+       1049.6
+      ],
+      [
+       259.5,
+       1046.8
+      ],
+      [
+       252.4,
+       1043.5
+      ],
+      [
+       246.3,
+       1039.7
+      ],
+      [
+       241.3,
+       1035.5
+      ],
+      [
+       237.6,
+       1031.0
+      ],
+      [
+       235.1,
+       1026.3
+      ],
+      [
+       234.1,
+       1021.4
+      ],
+      [
+       234.4,
+       1016.4
+      ]
+     ],
+     "jitter": 2,
+     "fill": {
+      "gradient": "linear",
+      "from": [
+       330,
+       1000
+      ],
+      "to": [
+       270,
+       1040
+      ],
+      "colors": [
+       "pad_light",
+       "pad"
+      ]
+     }
+    },
+    {
+     "cmd": "group",
+     "filter": {
+      "shadow": {
+       "offset": [
+        0,
+        5
+       ],
+       "blur": 5,
+       "color": "#1A102060"
+      }
+     },
+     "commands": [
+      {
+       "cmd": "polygon",
+       "points": [
+        [
+         1640,
+         975
+        ],
+        [
+         1684.5,
+         952.0
+        ],
+        [
+         1690.6,
+         955.4
+        ],
+        [
+         1695.8,
+         959.3
+        ],
+        [
+         1699.7,
+         963.5
+        ],
+        [
+         1702.4,
+         967.9
+        ],
+        [
+         1703.8,
+         972.5
+        ],
+        [
+         1703.9,
+         977.1
+        ],
+        [
+         1702.6,
+         981.7
+        ],
+        [
+         1700.0,
+         986.2
+        ],
+        [
+         1696.1,
+         990.4
+        ],
+        [
+         1691.1,
+         994.3
+        ],
+        [
+         1685.0,
+         997.7
+        ],
+        [
+         1678.0,
+         1000.8
+        ],
+        [
+         1670.1,
+         1003.2
+        ],
+        [
+         1661.7,
+         1005.1
+        ],
+        [
+         1652.8,
+         1006.4
+        ],
+        [
+         1643.6,
+         1007.0
+        ],
+        [
+         1634.3,
+         1006.9
+        ],
+        [
+         1625.2,
+         1006.1
+        ],
+        [
+         1616.3,
+         1004.7
+        ],
+        [
+         1608.0,
+         1002.7
+        ],
+        [
+         1600.3,
+         1000.1
+        ],
+        [
+         1593.5,
+         997.0
+        ],
+        [
+         1587.6,
+         993.4
+        ],
+        [
+         1582.9,
+         989.4
+        ],
+        [
+         1579.3,
+         985.2
+        ],
+        [
+         1577.0,
+         980.7
+        ],
+        [
+         1576.0,
+         976.1
+        ],
+        [
+         1576.4,
+         971.4
+        ],
+        [
+         1578.1,
+         966.9
+        ],
+        [
+         1581.1,
+         962.5
+        ],
+        [
+         1585.3,
+         958.4
+        ],
+        [
+         1590.7,
+         954.6
+        ],
+        [
+         1597.1,
+         951.3
+        ],
+        [
+         1604.4,
+         948.4
+        ],
+        [
+         1612.4,
+         946.1
+        ],
+        [
+         1621.1,
+         944.4
+        ],
+        [
+         1630.1,
+         943.4
+        ],
+        [
+         1639.3,
+         943.0
+        ],
+        [
+         1648.6,
+         943.3
+        ],
+        [
+         1657.6,
+         944.2
+        ]
+       ],
+       "jitter": 2,
+       "fill": {
+        "gradient": "linear",
+        "from": [
+         1670,
+         955
+        ],
+        "to": [
+         1610,
+         995
+        ],
+        "colors": [
+         "pad_light",
+         "pad_dark"
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Bank"
+  },
+  {
+   "cmd": "polygon",
+   "points": [
+    [
+     0,
+     700
+    ],
+    [
+     420,
+     690
+    ],
+    [
+     560,
+     730
+    ],
+    [
+     380,
+     760
+    ],
+    [
+     0,
+     770
+    ]
+   ],
+   "fill": {
+    "gradient": "linear",
+    "from": [
+     500,
+     690
+    ],
+    "to": [
+     100,
+     770
+    ],
+    "colors": [
+     "#5A5240",
+     "bank"
+    ]
+   },
+   "jitter": 4,
+   "seed": 102
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck"
+  },
+  {
+   "cmd": "group",
+   "name": "duck",
+   "translate": {
+    "keys": [
+     [
+      0,
+      [
+       0,
+       0
+      ]
+     ],
+     [
+      24,
+      [
+       0,
+       -6
+      ],
+      "in-out"
+     ],
+     [
+      47,
+      [
+       0,
+       0
+      ],
+      "in-out"
+     ]
+    ]
+   },
+   "rotate": {
+    "keys": [
+     [
+      0,
+      -2
+     ],
+     [
+      24,
+      2,
+      "in-out"
+     ],
+     [
+      47,
+      -2,
+      "in-out"
+     ]
+    ]
+   },
+   "origin": [
+    1230,
+    850
+   ],
+   "commands": [
+    {
+     "cmd": "use",
+     "name": "duck",
+     "translate": [
+      1230,
+      850
+     ],
+     "scale": 2.7,
+     "outline": {
+      "color": "ink",
+      "size": 1,
+      "rim": {
+       "color": "glint",
+       "size": 7,
+       "angle": -35
+      }
+     },
+     "with": {
+      "color": "duck_body",
+      "color2": "duck_dark",
+      "beak": "beak",
+      "ink": "ink"
+     }
+    }
+   ]
+  },
+  {
+   "cmd": "snapshot",
+   "name": "colour"
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun glow"
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1300,
+    575
+   ],
+   "to": [
+    1300,
+    160
+   ],
+   "stops": [
+    [
+     0,
+     "#FFB06080"
+    ],
+    [
+     0.4,
+     "#FF804030"
+    ],
+    [
+     1,
+     "transparent"
+    ]
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun"
+  },
+  {
+   "cmd": "filter",
+   "glow": {
+    "radius": 50,
+    "threshold": 0.75,
+    "strength": 1.1
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills haze"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    585
+   ],
+   "to": [
+    0,
+    760
+   ],
+   "colors": [
+    "#F7B25A70",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Far hills light"
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1300,
+    620
+   ],
+   "to": [
+    700,
+    620
+   ],
+   "colors": [
+    "#F7B25A50",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Hills light"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    1500,
+    640
+   ],
+   "to": [
+    500,
+    700
+   ],
+   "colors": [
+    "#F7B25A50",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Water depth"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    0,
+    720
+   ],
+   "to": [
+    0,
+    1080
+   ],
+   "colors": [
+    "transparent",
+    "#2A3560C0"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Sun path"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Water"
+   },
+   "commands": [
+    {
+     "cmd": "gradient",
+     "kind": "radial",
+     "from": [
+      1300,
+      730
+     ],
+     "to": [
+      1300,
+      920
+     ],
+     "colors": [
+      "#FFC07058",
+      "transparent"
+     ]
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1300,
+       790,
+       90,
+       70
+      ]
+     },
+     "count": 190,
+     "kind": "stroke",
+     "length": [
+      16,
+      70
+     ],
+     "angle": [
+      -3,
+      3
+     ],
+     "size": [
+      3,
+      7
+     ],
+     "colors": [
+      "glint",
+      "sun",
+      "#FFB060"
+     ],
+     "opacity": [
+      0.35,
+      0.85
+     ],
+     "hardness": 0.5,
+     "seed": 21
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1300,
+       900,
+       120,
+       110
+      ]
+     },
+     "count": 110,
+     "kind": "stroke",
+     "length": [
+      14,
+      60
+     ],
+     "angle": [
+      -3,
+      3
+     ],
+     "size": [
+      3,
+      6
+     ],
+     "colors": [
+      "glint",
+      "#FFB060"
+     ],
+     "opacity": [
+      0.25,
+      0.7
+     ],
+     "hardness": 0.5,
+     "seed": 22
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1300,
+       1020,
+       150,
+       80
+      ]
+     },
+     "count": 40,
+     "kind": "stroke",
+     "length": [
+      20,
+      80
+     ],
+     "angle": [
+      -2,
+      2
+     ],
+     "size": [
+      3,
+      6
+     ],
+     "colors": [
+      "glint",
+      "#FFB060"
+     ],
+     "opacity": [
+      0.15,
+      0.45
+     ],
+     "hardness": 0.5,
+     "seed": 23
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck reflection"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Water"
+   },
+   "opacity": 0.5,
+   "filter": {
+    "blur": 3
+   },
+   "commands": [
+    {
+     "cmd": "group",
+     "translate": {
+      "keys": [
+       [
+        0,
+        [
+         0,
+         0
+        ]
+       ],
+       [
+        24,
+        [
+         0,
+         6
+        ],
+        "in-out"
+       ],
+       [
+        47,
+        [
+         0,
+         0
+        ],
+        "in-out"
+       ]
+      ]
+     },
+     "commands": [
+      {
+       "cmd": "group",
+       "mask": {
+        "symbol": "duck",
+        "translate": [
+         1230,
+         958
+        ],
+        "scale": 2.7,
+        "mirror": "y"
+       },
+       "commands": [
+        {
+         "cmd": "gradient",
+         "area": {
+          "rect": [
+           1080,
+           900,
+           320,
+           160
+          ]
+         },
+         "from": [
+          0,
+          905
+         ],
+         "to": [
+          0,
+          1050
+         ],
+         "colors": [
+          "duck_dark",
+          "water_dark"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck shadow"
+  },
+  {
+   "cmd": "group",
+   "filter": {
+    "blur": 8
+   },
+   "opacity": 0.45,
+   "commands": [
+    {
+     "cmd": "group",
+     "mask": {
+      "symbol": "duck",
+      "translate": [
+       1230,
+       862
+      ],
+      "scale": 2.7
+     },
+     "commands": [
+      {
+       "cmd": "rect",
+       "x": 1050,
+       "y": 740,
+       "width": 380,
+       "height": 200,
+       "fill": "#1A1020"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck shade"
+  },
+  {
+   "cmd": "gradient",
+   "from": [
+    1300,
+    800
+   ],
+   "to": [
+    1120,
+    910
+   ],
+   "colors": [
+    "transparent",
+    "#5A3A6090"
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck light"
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    1330,
+    790
+   ],
+   "to": [
+    1200,
+    900
+   ],
+   "colors": [
+    "#FFD36A60",
+    "transparent"
+   ]
+  },
+  {
+   "cmd": "snapshot",
+   "name": "light"
+  },
+  {
+   "cmd": "layer",
+   "name": "Ripples"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "layer": "Water"
+   },
+   "commands": [
+    {
+     "cmd": "brush",
+     "tip": "bristle",
+     "size": 16,
+     "spacing": 0.25,
+     "dynamics": {
+      "follow": true,
+      "size": 0.3,
+      "opacity": 0.5
+     }
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "rect": [
+       0,
+       730,
+       1920,
+       340
+      ]
+     },
+     "count": 70,
+     "kind": "stroke",
+     "length": [
+      60,
+      220
+     ],
+     "angle": [
+      -1,
+      1
+     ],
+     "size": [
+      4,
+      10
+     ],
+     "colors": [
+      "glint",
+      "#D08A5A",
+      "water_dark"
+     ],
+     "opacity": [
+      0.1,
+      0.3
+     ],
+     "hardness": 0.2,
+     "seed": 9
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1240,
+       930,
+       220,
+       60
+      ]
+     },
+     "count": 40,
+     "kind": "stroke",
+     "length": [
+      30,
+      120
+     ],
+     "angle": [
+      -1,
+      1
+     ],
+     "size": [
+      3,
+      7
+     ],
+     "colors": [
+      "water_dark",
+      "water_mid"
+     ],
+     "opacity": [
+      0.3,
+      0.6
+     ],
+     "hardness": 0.3,
+     "seed": 10
+    },
+    {
+     "cmd": "brush",
+     "reset": true
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Duck marks"
+  },
+  {
+   "cmd": "group",
+   "mask": {
+    "symbol": "duck",
+    "translate": [
+     1230,
+     850
+    ],
+    "scale": 2.7
+   },
+   "commands": [
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1215,
+       872,
+       100,
+       56
+      ]
+     },
+     "count": 240,
+     "kind": "stroke",
+     "length": [
+      14,
+      34
+     ],
+     "angle": [
+      -25,
+      -5
+     ],
+     "size": [
+      1.5,
+      3
+     ],
+     "colors": [
+      "duck_dark",
+      "duck_body",
+      "duck_light"
+     ],
+     "opacity": [
+      0.2,
+      0.5
+     ],
+     "hardness": 0.6,
+     "seed": 31
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1150,
+       882,
+       56,
+       44
+      ]
+     },
+     "count": 80,
+     "kind": "stroke",
+     "length": [
+      14,
+      36
+     ],
+     "angle": [
+      -40,
+      -15
+     ],
+     "size": [
+      1.5,
+      3
+     ],
+     "colors": [
+      "duck_dark",
+      "duck_body"
+     ],
+     "opacity": [
+      0.2,
+      0.45
+     ],
+     "hardness": 0.6,
+     "seed": 32
+    },
+    {
+     "cmd": "scatter",
+     "area": {
+      "ellipse": [
+       1285,
+       800,
+       48,
+       44
+      ]
+     },
+     "count": 70,
+     "kind": "stroke",
+     "length": [
+      8,
+      18
+     ],
+     "angle": [
+      -70,
+      -30
+     ],
+     "size": [
+      1.5,
+      2.5
+     ],
+     "colors": [
+      "duck_body",
+      "duck_light"
+     ],
+     "opacity": [
+      0.15,
+      0.4
+     ],
+     "hardness": 0.6,
+     "seed": 33
+    },
+    {
+     "cmd": "stamp",
+     "tip": "sparkle",
+     "points": [
+      [
+       1318,
+       784
+      ]
+     ],
+     "spacing": 100,
+     "size": [
+      9,
+      9
+     ],
+     "colors": [
+      "glint"
+     ],
+     "opacity": 0.9,
+     "seed": 34
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Reeds"
+  },
+  {
+   "cmd": "repeat",
+   "count": 9,
+   "step": {
+    "translate": [
+     34,
+     7
+    ]
+   },
+   "each": {
+    "lean": [
+     4,
+     -8,
+     10,
+     -3,
+     6,
+     -6,
+     9,
+     -2,
+     5
+    ]
+   },
+   "commands": [
+    {
+     "cmd": "group",
+     "translate": {
+      "keys": [
+       [
+        0,
+        [
+         0,
+         0
+        ]
+       ],
+       [
+        24,
+        [
+         5,
+         0
+        ],
+        "in-out"
+       ],
+       [
+        47,
+        [
+         0,
+         0
+        ],
+        "in-out"
+       ]
+      ]
+     },
+     "commands": [
+      {
+       "cmd": "use",
+       "name": "reed",
+       "translate": [
+        170,
+        790
+       ],
+       "scale": 1.9,
+       "with": {
+        "lean": "$lean",
+        "stem": "pond_reed",
+        "head": "pond_reed_head"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Bank"
+  },
+  {
+   "cmd": "stamp",
+   "tip": "grass",
+   "points": [
+    [
+     0,
+     706
+    ],
+    [
+     420,
+     694
+    ],
+    [
+     560,
+     734
+    ]
+   ],
+   "spacing": 6,
+   "size": [
+    18,
+    40
+   ],
+   "angle": [
+    -14,
+    14
+   ],
+   "follow": false,
+   "scatter": 3,
+   "colors": [
+    "grass_dark",
+    "grass_light"
+   ],
+   "seed": 6
+  },
+  {
+   "cmd": "layer",
+   "name": "Pads"
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     440,
+     960
+    ],
+    [
+     520,
+     950
+    ],
+    [
+     610,
+     975
+    ]
+   ],
+   "size": 3,
+   "color": "pad_light",
+   "taper": [
+    0.3,
+    0.3
+   ],
+   "opacity": 0.8
+  },
+  {
+   "cmd": "path",
+   "points": [
+    [
+     700,
+     1005
+    ],
+    [
+     760,
+     1000
+    ],
+    [
+     835,
+     1025
+    ]
+   ],
+   "size": 2.5,
+   "color": "pad_light",
+   "taper": [
+    0.3,
+    0.3
+   ],
+   "opacity": 0.8
+  },
+  {
+   "cmd": "snapshot",
+   "name": "detail"
+  },
+  {
+   "cmd": "layer",
+   "name": "Mood",
+   "from": "below",
+   "opacity": 0.2
+  },
+  {
+   "cmd": "filter",
+   "gradient_map": {
+    "stops": [
+     [
+      0,
+      "mood_dark"
+     ],
+     [
+      0.5,
+      "mood_mid"
+     ],
+     [
+      1,
+      "mood_light"
+     ]
+    ]
+   }
+  },
+  {
+   "cmd": "layer",
+   "name": "Vignette",
+   "blend": "multiply",
+   "opacity": 0.5
+  },
+  {
+   "cmd": "gradient",
+   "kind": "radial",
+   "from": [
+    960,
+    540
+   ],
+   "to": [
+    960,
+    -200
+   ],
+   "stops": [
+    [
+     0,
+     "transparent"
+    ],
+    [
+     0.6,
+     "transparent"
+    ],
+    [
+     1,
+     "vignette"
+    ]
+   ]
+  },
+  {
+   "cmd": "layer",
+   "name": "Paper",
+   "blend": "multiply",
+   "opacity": 0.18
+  },
+  {
+   "cmd": "rect",
+   "x": 0,
+   "y": 0,
+   "width": 1920,
+   "height": 1080,
+   "fill": {
+    "texture": "paper"
+   }
+  },
+  {
+   "cmd": "snapshot",
+   "name": "finish"
+  }
+ ],
+ "animations": {
+  "loop": {
+   "frames": 48,
+   "fps": 12,
+   "loop": true,
+   "commands": []
+  }
+ }
+}

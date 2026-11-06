@@ -68,6 +68,89 @@
         "bokeh"
       ],
       "rating": null
+    },
+    {
+      "folder": "sunset-pond-v3",
+      "title": "Sunset pond v3",
+      "size": [
+        1920,
+        1080
+      ],
+      "animated": true,
+      "tags": [
+        "calm",
+        "warm",
+        "noise",
+        "texture",
+        "clip",
+        "mask",
+        "blur",
+        "glow",
+        "shadow",
+        "gradient_map",
+        "outline",
+        "rim",
+        "stamp",
+        "brush tips",
+        "dynamics",
+        "scatter",
+        "library",
+        "animated",
+        "loop"
+      ],
+      "rating": null,
+      "loop": "loop.gif",
+      "before": "../sunset-pond/script.json"
+    },
+    {
+      "folder": "duck-portrait-v2",
+      "title": "Duck portrait v2",
+      "size": [
+        1024,
+        1024
+      ],
+      "animated": false,
+      "tags": [
+        "bright",
+        "friendly",
+        "studio",
+        "texture",
+        "clip",
+        "mask",
+        "blur",
+        "gradient_map",
+        "outline",
+        "rim",
+        "stamp",
+        "brush tips",
+        "scatter"
+      ],
+      "rating": null,
+      "before": "../duck-portrait/script.json"
+    },
+    {
+      "folder": "forest-at-dawn",
+      "title": "Forest at dawn",
+      "size": [
+        1920,
+        1080
+      ],
+      "animated": false,
+      "tags": [
+        "still",
+        "cold",
+        "hopeful",
+        "texture",
+        "clip",
+        "mask",
+        "blur",
+        "gradient_map",
+        "stamp",
+        "brush tips",
+        "dynamics",
+        "scatter"
+      ],
+      "rating": null
     }
   ]
 }

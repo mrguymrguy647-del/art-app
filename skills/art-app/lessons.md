@@ -31,9 +31,9 @@ A lesson is retired the same way. The first lessons below come from phase 3's no
    sliver. (`examples/two-ducks.json`.)
 8. Blur the fill, not the silhouette: a blur on a whole group softens its edge and lets the
    background through, which reads as haze. (`gallery/sunset-pond` far hills: the haze band;
-   `mistakes.md`.)
+   `mistakes.md`.) Before/after: `edge: ... shows through (+0.08)` on the far hills, none in `gallery/sunset-pond-v3`.
 9. Give every soft shape a crisp side somewhere, or it is a smudge. (`gallery/sunset-pond`
-   clouds: soft blobs with no direction, "blotchy" by the critique.)
+   clouds: soft blobs with no direction, "blotchy" by the critique.) Before/after: clouds blotchy over 42%, no finding in `gallery/sunset-pond-v3`.
 10. Outline a character once, around the whole group, not part by part. (`gallery/duck-portrait`:
     one `outline` on the group; `library/duck.json`.)
 
@@ -41,7 +41,7 @@ A lesson is retired the same way. The first lessons below come from phase 3's no
 
 11. Pick a key of two to six palette colours and keep every saturated colour within 40 degrees
     of one, or between two of them; what is outside reads as foreign. (`gallery/sunset-pond`:
-    the green lily pads in an orange and blue key; `mistakes.md`.)
+    the green lily pads in an orange and blue key; `mistakes.md`.) Before/after: four out-of-key blobs (2.1% of the picture), none in `gallery/sunset-pond-v3`.
 12. One hue in many values beats many hues in one value. (The coffee cup reference: one warm
     key, five values; the chelsea cat: eight browns.)
 13. Cool key, warm accents at the focal point, or the reverse: the oldest trick. (The rocket
@@ -54,13 +54,13 @@ A lesson is retired the same way. The first lessons below come from phase 3's no
 ## Texture and marks
 
 16. Shade with big soft shapes and a few directed marks, not noise everywhere. (`gallery/
-    duck-portrait` body: soft blobs with no direction; `mistakes.md`.)
+    duck-portrait` body: soft blobs with no direction; `mistakes.md`.) Before/after: the body blotchy over 42% (coherence 0.43), no finding in `gallery/duck-portrait-v2`.
 17. Marks have a direction and an edge; a noise fill has neither. Feathers, grass and strokes
     follow the form. (The chelsea cat's fur; Van Gogh's strokes; `library/grass.json`.)
 18. Texture changes where the material changes; it is what tells the eye what things are.
     (The coffee cup: coarse wood, smooth porcelain.)
 19. Stamped feathers in rows read as rope; vary length, overlap and lightness, and add a second
-    lighter pass. (`gallery/duck-portrait` wing; `mistakes.md`.)
+    lighter pass. (`gallery/duck-portrait` wing; `mistakes.md`.) Before/after: not a number's to catch; the reader of `gallery/duck-portrait-v2` no longer says rope, but still calls the wing a smear.
 20. A few bright sparkles are marks, not noise; a field of fine grain with no marks is dirt.
     (The critique's grain is a median per cell for this reason.)
 21. A light source may be flat; everything else that is flat needs a gradient, a fill or a mark.

@@ -489,6 +489,11 @@ an animation and names the worst; `--score` maps the critique to the benchmark's
 (`skills/art-app/exercises/benchmark.md`: four fixed subjects, a scoring guide, three scorers:
 the numbers, a separate agent, the person).
 
+Texture (grain, marks, blotches) is judged on a part's own paint, so a background showing through
+is not blamed on the part; a named part's flatness and its light and dark side are judged on the
+picture inside it, because the process puts a part's shading on clipped layers above it (a layer's
+are judged on its own paint, so a thin layer over a gradient can still be called a smudge).
+
 The numbers are warnings, never goals. Never trade a better-looking picture for a better
 number, and a person's rating outranks every number. They can't tell whether a cloud looks
 like a cloud: they catch what a person spots in a second, so your time goes to the rest.

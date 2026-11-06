@@ -289,7 +289,9 @@ pub struct Texture {
     pub name: String,
     /// Its share of the canvas.
     pub share: f32,
-    /// Judged on its own paint (true) or on the picture inside it.
+    /// Grain, marks and blotches judged on its own paint (true) or on
+    /// the picture inside it. A named part's flatness and light and dark
+    /// side are judged on the picture inside it; a layer's on its own.
     pub own: bool,
     /// Grain (median) and marks (mean) over the part, as shares of its value range.
     pub grain: f32,
@@ -1484,7 +1486,17 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
             continue;
         };
         let cell = cell_index(x, y, m.width, m.height);
-        cell_greys[cell].push(field.grey.values[i]);
+        // A named part's flatness and its light and dark side are judged
+        // on the picture inside it (its shading and light lie on clipped
+        // layers above it, and count); a layer's on its own paint (what
+        // lies behind a thin layer must not hide that it is a smudge);
+        // grain, marks and blotches always on the own paint.
+        let (seen_field, seen) = if is_layer(part) {
+            (field, i)
+        } else {
+            (&m.field, m.field.at(x as i32, y as i32).unwrap_or(i))
+        };
+        cell_greys[cell].push(seen_field.grey.values[seen]);
         cell_grain[cell].push(field.grain[i]);
         let depth = depth_at(x, y);
         for band in 0..3 {
@@ -1517,7 +1529,7 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
             alpha_n += 1;
         }
         greys.push(field.grey.values[i]);
-        squints.push(field.squint.values[i]);
+        squints.push(seen_field.squint.values[seen]);
         grains.push(field.grain[i]);
         marks_sum += field.marks[i];
         n += 1;

@@ -16,10 +16,24 @@ later phase adds rows and the old ones stay.
 | 4 baseline | duck-portrait | numbers | 2 | 4 | 5 | 5 | 3 | - | 2026-11-06 |
 | 4 baseline | duck-portrait | agent | 5 | 4 | 4 | 4 | 4 | 4 | 2026-11-06 |
 | 4 baseline | duck-portrait | person | - | - | - | - | - | - | - |
+| 4 step 9 | sunset-pond-v3 | numbers | 4 | 5 | 4 | 5 | 5 | - | 2026-11-06 |
+| 4 step 9 | sunset-pond-v3 | agent | 4 | 3 | 4 | 4 | 3 | 3 | 2026-11-06 |
+| 4 step 9 | sunset-pond-v3 | person | - | - | - | - | - | - | - |
+| 4 step 9 | duck-portrait-v2 | numbers | 5 | 4 | 5 | 4 | 4 | - | 2026-11-06 |
+| 4 step 9 | duck-portrait-v2 | agent | 4 | 3 | 4 | 4 | 3 | 3 | 2026-11-06 |
+| 4 step 9 | duck-portrait-v2 | person | - | - | - | - | - | - | - |
+| 4 step 9 | forest-at-dawn | numbers | 5 | 5 | 4 | 5 | 3 | - | 2026-11-06 |
+| 4 step 9 | forest-at-dawn | agent | 4 | 4 | 4 | 5 | 4 | 4 | 2026-11-06 |
+| 4 step 9 | forest-at-dawn | person | - | - | - | - | - | - | - |
+| 4 step 9 | sunset-pond | agent (step 9 judge) | 3 | 3 | 3 | 2 | 2 | 2 | 2026-11-06 |
+| 4 step 9 | duck-portrait | agent (step 9 judge) | 4 | 3 | 3 | 3 | 2 | 2 | 2026-11-06 |
 
 The pieces: `sunset-pond-simple` is `examples/sunset-pond-simple.json` (the phase 3 example,
-flat fills, one duck), `sunset-pond` and `duck-portrait` are this folder's gallery pieces
-(phase 3 paintings, critiqued in phase 4).
+flat fills, one duck), `sunset-pond` and `duck-portrait` are this folder's phase 3 pieces
+(critiqued in phase 4), and `sunset-pond-v3`, `duck-portrait-v2` and `forest-at-dawn` are the
+step 9 pieces painted with the full phase 4 process. The baseline agent and the step 9 agent
+were different readers; the step 9 reader also re-scored the two phase 3 pieces (below) so a
+before/after pair has one judge.
 
 ## What the agent said (one sentence each)
 
@@ -66,3 +80,25 @@ pasted-on beak and the head circle sitting on the body without a neck.
   agent's "the sun and its reflection pull first" are the same observation.
 - **Step 9 repaints both gallery pieces** with the full process, and the rows it adds here
   are the first real measure of whether phase 4 made the painter better.
+
+## Before and after, one judge (step 9)
+
+The step 9 judge scored the phase 3 pieces and their repaints in one sitting, with the same
+guide:
+
+| Piece | Readability | Values | Colour | Focal point | Detail | Overall |
+|---|---|---|---|---|---|---|
+| sunset-pond (phase 3) | 3 | 3 | 3 | 2 | 2 | 2 |
+| sunset-pond-v3 | 4 | 3 | 4 | 4 | 3 | 3 |
+| duck-portrait (phase 3) | 4 | 3 | 3 | 3 | 2 | 2 |
+| duck-portrait-v2 | 4 | 3 | 4 | 4 | 3 | 3 |
+
+- **What moved:** the focal point (the pond's duck on the sun's path instead of under the
+  sun; the portrait's head without the busy wing pulling first), colour (a chosen warm
+  against cool instead of a neutral grey or a flat gradient) and detail (marks at the subject
+  instead of blotches everywhere): one or two steps each.
+- **What did not:** values stayed at 3 on both. The judge's sentence both times: the brightest
+  spots are the sun, the clouds or the bokeh, not the subject (lesson 3). The numbers give
+  values 5 and 4 because they count groups, not where the lights are.
+- **Overall went from "only for the lesson" to "fine"**, not to "yes". The forest, painted
+  fresh with the process, got "yes" (4) and the reader's one complaint was the deer's drawing.
