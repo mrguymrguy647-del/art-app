@@ -442,6 +442,25 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 - Mistakes inside a symbol name the `use` and the symbol's command:
   `command 9 (use "duck") > 2 (ellipse): unknown colour "yelow"`.
 
+## `include` — symbols from another file
+
+```json
+{ "cmd": "include", "file": "../skills/art-app/library/cloud.json" }
+{ "cmd": "use", "name": "cloud", "translate": [200, 80], "with": { "puff": 1.3 } }
+```
+
+`include` (top level only) reads another script's `define`s and palette entries, not its
+commands or animations. The path is relative to the script; an included file may include others,
+relative to itself. A file that includes itself, directly or through others, is a mistake that
+shows the chain; a symbol or colour defined twice says both files; mistakes inside an included
+symbol name it (`command 9 (use "cloud" (from cloud.json, command 2)) > 3 (ellipse): ...`).
+Included symbols and colours aren't "never used" warnings: a library holds more than one picture
+needs.
+
+**The library** in `skills/art-app/library/` holds ready parts, each with parameters, an example
+script and a preview: cloud, water, grass, reed, tree, lily pad and the duck. Its `README.md`
+lists them.
+
 ## `repeat` — copies with a step
 
 ```json
@@ -862,7 +881,8 @@ the command's number.
 
 So: adding or removing a command before a random command changes its pattern (its number
 changes). To keep a pattern you like while editing the script, give that command its own
-`"seed"`. To try a different pattern, change the seed.
+`"seed"`. To try a different pattern, change the seed. A command's `seed` may be keyframes or a
+symbol parameter (`"seed": "$seed"`), so a library part can take one.
 
 ## Errors
 

@@ -31,9 +31,9 @@ use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
-    HatchCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd,
-    RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd, TransformLayerCmd,
-    UseCmd, parse_hex,
+    HatchCmd, IncludeCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd,
+    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd,
+    TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
 use crate::document::{Background, Document, MAX_CANVAS_SIDE};
@@ -360,6 +360,9 @@ struct Symbol {
     commands: Arc<Vec<Command>>,
     /// Its parameters and their defaults.
     params: Arc<BTreeMap<String, Value>>,
+    /// Where it was defined, if in an included file: the file (as
+    /// written in the include) and the define's command number there.
+    source: Option<(String, usize)>,
 }
 
 /// A `repeat` plays its commands once per copy, each with the step
@@ -499,6 +502,9 @@ pub struct Player {
     textures: HashMap<String, Arc<TextureImage>>,
     /// Patterns a brush paints with, by the number in `BrushSettings::source`.
     sources: Vec<Arc<Paint>>,
+    /// Palette colours that came from included files (not the script's
+    /// own, so not "never used" warnings), and which file each came from.
+    included_colors: HashMap<String, String>,
 }
 
 impl Player {
@@ -612,6 +618,7 @@ impl Player {
             tip_files: HashMap::new(),
             textures: HashMap::new(),
             sources: Vec::new(),
+            included_colors: HashMap::new(),
         })
     }
 
@@ -1382,7 +1389,12 @@ impl Player {
             defined: self.defined.clone(),
             used_symbols: self.used_symbols.iter().cloned().collect(),
             used_colors: self.used_colors.borrow().iter().cloned().collect(),
-            palette: self.palette.keys().cloned().collect(),
+            palette: self
+                .palette
+                .keys()
+                .filter(|name| !self.included_colors.contains_key(*name))
+                .cloned()
+                .collect(),
             painted_by: self
                 .painted_by
                 .iter()
@@ -1862,16 +1874,28 @@ impl Player {
             Command::Define(define) => {
                 // Duplicate names and `define` inside other commands are
                 // refused when the script is read.
+                if let Some(Symbol {
+                    source: Some((file, number)),
+                    ..
+                }) = self.symbols.get(&define.name)
+                {
+                    return Err(format!(
+                        "a symbol called \"{}\" was already defined by {file} (command {number})",
+                        define.name
+                    ));
+                }
                 self.symbols.insert(
                     define.name.clone(),
                     Symbol {
                         commands: Arc::new(define.commands.clone()),
                         params: Arc::new(define.params.clone().unwrap_or_default()),
+                        source: None,
                     },
                 );
                 self.defined.push((define.name.clone(), self.current + 1));
                 Ok(())
             }
+            Command::Include(include) => self.include(include),
             Command::Use(using) => self.use_symbol(document, using, None),
             Command::Repeat(repeat) => self.repeat(document, repeat),
         }
@@ -1949,6 +1973,10 @@ impl Player {
         }
         let commands = Arc::clone(&symbol.commands);
         let defaults = Arc::clone(&symbol.params);
+        let label = match &symbol.source {
+            Some((file, number)) => format!("use \"{name}\" (from {file}, command {number})"),
+            None => format!("use \"{name}\""),
+        };
         let placement = self.placement_of(
             command.translate.as_ref(),
             command.scale.as_ref(),
@@ -1994,7 +2022,7 @@ impl Player {
         }
         let new = NewFrame {
             commands,
-            label: format!("use \"{name}\""),
+            label,
             placement,
             // Every use of a symbol has the same random patterns.
             seed_base: name_seed(name),
@@ -2134,7 +2162,7 @@ impl Player {
                 "that would be {count} copies; at most {MAX_REPEAT} (make `spacing` bigger)"
             ));
         }
-        let mut random = self.random(command.seed);
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
         let mut spots: Vec<(f32, f32, f32)> = Vec::with_capacity(count as usize);
         let (mut segment, mut along) = (0, 0.0);
         for i in 0..count {
@@ -2231,7 +2259,7 @@ impl Player {
             }
             let mut points = vec![StrokePoint::new(x, y, 1.0)];
             self.place_all(&mut points);
-            self.push_stroke(layer, brush, points, command.seed);
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         }
         Ok(())
     }
@@ -2336,6 +2364,105 @@ impl Player {
             each,
             placements,
         });
+        Ok(())
+    }
+
+    /// `include`: reads a file's `define`s and palette, relative to the
+    /// script (an included file may include others, relative to itself).
+    fn include(&mut self, command: &IncludeCmd) -> Result<(), String> {
+        let base = self.options.folder.clone();
+        let mut chain = Vec::new();
+        self.include_file(base.as_deref(), &command.file, &command.file, &mut chain)
+    }
+
+    /// Reads `file` (relative to `base`) into the symbols and palette.
+    /// `written` is how the file is named in messages; `chain` holds the
+    /// files being included, outermost first, to catch a loop.
+    fn include_file(
+        &mut self,
+        base: Option<&std::path::Path>,
+        file: &str,
+        written: &str,
+        chain: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let path = match base {
+            Some(folder) => folder.join(file),
+            None => PathBuf::from(file),
+        };
+        let path = path.canonicalize().unwrap_or(path);
+        if chain.contains(&path) {
+            let names: Vec<&str> = chain.iter().filter_map(|p| p.to_str()).collect();
+            return Err(format!(
+                "{written} includes itself ({} > {written})",
+                names.join(" > ")
+            ));
+        }
+        if chain.len() >= 16 {
+            return Err("includes are nested too deeply (more than 16)".into());
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("can't read \"{written}\" ({}): {e}", path.display()))?;
+        let script = Script::parse(&text).map_err(|e| format!("{written}: {e}"))?;
+        for (name, color) in &script.palette {
+            let value = super::parse_hex(color).map_err(|e| format!("{written}: palette: {e}"))?;
+            if let Some(existing) = self.palette.get(name)
+                && *existing != value
+            {
+                let owner = match self.included_colors.get(name) {
+                    Some(from) => from.clone(),
+                    None => "the script itself".to_owned(),
+                };
+                return Err(format!(
+                    "{written}: palette colour \"{name}\" is also defined, differently, by {owner}"
+                ));
+            }
+            self.palette.insert(name.clone(), value);
+            self.included_colors
+                .entry(name.clone())
+                .or_insert_with(|| written.to_owned());
+        }
+        chain.push(path.clone());
+        let folder = path.parent().map(std::path::Path::to_path_buf);
+        for (index, command) in script.commands.iter().enumerate() {
+            match command {
+                Command::Define(define) => {
+                    if let Some(existing) = self.symbols.get(&define.name) {
+                        let owner = match &existing.source {
+                            Some((from, number)) => format!("{from} (command {number})"),
+                            None => "the script itself".to_owned(),
+                        };
+                        return Err(format!(
+                            "{written}: command {} defines \"{}\", which is also defined by {owner}",
+                            index + 1,
+                            define.name
+                        ));
+                    }
+                    self.symbols.insert(
+                        define.name.clone(),
+                        Symbol {
+                            commands: Arc::new(define.commands.clone()),
+                            params: Arc::new(define.params.clone().unwrap_or_default()),
+                            source: Some((written.to_owned(), index + 1)),
+                        },
+                    );
+                }
+                Command::Include(inner) => {
+                    let inner_written = format!("{written} > {}", inner.file);
+                    self.include_file(folder.as_deref(), &inner.file, &inner_written, chain)
+                        .map_err(|e| e.replace(&inner_written, &inner.file))?;
+                }
+                Command::Canvas(_) => {} // a library file may start like a script
+                other => {
+                    return Err(format!(
+                        "{written}: command {} ({}): an included file holds only `define` and \
+                         `include` (and a palette); its drawing isn't played",
+                        index + 1,
+                        other.label()
+                    ));
+                }
+            }
+        }
+        chain.pop();
         Ok(())
     }
 
@@ -2845,9 +2972,19 @@ impl Player {
             mode,
         )?;
         let mut points = self.points(&command.points)?;
-        self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            false,
+        )?;
         self.place_all(&mut points);
-        self.push_stroke(document.active_id(), brush, points, command.seed);
+        self.push_stroke(
+            document.active_id(),
+            brush,
+            points,
+            self.seed_of(command.seed.as_ref())?,
+        );
         Ok(())
     }
 
@@ -2869,9 +3006,19 @@ impl Player {
             brush.pressure_size = true; // so the taper shows
             geometry::apply_taper(&mut points, start, end);
         }
-        self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            false,
+        )?;
         self.place_all(&mut points);
-        self.push_stroke(document.active_id(), brush, points, command.seed);
+        self.push_stroke(
+            document.active_id(),
+            brush,
+            points,
+            self.seed_of(command.seed.as_ref())?,
+        );
         Ok(())
     }
 
@@ -2898,7 +3045,12 @@ impl Player {
             brush.pressure_size = true;
             geometry::apply_taper(&mut points, start, end);
         }
-        self.jitter(&mut points, command.jitter, command.seed, closed)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            closed,
+        )?;
         self.place_all(&mut points);
 
         let layer = document.active_id();
@@ -2919,7 +3071,7 @@ impl Player {
             });
         }
         if command.line.unwrap_or(true) {
-            self.push_stroke(layer, brush, points, command.seed);
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         } else if command.fill.is_none() {
             return Err("with \"line\": false there's nothing to draw: add a `fill`".into());
         }
@@ -2947,7 +3099,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -2982,7 +3134,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -3003,7 +3155,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -3355,7 +3507,7 @@ impl Player {
         }
         let jitter = not_negative("jitter", command.jitter.unwrap_or(0.0))?;
         let detail = self.detail();
-        let mut random = self.random(command.seed);
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
         let layer = document.active_id();
         for (a, b) in lines {
             // With jitter, each line's ends move a little, so it looks drawn by hand.
@@ -3385,7 +3537,7 @@ impl Player {
                 );
             }
             self.place_all(&mut points);
-            self.push_stroke(layer, brush, points, command.seed);
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         }
         Ok(())
     }
@@ -3443,7 +3595,7 @@ impl Player {
             (frame.brush_scale, frame.opacity, frame.detail)
         };
         let (left, top, right, bottom) = geometry::bounds(&area);
-        let mut random = self.random(command.seed);
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
         let layer = document.active_id();
         for _ in 0..command.count {
             // Pick spots in the area's box until one is inside the area.
@@ -3498,7 +3650,7 @@ impl Player {
                 vec![StrokePoint::new(x, y, 1.0)]
             };
             self.place_all(&mut points);
-            self.push_stroke(layer, brush, points, command.seed);
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         }
         Ok(())
     }
@@ -3985,6 +4137,22 @@ impl Player {
             &mut self.random(seed),
         );
         Ok(())
+    }
+
+    /// A command's `seed` as written: a whole number, keyframes or a
+    /// parameter (anything in between is rounded).
+    fn seed_of(&self, written: Option<&Value>) -> Result<Option<u64>, String> {
+        match written {
+            None => Ok(None),
+            Some(value) => match self.value(value)? {
+                Value::Number(n) => n
+                    .as_f64()
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .map(|v| Some(v.round() as u64))
+                    .ok_or_else(|| "`seed` is a whole number, 0 or more".to_owned()),
+                other => Err(format!("`seed` must be a number, not {other}")),
+            },
+        }
     }
 
     /// Random numbers for the current command: from the script's seed and
@@ -7596,5 +7764,178 @@ mod tests {
               { "cmd": "group", "outline": { "width": 3 }, "commands": [] } ] }"##,
         );
         assert!(bad.contains("`outline`: unknown field `width`"), "{bad}");
+    }
+
+    // ---- include (phase 3, step 6) -----------------------------------------------
+
+    /// A folder with library files, for include tests.
+    fn library() -> std::path::PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "art-app-include-{}-{}",
+            std::process::id(),
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "-")
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("parts")).unwrap();
+        std::fs::write(
+            folder.join("parts/cloud.json"),
+            r##"{ "palette": { "cloud": "#FFFFFF", "shade": "#C0C8D8" }, "commands": [
+              { "cmd": "include", "file": "puff.json" },
+              { "cmd": "define", "name": "cloud", "params": { "puff": 1 }, "commands": [
+                { "cmd": "group", "scale": "$puff", "commands": [
+                  { "cmd": "use", "name": "puff", "translate": [-20, 0] },
+                  { "cmd": "use", "name": "puff", "translate": [20, 0] } ] } ] } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/puff.json"),
+            r##"{ "palette": { "cloud": "#FFFFFF" }, "commands": [
+              { "cmd": "define", "name": "puff", "commands": [
+                { "cmd": "ellipse", "center": [0, 0], "radius": 24, "fill": "cloud" } ] } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/loop-a.json"),
+            r##"{ "commands": [ { "cmd": "include", "file": "loop-b.json" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/loop-b.json"),
+            r##"{ "commands": [ { "cmd": "include", "file": "loop-a.json" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/paints.json"),
+            r##"{ "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "#000000" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/broken.json"),
+            r##"{ "commands": [ { "cmd": "define", "name": "bad", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "nope" } ] } ] }"##,
+        )
+        .unwrap();
+        folder
+    }
+
+    fn play_in(folder: &std::path::Path, text: &str) -> Result<(Document, Report), ScriptError> {
+        let script = Script::parse(text)?;
+        let options = PlayOptions {
+            folder: Some(folder.to_path_buf()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options)?;
+        let mut document = player.create_document()?;
+        player.run(&mut document, |_, _| {})?;
+        Ok((document, player.report()))
+    }
+
+    #[test]
+    fn include_brings_in_defines_and_palette_from_another_file_and_its_includes() {
+        let folder = library();
+        let (document, report) = play_in(
+            &folder,
+            r##"{ "palette": { "sky": "#8EC1E6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "sky" },
+            { "cmd": "include", "file": "parts/cloud.json" },
+            { "cmd": "use", "name": "cloud", "translate": [100, 50], "with": { "puff": 0.5 } },
+            { "cmd": "rect", "x": 0, "y": 90, "width": 200, "height": 10, "fill": "shade" } ] }"##,
+        )
+        .unwrap();
+        assert_eq!(
+            seen(&document, 100, 50),
+            Rgba8::WHITE,
+            "the cloud, from the include"
+        );
+        assert_eq!(
+            seen(&document, 100, 95),
+            Rgba8::new(0xC0, 0xC8, 0xD8, 255),
+            "its colour"
+        );
+        assert_eq!(seen(&document, 100, 20), Rgba8::new(0x8E, 0xC1, 0xE6, 255));
+        // Included symbols and colours aren't "never used" (a library holds more).
+        let unused = unused_warnings(&[&report]);
+        assert!(unused.is_empty(), "{unused:?}");
+        assert!(
+            report.parts.iter().any(|p| p
+                .path
+                .contains("use \"cloud\" (from parts/cloud.json, command 2)")),
+            "{:?}",
+            report.parts
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn include_mistakes_name_the_files() {
+        let folder = library();
+        let error_in = |text: &str| play_in(&folder, text).unwrap_err().to_string();
+        let script = |include: &str, rest: &str| {
+            format!(
+                r##"{{ "commands": [ {{ "cmd": "canvas", "width": 50, "height": 50 }},
+                {{ "cmd": "include", "file": "{include}" }} {rest} ] }}"##
+            )
+        };
+        let missing = error_in(&script("parts/nope.json", ""));
+        assert!(
+            missing.contains("can't read \"parts/nope.json\""),
+            "{missing}"
+        );
+        let looped = error_in(&script("parts/loop-a.json", ""));
+        assert!(looped.contains("includes itself"), "{looped}");
+        let paints = error_in(&script("parts/paints.json", ""));
+        assert!(
+            paints.contains(
+                "parts/paints.json: command 1 (rect): an included file holds only `define`"
+            ),
+            "{paints}"
+        );
+        let twice = error_in(&script(
+            "parts/cloud.json",
+            r##", { "cmd": "define", "name": "puff", "commands": [] }"##,
+        ));
+        assert!(
+            twice.contains(
+                "\"puff\" was already defined by parts/cloud.json > puff.json (command 1)"
+            ),
+            "{twice}"
+        );
+        let twice_included = error_in(&script(
+            "parts/cloud.json",
+            r##", { "cmd": "include", "file": "parts/puff.json" }"##,
+        ));
+        assert!(twice_included.contains("defines \"puff\", which is also defined by parts/cloud.json > puff.json (command 1)"), "{twice_included}");
+        let clash = error_in(
+            r##"{ "palette": { "cloud": "#000000" }, "commands": [ { "cmd": "canvas", "width": 50, "height": 50 },
+            { "cmd": "include", "file": "parts/puff.json" } ] }"##,
+        );
+        assert!(
+            clash.contains(
+                "palette colour \"cloud\" is also defined, differently, by the script itself"
+            ),
+            "{clash}"
+        );
+        let inside = error_in(&script(
+            "parts/broken.json",
+            r##", { "cmd": "use", "name": "bad" }"##,
+        ));
+        assert!(
+            inside.contains("(use \"bad\" (from parts/broken.json, command 1)) > 1 (ellipse)"),
+            "{inside}"
+        );
+        let nested = Script::parse(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 50, "height": 50 },
+            { "cmd": "group", "commands": [ { "cmd": "include", "file": "x.json" } ] } ] }"##,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            nested.contains("`include` only works at the top level"),
+            "{nested}"
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

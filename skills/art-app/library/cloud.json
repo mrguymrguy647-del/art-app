@@ -1,0 +1,12 @@
+{ "title": "Library: cloud", "notes": "A soft cumulus cloud around [0, 0], about 160 wide. Params: puff (overall size, 1 = 160 wide), color, shade. Place with use; scale with the use's scale.",
+  "palette": { "cloud": "#FFFFFF", "cloud_shade": "#C8D2E0" },
+  "commands": [
+    { "cmd": "define", "name": "cloud", "params": { "puff": 1, "color": "cloud", "shade": "cloud_shade" }, "commands": [
+      { "cmd": "group", "scale": "$puff", "filter": { "blur": 1.5 }, "commands": [
+        { "cmd": "ellipse", "center": [0, 10], "radius": [80, 22], "fill": "$shade" },
+        { "cmd": "ellipse", "center": [-40, 0], "radius": [34, 24], "fill": "$color" },
+        { "cmd": "ellipse", "center": [0, -14], "radius": [40, 34], "fill": "$color" },
+        { "cmd": "ellipse", "center": [40, -2], "radius": [36, 26], "fill": "$color" },
+        { "cmd": "ellipse", "center": [0, 12], "radius": [76, 18], "fill": "$color" },
+        { "cmd": "group", "mask": { "ellipse": [0, 0, 82, 40] }, "commands": [
+          { "cmd": "gradient", "area": { "rect": [-90, 0, 180, 36] }, "from": [0, 4], "to": [0, 34], "colors": ["transparent", "$shade"] } ] } ] } ] } ] }

@@ -1,0 +1,11 @@
+{ "title": "Library: water", "notes": "A 400 x 120 patch of water around [0, 0] (its top edge at y = -60): noise, ripples and a few light glints. Params: dark, light, seed. Scale the use to fit; put it on a layer below what floats on it.",
+  "palette": { "water_dark": "#2E5C8A", "water_light": "#6FA6D4", "glint": "#FFFFFF" },
+  "commands": [
+    { "cmd": "define", "name": "water", "params": { "dark": "water_dark", "light": "water_light", "seed": 1 }, "commands": [
+      { "cmd": "rect", "x": -200, "y": -60, "width": 400, "height": 120,
+        "fill": { "noise": { "scale": 46, "detail": 3, "contrast": 1.2, "colors": ["$dark", "$light"], "seed": "$seed" } } },
+      { "cmd": "group", "mask": { "rect": [-200, -60, 400, 120] }, "commands": [
+        { "cmd": "scatter", "area": { "rect": [-200, -40, 400, 90] }, "count": 70, "kind": "stroke", "length": [14, 40], "angle": [-4, 4],
+          "size": [1.5, 3], "colors": ["$light", "$dark"], "opacity": [0.3, 0.7], "hardness": 0.3, "seed": "$seed" },
+        { "cmd": "scatter", "area": { "rect": [-200, -58, 400, 50] }, "count": 24, "kind": "stroke", "length": [6, 16], "angle": [-3, 3],
+          "size": [1, 2], "color": "glint", "opacity": [0.4, 0.9], "seed": "$seed" } ] } ] } ] }

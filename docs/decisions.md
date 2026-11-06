@@ -1125,3 +1125,26 @@ put it:
   canvas: 0.04 s alone): outline 0.17 s; outline with rim 0.26 s; a
   blurred shadow 0.18 s.
 
+## 65. `include` and the library (phase 3, step 6)
+
+- **Includes are played, not spliced.** When the player meets
+  `include`, it reads the file, parses it as a script (so the same
+  checks apply), and takes its `define`s and palette: a symbol gets a
+  source (file and command number) that shows up in messages and in
+  the report's part paths; a palette colour gets its file too, for the
+  "defined differently" message. Nested includes resolve relative to
+  the file that includes them, a chain of real paths catches loops,
+  and anything but `define`, `include` and `canvas` in an included file
+  is refused: a library file draws nothing.
+- **Included symbols and colours are never "unused"**: a library holds
+  more than one picture needs, so they're left out of the report's
+  `defined` and `palette` lists.
+- **`seed` takes keyframes and parameters now** on every command that
+  has one (a `Value`, read through `value()` and rounded), because a
+  library part wants a `seed` parameter; this was also on the phase 2
+  review list.
+- **The library lives in `skills/art-app/library/`**, next to the
+  gallery, so one folder can be copied as a skill; every part has an
+  example and a preview, and a test plays every example and refuses
+  warnings, so the library can't rot quietly.
+

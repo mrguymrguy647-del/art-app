@@ -1,0 +1,6 @@
+{ "title": "Library: grass", "notes": "A 300-wide tuft of grass blades standing on y = 0 around [0, 0]. Params: blade ([min, max] height in pixels), spacing, color1, color2, seed.",
+  "palette": { "grass_dark": "#3E7A2E", "grass_light": "#8CC25A" },
+  "commands": [
+    { "cmd": "define", "name": "grass", "params": { "blade": [16, 30], "spacing": 5, "color1": "grass_dark", "color2": "grass_light", "seed": 1 }, "commands": [
+      { "cmd": "stamp", "tip": "grass", "points": [[-150, 0], [150, 0]], "spacing": "$spacing", "size": "$blade",
+        "angle": [-14, 14], "follow": false, "scatter": 2, "colors": ["$color1", "$color2"], "seed": "$seed" } ] } ] }

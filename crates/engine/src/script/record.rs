@@ -467,6 +467,7 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
         | Command::RenameLayer(_)
         | Command::ClearLayer(_)
         | Command::TransformLayer(_)
+        | Command::Include(_)
         | Command::Snapshot(_) => {}
     }
 }

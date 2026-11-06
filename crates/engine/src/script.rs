@@ -147,6 +147,7 @@ pub enum Command {
     Snapshot(SnapshotCmd),
     Stamp(StampCmd),
     Filter(FilterCmd),
+    Include(IncludeCmd),
     Group(GroupCmd),
     Define(DefineCmd),
     Use(UseCmd),
@@ -182,6 +183,7 @@ impl Command {
             Command::Snapshot(_) => "snapshot",
             Command::Stamp(_) => "stamp",
             Command::Filter(_) => "filter",
+            Command::Include(_) => "include",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
             Command::Use(_) => "use",
@@ -424,8 +426,9 @@ pub struct StampCmd {
     /// Values for the symbol's other parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub with: Option<BTreeMap<String, Value>>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `filter`: changes everything on a layer (`layer`, or the selected
@@ -481,6 +484,15 @@ impl FilterCmd {
     }
 }
 
+/// `include`: reads another script's `define`s and palette (not its
+/// commands or animations), relative to this script. Only at the top
+/// level. An included file may include others.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IncludeCmd {
+    pub file: String,
+}
+
 /// `stroke` / `erase`: paints (or erases) through the points with the
 /// brush, exactly as if a pen had moved through them. `color`, `size`,
 /// `opacity`, `hardness` and `flow` change the brush for this stroke only.
@@ -501,8 +513,9 @@ pub struct StrokeCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `line`: a straight line from `from` to `to`, thinning towards its ends
@@ -526,8 +539,9 @@ pub struct LineCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `path`: a smooth curve through the points, drawn with the brush
@@ -556,8 +570,9 @@ pub struct PathCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `rect`: a rectangle, `fill`ed and/or `outline`d. `radius` rounds the
@@ -585,8 +600,9 @@ pub struct RectCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `ellipse`: an ellipse (or circle) around `center`, `fill`ed and/or
@@ -610,8 +626,9 @@ pub struct EllipseCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `polygon`: straight edges through the points (at least 3), `fill`ed
@@ -632,8 +649,9 @@ pub struct PolygonCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `fill`: the paint bucket, starting `at` a point.
@@ -710,8 +728,9 @@ pub struct HatchCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `scatter`: `count` dabs (or short strokes) at random places in an
@@ -738,8 +757,9 @@ pub struct ScatterCmd {
     pub length: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub angle: Option<Value>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `text`: letters in the built-in font (see `text.rs`). `at` is the
@@ -1257,11 +1277,11 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
         .get("cmd")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if kind == "define" && nested {
-        return Err(Problem::here(
-            "`define` only works at the top level of a script, not inside a group, symbol, \
-             repeat or animation",
-        ));
+    if matches!(kind, "define" | "include") && nested {
+        return Err(Problem::here(format!(
+            "`{kind}` only works at the top level of a script, not inside a group, symbol, \
+             repeat or animation"
+        )));
     }
     let mut inner = Vec::new();
     if matches!(kind, "group" | "define" | "repeat") {

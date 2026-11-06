@@ -127,6 +127,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. A symbol starts from the plain brush (set its own inside); `{"cmd": "brush", "reset": true}` goes back to plain. |
+| `include` | `file` (relative to the script): that file's `define`s and palette. The library in `skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, with parameters; see its README. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
