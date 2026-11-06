@@ -1241,16 +1241,97 @@ pub struct GroupCmd {
 
 /// `define`: stores `commands` as a symbol called `name`, without
 /// painting anything. Only at the top level of a script.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DefineCmd {
     pub name: String,
     /// Parameters and their defaults: `{"leg": 0, "eye": "eye_open"}`.
-    /// Inside the symbol, `"$leg"` stands for the value a `use` gives.
+    /// Inside the symbol, `"$leg"` stands for the value a `use` gives,
+    /// in any field (points, sizes, centres...).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<BTreeMap<String, Value>>,
+    /// The commands, read with the parameters' defaults put in.
     #[serde(default)]
     pub commands: Vec<Command>,
+    /// With parameters: the commands as written, `"$name"`s and all. Each
+    /// `use` reads them again with its own values (see
+    /// `symbol_commands`), and the script is written out from these.
+    #[serde(skip)]
+    pub raw: Option<std::sync::Arc<Vec<Value>>>,
+}
+
+impl Serialize for DefineCmd {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut out = serializer.serialize_struct("DefineCmd", 3)?;
+        out.serialize_field("name", &self.name)?;
+        if let Some(params) = &self.params {
+            out.serialize_field("params", params)?;
+        }
+        // As written, so the parameters stay parameters.
+        match &self.raw {
+            Some(raw) => out.serialize_field("commands", raw.as_ref())?,
+            None => out.serialize_field("commands", &self.commands)?,
+        }
+        out.end()
+    }
+}
+
+/// `value` with every `"$name"` (a whole string) that names one of
+/// `params` replaced by its value.
+fn substitute(value: &Value, params: &BTreeMap<String, Value>) -> Value {
+    match value {
+        Value::String(text) => match text.strip_prefix('$').and_then(|name| params.get(name)) {
+            Some(given) => given.clone(),
+            None => value.clone(),
+        },
+        Value::Array(items) => Value::Array(items.iter().map(|v| substitute(v, params)).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, v)| (key.clone(), substitute(v, params)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// A command inside a define, read as written if it can be (then its
+/// `"$name"`s are worked out as it plays, with the usual messages), else
+/// with `params` put in (a `"$name"` standing for a point or a size).
+/// Says whether the values were needed.
+fn parse_in_define(
+    child: Value,
+    params: &BTreeMap<String, Value>,
+) -> Result<(Command, bool), Problem> {
+    if params.is_empty() {
+        return parse_command(child, true).map(|c| (c, false));
+    }
+    match parse_command(child.clone(), true) {
+        Ok(command) => Ok((command, false)),
+        Err(_) => parse_command(substitute(&child, params), true).map(|c| (c, true)),
+    }
+}
+
+/// A symbol's commands, read with these parameter values put in where
+/// they're needed (see `parse_in_define`).
+pub fn symbol_commands(
+    raw: &[Value],
+    params: &BTreeMap<String, Value>,
+) -> Result<Vec<Command>, String> {
+    raw.iter()
+        .enumerate()
+        .map(|(index, child)| {
+            let label = label_of(child).unwrap_or_else(|| "?".into());
+            parse_in_define(child.clone(), params)
+                .map(|(command, _)| command)
+                .map_err(|problem| {
+                    let mut path = vec![format!("{} ({label})", index + 1)];
+                    path.extend(problem.inside);
+                    format!("{}: {}", path.join(" > "), problem.message)
+                })
+        })
+        .collect()
 }
 
 /// `use`: paints the symbol `name`, placed like a group (the same
@@ -1705,7 +1786,9 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
     let kind = object
         .get("cmd")
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_owned();
+    let kind = kind.as_str();
     if matches!(kind, "define" | "include") && nested {
         return Err(Problem::here(format!(
             "`{kind}` only works at the top level of a script, not inside a group, symbol, \
@@ -1713,16 +1796,39 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
         )));
     }
     let mut inner = Vec::new();
+    // A define's parameters: their defaults are put in while reading (so
+    // "$x" can stand for a point or a size), and the commands as written
+    // are kept for each use to read with its own values.
+    let defaults: BTreeMap<String, Value> = match (kind, object.get("params")) {
+        ("define", Some(Value::Object(params))) => {
+            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        }
+        _ => BTreeMap::new(),
+    };
+    let mut raw = None;
     if matches!(kind, "group" | "define" | "repeat") {
         match object.remove("commands") {
             Some(Value::Array(list)) => {
+                let written = list.clone();
+                let mut needs_values = false;
                 for (index, child) in list.into_iter().enumerate() {
                     let label = label_of(&child).unwrap_or_else(|| "?".into());
-                    let command = parse_command(child, true).map_err(|mut problem| {
+                    let parsed = if kind == "define" {
+                        parse_in_define(child, &defaults).map(|(command, needed)| {
+                            needs_values |= needed;
+                            command
+                        })
+                    } else {
+                        parse_command(child, true)
+                    };
+                    let command = parsed.map_err(|mut problem| {
                         problem.inside.insert(0, format!("{} ({label})", index + 1));
                         problem
                     })?;
                     inner.push(command);
+                }
+                if needs_values {
+                    raw = Some(std::sync::Arc::new(written));
                 }
             }
             Some(_) => {
@@ -1737,11 +1843,28 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
             }
         }
     }
-    let mut command: Command =
-        serde_json::from_value(value).map_err(|error| Problem::here(error.to_string()))?;
+    let mut command: Command = serde_json::from_value(value).map_err(|error| {
+        let mut message = error.to_string();
+        // A "$name" where a number or point was expected.
+        if let Some(start) = message.find("string \"$") {
+            let name: String = message[start + 8..]
+                .chars()
+                .take_while(|&c| c != '"')
+                .collect();
+            message.push_str(&format!(
+                ". \"{name}\" would stand for a symbol parameter, but only inside a define \
+                 that has \"{}\" in its \"params\"",
+                name.trim_start_matches('$')
+            ));
+        }
+        Problem::here(message)
+    })?;
     match &mut command {
         Command::Group(group) => group.commands = inner,
-        Command::Define(define) => define.commands = inner,
+        Command::Define(define) => {
+            define.commands = inner;
+            define.raw = raw;
+        }
         Command::Repeat(repeat) => repeat.commands = inner,
         _ => {}
     }

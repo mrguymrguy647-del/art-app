@@ -431,6 +431,9 @@ impl Scratch {
 /// A symbol: what `define` stored.
 struct Symbol {
     commands: Arc<Vec<Command>>,
+    /// With parameters: the commands as written, read again for each set
+    /// of values a `use` gives (see `script::symbol_commands`).
+    raw: Option<Arc<Vec<Value>>>,
     /// Its parameters and their defaults.
     params: Arc<BTreeMap<String, Value>>,
     /// Where it was defined, if in an included file: the file (as
@@ -558,6 +561,9 @@ pub struct Player {
     warnings: Vec<String>,
     defined: Vec<(String, usize)>,
     used_symbols: HashSet<String>,
+    /// A symbol's commands read with one set of parameter values, by the
+    /// symbol's name and the values (as JSON).
+    symbol_versions: HashMap<(String, String), Arc<Vec<Command>>>,
     used_colors: RefCell<HashSet<String>>,
     painted_by: HashMap<LayerId, BTreeSet<usize>>,
     read_by: HashMap<LayerId, BTreeSet<usize>>,
@@ -698,6 +704,7 @@ impl Player {
             warnings: Vec::new(),
             defined: Vec::new(),
             used_symbols: HashSet::new(),
+            symbol_versions: HashMap::new(),
             used_colors: RefCell::new(HashSet::new()),
             painted_by: HashMap::new(),
             read_by: HashMap::new(),
@@ -2209,6 +2216,7 @@ impl Player {
                     define.name.clone(),
                     Symbol {
                         commands: Arc::new(define.commands.clone()),
+                        raw: define.raw.clone(),
                         params: Arc::new(define.params.clone().unwrap_or_default()),
                         source: None,
                     },
@@ -2296,7 +2304,8 @@ impl Player {
                 chain.join(" > ")
             ));
         }
-        let commands = Arc::clone(&symbol.commands);
+        let mut commands = Arc::clone(&symbol.commands);
+        let raw = symbol.raw.clone();
         let defaults = Arc::clone(&symbol.params);
         let label = match &symbol.source {
             Some((file, number)) => format!("use \"{name}\" (from {file}, command {number})"),
@@ -2348,6 +2357,25 @@ impl Player {
                 self.value(value)
                     .map_err(|p| format!("`with`: {key}: {p}"))?,
             );
+        }
+        // Read with these values, so "$x" works in any field (once per set
+        // of values: a repeat or an animation reuses it).
+        if let Some(raw) = raw {
+            let key = (
+                name.clone(),
+                serde_json::to_string(&params).unwrap_or_default(),
+            );
+            commands = match self.symbol_versions.get(&key) {
+                Some(version) => Arc::clone(version),
+                None => {
+                    let version = Arc::new(
+                        crate::script::symbol_commands(&raw, &params)
+                            .map_err(|p| format!("with these `with` values, {p}"))?,
+                    );
+                    self.symbol_versions.insert(key, Arc::clone(&version));
+                    version
+                }
+            };
         }
         let new = NewFrame {
             commands,
@@ -2774,6 +2802,7 @@ impl Player {
                         define.name.clone(),
                         Symbol {
                             commands: Arc::new(define.commands.clone()),
+                            raw: define.raw.clone(),
                             params: Arc::new(define.params.clone().unwrap_or_default()),
                             source: Some((written.to_owned(), index + 1)),
                         },
@@ -9291,5 +9320,46 @@ mod tests {
         // Negative scales still say to use mirror.
         let problem = error(&script.replace(r#""scale": 0,"#, r#""scale": -1,"#));
         assert!(problem.contains("mirror"), "{problem}");
+    }
+
+    #[test]
+    fn symbol_parameters_work_in_points_centres_and_sizes() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "post", "params": { "top": [0, 0], "w": 4, "path": [[0, 0], [0, 40]] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": "$w", "height": 10, "fill": "#000000" },
+                { "cmd": "ellipse", "center": "$top", "radius": 3, "fill": "#FF0000" },
+                { "cmd": "stroke", "points": "$path", "size": "$w", "color": "#0000FF" }
+            ] },
+            { "cmd": "use", "name": "post", "translate": [20, 20] },
+            { "cmd": "use", "name": "post", "translate": [120, 20], "with": { "w": 12, "top": [30, 5], "path": [[30, 20], [60, 20]] } }
+          ] }"##;
+        let by_hand = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 20, "y": 20, "width": 4, "height": 10, "fill": "#000000" },
+            { "cmd": "ellipse", "center": [20, 20], "radius": 3, "fill": "#FF0000" },
+            { "cmd": "stroke", "points": [[20, 20], [20, 60]], "size": 4, "color": "#0000FF" },
+            { "cmd": "rect", "x": 120, "y": 20, "width": 12, "height": 10, "fill": "#000000" },
+            { "cmd": "ellipse", "center": [150, 25], "radius": 3, "fill": "#FF0000" },
+            { "cmd": "stroke", "points": [[150, 40], [180, 40]], "size": 12, "color": "#0000FF" }
+          ] }"##;
+        assert_eq!(png(&play(script)), png(&play(by_hand)));
+        // Written out again (Export strokes, tidy), the "$name"s stay.
+        let parsed = Script::parse(script).unwrap();
+        let json = parsed.to_json();
+        assert!(
+            json.contains(r#""width": "$w""#) || json.contains(r#""width":"$w""#),
+            "{json}"
+        );
+        assert_eq!(png(&play(&json)), png(&play(by_hand)));
+        // A "$name" that isn't a parameter says so.
+        let problem = error(&script.replace(r#""width": "$w""#, r#""width": "$wide""#));
+        assert!(
+            problem.contains("\"$wide\" would stand for a symbol parameter"),
+            "{problem}"
+        );
+        // A value that doesn't fit says which use gave it.
+        let problem = error(&script.replace(r#""w": 12"#, r#""w": "big""#));
+        assert!(problem.contains("with these `with` values"), "{problem}");
     }
 }

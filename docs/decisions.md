@@ -1976,3 +1976,13 @@ two false alarms. Every finding, before and after:
   at no opacity, and `check` reports no area for it. For
   `transform_layer` it stays an error (squashing a whole layer can't be
   undone; `clear_layer` empties one).
+- **Symbol parameters in any field.** A `define` with `params` keeps its
+  commands as written; one that can't be read with its `"$name"`s in
+  place (a point, a width, a brush size) is read with the values put
+  in: the defaults when the script is read, each `use`'s own values
+  when it plays (cached per set of values, so a repeat or an animation
+  reads it once per value). Commands that read fine as written are
+  unchanged, so their messages are too. Scripts are written back out
+  from the commands as written, so the `"$name"`s survive Export
+  strokes. A `"$name"` where a number is expected outside such a define
+  now says it would be a parameter, and where.

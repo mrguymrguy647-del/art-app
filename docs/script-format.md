@@ -875,8 +875,10 @@ each seed until the next key (a pattern changes at a key, never half way): a twi
 ```
 
 `define` takes `params`: names and their defaults. Inside the symbol, `"$angle"` stands for the
-value, anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`), and in any
-colour field (`"fill": "$paint"`), so a symbol can take its colours as parameters. A `use` gives
+value in any field: anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`), any
+colour field (`"fill": "$paint"`), and points, centres and sizes (`"center": "$spot"`,
+`"points": "$path"`, `"width": "$w"`, `"size": "$w"`), so a symbol can take its colours, shape and
+line widths as parameters. A `"$name"` outside a define with that parameter is a mistake. A `use` gives
 values with `with`; a name the symbol doesn't have is a mistake. A value in `with` may be
 keyframes, so one symbol covers every pose of a walk. There's no arithmetic (`"-$angle"`): use
 `shift`, a second parameter or `mirror`.
