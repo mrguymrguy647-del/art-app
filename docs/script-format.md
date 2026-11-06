@@ -747,9 +747,11 @@ when they're on different layers, and text gets one clean outline around all its
 
 A script with an `animations` section is an animation (or several, by name). Each one has
 `frames` (how many, 1 to 100000), `fps` (default 12), `loop` (default false: the last frame leads
-back to the first) and its own `commands`. The canvas is the size of one frame. Each frame plays
-the script's `commands` (the canvas, symbols, a background) and then the animation's. Time is
-the frame number, counting from 0; keyframes (next section) make values change with it. A top
+back to the first), `time` (`"frames"`, the default, or `"seconds"`: then plain numbers in its
+keyframes are seconds) and its own `commands`. The canvas is the size of one frame. Each frame
+plays the script's `commands` (the canvas, symbols, a background) and then the animation's. Time
+is the frame number, counting from 0; keyframes (next section) make values change with it.
+Animations are kept in the order written: the first is the one `render` shows by default. A top
 level `"pivot": [x, y]` is the character's anchor point for sprite sheets (default: the bottom
 centre of the canvas). A script without `animations` is a single picture, exactly as before.
 
@@ -772,12 +774,14 @@ number on its own) and colours (each channel on its own). Anything else, like a 
 
 | Field | |
 |---|---|
-| `keys` | `[[frame, value], ...]`, or `[frame, value, "ease"]` to name the curve *into* that key. |
+| `keys` | `[[frame, value], ...]`, or `[frame, value, "ease"]` to name the curve *into* that key. A key's time may be seconds instead: `"1.5s"` (at the animation's `fps`), or a plain number when the animation has `"time": "seconds"`. |
 | `ease` | The curve between keys: `linear` (default), `in` (starts slow), `out` (ends slow), `in-out`, `step` (holds the earlier value until the next key). |
-| `shift` | Plays the same keys this many frames later, wrapping round in a looping animation. A walk's far leg is the near leg's keys with `"shift"` of half the cycle. |
+| `shift` | Plays the same keys this many frames (or `"0.5s"`) later, wrapping round in a looping animation. A walk's far leg is the near leg's keys with `"shift"` of half the cycle. |
 
 Exactly on a key's frame, the value is the key's. In a single picture (no animation) keyframes
-are read at frame 0. To animate text or a shape, put it in a group.
+are read at frame 0. To animate text or a shape, put it in a group. A `seed` with keys holds
+each seed until the next key (a pattern changes at a key, never half way): a twinkle is
+`"seed": { "keys": [[0, 1], [4, 2], [8, 3]] }`.
 
 ### Symbol parameters, and `upright`
 
@@ -803,9 +807,10 @@ mirrors and resizes with the groups around it.
 
 ### Seeing an animation without watching it
 
-`art-cli render` paints frame 0 of the first animation unless told otherwise: `--frame 3`,
-`--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation. Frames are
-saved as `name-walk-003.png`. Then:
+`art-cli render` paints frame 0 of the first animation written unless told otherwise:
+`--frame 3`, `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation.
+Frames are saved as `name-walk-003.png`. A thing that is off the canvas in some frames but on
+it in others (an entrance, an exit) isn't warned about; one that never is, is. Then:
 
 - `--frame-sheet` (or `--frame-sheet 2` for every 2nd frame): every frame in one numbered
   picture, `name-walk-frames.png`, to judge a whole walk at a glance.

@@ -171,7 +171,8 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - `--layers "Characters"` shows only some layers; `--hide "Background"` all but some.
 - `--snapshots --sheet` saves a picture at every `snapshot` command and layer change, and one
   sheet with all of them. Add `{ "cmd": "snapshot", "name": "blocked in" }` after big stages.
-- `--crop` may go past the canvas edges (outside shows as grey squares).
+- `--crop` may go past the canvas edges (outside shows as grey squares); `--scale 0.5` saves
+  `name-50pct.png`; `--pixels` prints a pixel canvas as rows of palette letters.
 - Previews make lines thinner than a pixel faint; check fine lines with `--crop`.
 
 ## Look and quality

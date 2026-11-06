@@ -131,8 +131,8 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
-| `animations` (top level) | Named animations: `frames`, `fps`, `loop`, and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
-| keyframes | Any number of a `group` or `use` as `{"keys": [[0, 0], [4, 20]], "ease": "in-out", "shift": 4}`. |
+| `animations` (top level) | Named animations (in the order written): `frames`, `fps`, `loop`, `time` (`"seconds"` to write keys in seconds), and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
+| keyframes | Any number of a `group` or `use` as `{"keys": [[0, 0], [4, 20]], "ease": "in-out", "shift": 4}`; a key's time can be `"1.5s"`. A `seed` with keys holds until the next key. |
 | `params` / `with` / `"$name"` | A symbol's parameters with defaults; a `use` sets them (keyframes allowed); `"upright": true` keeps a foot flat. |
 | `"pixel"` on `canvas` | Pixel art: painted bigger, shrunk to whole pixels in the palette's colours; `{"supersample": 8, "outline": "ink"}`. |
 | `pixels` | Rows of characters, one canvas pixel each: `"rows": ["..kk.."]`, `"colors": {"k": "ink"}`. |

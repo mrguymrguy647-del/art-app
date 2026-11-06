@@ -201,6 +201,12 @@ impl CanvasView {
 
     /// Forgets the previous picture's textures and view, for when a new
     /// picture is started or opened. Tools and colours stay as they are.
+    /// The Text tool's size for a canvas this high: about a twelfth of
+    /// it, so a word reads well on a small sprite and a big painting.
+    pub fn fit_text_size(&mut self, canvas_height: u32) {
+        self.tools.text.size = (canvas_height as f32 / 12.0).round().clamp(8.0, 400.0);
+    }
+
     pub fn reset(&mut self) {
         self.textures.clear();
         self.needs_fit = true;

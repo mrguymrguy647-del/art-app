@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use super::{
-    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd, FilterCmd,
-    GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
+    Animations, BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd,
+    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
     TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
@@ -638,7 +638,7 @@ pub fn script(
         seed: 1,
         palette: BTreeMap::new(),
         commands,
-        animations: BTreeMap::new(),
+        animations: Animations::default(),
         pivot: None,
     }
 }

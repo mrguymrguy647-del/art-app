@@ -157,12 +157,14 @@ impl ArtApp {
             None => None,
         }
         .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
+        let mut canvas = CanvasView::default();
+        canvas.fit_text_size(document.height());
         Self {
             pen_input,
             document,
             history: History::default(),
             files,
-            canvas: CanvasView::default(),
+            canvas,
             filters: FilterTool::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
@@ -399,6 +401,7 @@ impl eframe::App for ArtApp {
             self.document = document;
             self.history = History::default();
             self.canvas.reset();
+            self.canvas.fit_text_size(self.document.height());
             self.animation = None;
             self.frame_shown = None;
         }

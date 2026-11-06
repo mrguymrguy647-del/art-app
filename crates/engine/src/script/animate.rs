@@ -23,6 +23,43 @@ use crate::fill::Rgba;
 pub struct Clock {
     pub frame: u32,
     pub length: Option<(u32, bool)>,
+    /// Frames per second, for keys written in seconds (`"1.5s"`).
+    pub fps: f32,
+    /// Plain numbers in keys are seconds (the animation's `"time"`).
+    pub seconds: bool,
+}
+
+impl Clock {
+    /// A single picture: frame 0, nothing else.
+    pub fn still() -> Self {
+        Clock {
+            frame: 0,
+            length: None,
+            fps: 12.0,
+            seconds: false,
+        }
+    }
+
+    /// A key's time as a frame number: a number (frames, or seconds if
+    /// the animation counts in seconds) or text like `"1.5s"` (seconds).
+    fn key_frame(&self, value: &Value) -> Result<f32, String> {
+        match value {
+            Value::Number(n) => {
+                let v = n.as_f64().unwrap_or(0.0) as f32;
+                Ok(if self.seconds { v * self.fps } else { v })
+            }
+            Value::String(text) => {
+                let seconds: f32 = text
+                    .strip_suffix('s')
+                    .and_then(|t| t.trim().parse().ok())
+                    .ok_or_else(|| {
+                        format!("a key's time is a frame number or seconds like \"1.5s\", not \"{text}\"")
+                    })?;
+                Ok(seconds * self.fps)
+            }
+            _ => Err("each key starts with its frame number (or seconds, like \"1.5s\")".into()),
+        }
+    }
 }
 
 /// The named easing curves: how far along (0 to 1) a value is at time
@@ -83,7 +120,9 @@ pub fn evaluate(
     };
     let shift = match object.get("shift") {
         None => 0.0,
-        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0) as f32,
+        Some(value @ (Value::Number(_) | Value::String(_))) => clock
+            .key_frame(value)
+            .map_err(|_| "`shift` is a number of frames (or seconds, like \"0.5s\")")?,
         Some(_) => return Err("`shift` is a number of frames".into()),
     };
     let Some(Value::Array(keys)) = object.get("keys") else {
@@ -98,8 +137,8 @@ pub fn evaluate(
             return Err("each key is [frame, value] (or [frame, value, \"ease\"])".into());
         };
         let frame = match parts.first() {
-            Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0) as f32,
-            _ => return Err("each key starts with its frame number".into()),
+            Some(value) => clock.key_frame(value)?,
+            None => return Err("each key starts with its frame number".into()),
         };
         let value = parts
             .get(1)
@@ -190,7 +229,17 @@ mod tests {
     fn at(keyed: Value, frame: u32, length: Option<(u32, bool)>) -> Result<Value, String> {
         let plain = |v: &Value| Ok(v.clone());
         let color = |name: &str| crate::script::parse_hex(name).ok();
-        evaluate(&keyed, Clock { frame, length }, &plain, &color)
+        evaluate(
+            &keyed,
+            Clock {
+                frame,
+                length,
+                fps: 12.0,
+                seconds: false,
+            },
+            &plain,
+            &color,
+        )
     }
 
     #[test]

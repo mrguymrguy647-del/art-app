@@ -49,9 +49,9 @@ pub struct Script {
     /// Colour names defined once and used by name in commands.
     pub palette: BTreeMap<String, String>,
     pub commands: Vec<Command>,
-    /// Animations, by name (in alphabetical order). Each plays `commands`
+    /// Animations, by name, in the order written. Each plays `commands`
     /// and then its own, once per frame. Empty for a single picture.
-    pub animations: BTreeMap<String, Animation>,
+    pub animations: Animations,
     /// The character's anchor point in canvas pixels, for sprite sheets.
     /// Default: the bottom centre of the canvas.
     pub pivot: Option<[f32; 2]>,
@@ -65,8 +65,124 @@ pub struct Animation {
     pub fps: f32,
     #[serde(rename = "loop", default)]
     pub looping: bool,
+    /// `true` (`"time": "seconds"`): plain numbers in its keyframes are
+    /// seconds, not frames.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seconds: bool,
     #[serde(default)]
     pub commands: Vec<Command>,
+}
+
+/// The animations of a script, by name, in the order they were written
+/// (so the first one is the one `render` shows by default).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Animations(Vec<(String, Animation)>);
+
+impl Animations {
+    pub fn get(&self, name: &str) -> Option<&Animation> {
+        self.0.iter().find(|(n, _)| n == name).map(|(_, a)| a)
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Animation)> {
+        self.0.iter().map(|(n, a)| (n, a))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(n, _)| n)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Animation> {
+        self.0.iter().map(|(_, a)| a)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Adds one at the end. Returns false (and changes nothing) if the
+    /// name is taken.
+    pub fn insert(&mut self, name: String, animation: Animation) -> bool {
+        if self.contains_key(&name) {
+            return false;
+        }
+        self.0.push((name, animation));
+        true
+    }
+}
+
+impl<'a> IntoIterator for &'a Animations {
+    type Item = (&'a String, &'a Animation);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, Animation)>,
+        fn(&'a (String, Animation)) -> (&'a String, &'a Animation),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|(n, a)| (n, a))
+    }
+}
+
+impl std::ops::Index<&str> for Animations {
+    type Output = Animation;
+
+    fn index(&self, name: &str) -> &Animation {
+        self.get(name)
+            .unwrap_or_else(|| panic!("no animation called \"{name}\""))
+    }
+}
+
+impl Serialize for Animations {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, animation) in &self.0 {
+            map.serialize_entry(name, animation)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Animations {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let pairs: Vec<(String, Animation)> = ordered_pairs(deserializer)?;
+        Ok(Animations(pairs))
+    }
+}
+
+/// Reads a JSON object as (name, value) pairs in the order written.
+fn ordered_pairs<'de, D, T>(deserializer: D) -> Result<Vec<(String, T)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Pairs<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Pairs<T> {
+        type Value = Vec<(String, T)>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an object of animations by name")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut pairs = Vec::new();
+            while let Some((name, value)) = map.next_entry::<String, T>()? {
+                pairs.push((name, value));
+            }
+            Ok(pairs)
+        }
+    }
+    deserializer.deserialize_map(Pairs(std::marker::PhantomData))
 }
 
 /// The most frames one animation may have.
@@ -1045,8 +1161,8 @@ struct RawScript {
     #[serde(default)]
     palette: BTreeMap<String, String>,
     commands: Vec<Value>,
-    #[serde(default)]
-    animations: BTreeMap<String, RawAnimation>,
+    #[serde(default, deserialize_with = "ordered_pairs")]
+    animations: Vec<(String, RawAnimation)>,
     #[serde(default)]
     pivot: Option<[f32; 2]>,
 }
@@ -1060,6 +1176,10 @@ struct RawAnimation {
     fps: f32,
     #[serde(rename = "loop", default)]
     looping: bool,
+    /// `"seconds"`: plain numbers in keyframes are seconds; `"frames"`
+    /// (the default) frames.
+    #[serde(default)]
+    time: Option<String>,
     #[serde(default)]
     commands: Vec<Value>,
 }
@@ -1139,12 +1259,26 @@ impl Script {
             return Err(ScriptError::general("the script has no commands"));
         }
 
-        let mut animations = BTreeMap::new();
+        let mut animations = Animations::default();
         for (name, raw) in raw.animations {
             let problem = |message: String| ScriptError::general(message).in_animation(&name);
             if name.trim().is_empty() {
                 return Err(ScriptError::general("an animation needs a name"));
             }
+            if animations.contains_key(&name) {
+                return Err(ScriptError::general(format!(
+                    "the animation \"{name}\" is written twice"
+                )));
+            }
+            let seconds = match raw.time.as_deref() {
+                None | Some("frames") => false,
+                Some("seconds") => true,
+                Some(other) => {
+                    return Err(problem(format!(
+                        "`time` is \"frames\" (the default) or \"seconds\", not \"{other}\""
+                    )));
+                }
+            };
             if !(1..=MAX_FRAMES).contains(&raw.frames) {
                 return Err(problem(format!(
                     "`frames` must be from 1 to {MAX_FRAMES}, not {}",
@@ -1176,6 +1310,7 @@ impl Script {
                     frames: raw.frames,
                     fps: raw.fps,
                     looping: raw.looping,
+                    seconds,
                     commands: inner,
                 },
             );

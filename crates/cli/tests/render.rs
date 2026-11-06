@@ -548,7 +548,11 @@ const LATER_USE: &str = r##"{ "palette": { "ink": "#202020", "red": "#E02020", "
     "idle": { "frames": 6, "commands": [
         { "cmd": "use", "name": "face", "with": { "eye": { "keys": [[0, "open"], [5, "blink"]] } } },
         { "cmd": "group", "name": "flyer", "translate": { "keys": [[0, [20, 20]], [2, [80, 80], "step"], [5, [20, 20], "step"]] }, "commands": [
-            { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" } ] } ] },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" } ] },
+        { "cmd": "group", "name": "lost", "translate": [90, 90], "commands": [
+            { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "ink" } ] },
+        { "cmd": "group", "name": "masked", "mask": { "circle": [{ "keys": [[0, 25], [2, 200, "step"], [5, 25, "step"]] }, 25, 5] }, "commands": [
+            { "cmd": "rect", "x": 20, "y": 20, "width": 5, "height": 5, "fill": "ink" } ] } ] },
     "hurt": { "frames": 1, "commands": [
         { "cmd": "rect", "x": 20, "y": 20, "width": 4, "height": 4, "fill": "red" } ] }
   } }"##;
@@ -585,14 +589,26 @@ fn check_counts_use_over_every_frame_and_says_which_frames_warn() {
         text.contains("palette colour \"blue\" is never used"),
         "{text}"
     );
-    // The flyer is off the canvas in frames 2 to 4: one warning, with the range.
+    // The flyer is off the canvas in frames 2 to 4 but on it in the
+    // others: an exit and a return, not a mistake. "lost" never is on it.
     assert!(
-        text.contains("animation \"idle\", frames 2-4: command 2 (group \"flyer\") > 1 (rect) draws entirely outside the canvas (x 80..85, y 80..85)"),
+        !text.contains("\"flyer\") > 1 (rect) draws entirely outside"),
+        "{text}"
+    );
+    assert!(
+        text.contains("animation \"idle\", frames 0-5: command 3 (group \"lost\") > 1 (rect) draws entirely outside the canvas (x 90..95, y 90..95)"),
         "{text}"
     );
     assert_eq!(text.matches("draws entirely outside").count(), 1, "{text}");
+    // A warning found in some frames says which, as a range.
+    assert!(
+        text.contains(
+            "animation \"idle\", frames 2-4: command 4 (group \"masked\"): its mask covers nothing"
+        ),
+        "{text}"
+    );
     // Which frame the summary shows, and how to pick another.
-    assert!(text.contains("(the layers and parts below are frame 0 of \"hurt\"; --animation and --frame show another)"), "{text}");
+    assert!(text.contains("(the layers and parts below are frame 0 of \"idle\"; --animation and --frame show another)"), "{text}");
     let (code, text, _) = check(&["--animation", "idle", "--frame", "3"]);
     assert_eq!(code, Some(0));
     assert!(text.contains("frame 3 of \"idle\""), "{text}");
@@ -724,4 +740,115 @@ fn measure_says_how_big_a_text_is_before_painting() {
     assert!(text.contains("to fit in 180 px, use size 33."), "{text}");
     let usage = art_cli().args(["measure"]).output().unwrap();
     assert_eq!(usage.status.code(), Some(2));
+}
+
+/// Fixes from phase 2's reviews: `--pixels` prints a pixel canvas as
+/// letters, `--scale` names the file by its size, `export` says what
+/// it skipped, and a layer painted in some frame isn't "empty".
+#[test]
+fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
+    let out = folder("review-fixes");
+    std::fs::create_dir_all(&out).unwrap();
+    let pixel = out.join("pixel.json");
+    std::fs::write(
+        &pixel,
+        r##"{ "palette": { "ink": "#000000", "red": "#FF0000" }, "commands": [
+          { "cmd": "canvas", "width": 6, "height": 3, "pixel": { "supersample": 1 } },
+          { "cmd": "pixels", "at": [0, 0], "rows": ["kk....", "..rr..", "....kk"], "colors": { "k": "ink", "r": "red" } } ] }"##,
+    )
+    .unwrap();
+    let output = art_cli()
+        .args(["render", pixel.to_str().unwrap(), "--pixels", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("a = ink #000000"), "{text}");
+    assert!(text.contains("b = red #FF0000"), "{text}");
+    assert!(
+        text.contains("\n    aa....\n    ..bb..\n    ....aa\n"),
+        "{text}"
+    );
+
+    // --scale 0.5 saves name-50pct.png (not -preview).
+    let output = art_cli()
+        .args([
+            "render",
+            example().to_str().unwrap(),
+            "--scale",
+            "0.5",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("sunset-50pct.png"), "{text}");
+    assert!(out.join("sunset-50pct.png").exists());
+
+    // export --animation says which animations it left out.
+    let animated = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
+    let output = art_cli()
+        .args([
+            "export",
+            animated.to_str().unwrap(),
+            "--frames",
+            "--animation",
+            "walk",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("skipped (not --animation walk): idle"),
+        "{text}"
+    );
+
+    // A layer that an animation paints in a later frame isn't empty.
+    let entrance = out.join("entrance.json");
+    std::fs::write(
+        &entrance,
+        r##"{ "commands": [
+          { "cmd": "canvas", "width": 50, "height": 50 },
+          { "cmd": "layer", "name": "Later" },
+          { "cmd": "layer", "name": "Never" } ],
+          "animations": { "drop": { "frames": 4, "commands": [
+            { "cmd": "layer", "name": "Later" },
+            { "cmd": "group", "name": "ball", "translate": { "keys": [[0, [25, -40]], [3, [25, 25]]] }, "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 5, "fill": "#000000" } ] } ] } } }"##,
+    )
+    .unwrap();
+    let output = art_cli()
+        .args(["check", entrance.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains("layer \"Later\" is empty"), "{text}");
+    assert!(
+        text.contains("layer \"Never\" is empty in every frame"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("draws entirely outside"),
+        "an entrance: {text}"
+    );
+    assert!(
+        text.contains("Later: empty (animation command 2)"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(out).ok();
 }

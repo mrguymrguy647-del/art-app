@@ -244,7 +244,7 @@ fn paint(document: &mut Document, layer: LayerId, command: &TextCmd) -> Vec<Box<
         notes: None,
         seed: 1,
         palette: BTreeMap::new(),
-        animations: BTreeMap::new(),
+        animations: art_engine::script::Animations::default(),
         pivot: None,
         commands: vec![
             Command::Canvas(CanvasCmd::default()),

@@ -1148,3 +1148,31 @@ put it:
   example and a preview, and a test plays every example and refuses
   warnings, so the library can't rot quietly.
 
+## 66. Phase 2's review list, done (phase 3, step 7)
+
+- **Animations in the order written.** `Script.animations` is a small
+  ordered map (`Animations`, a vector of pairs with a map's methods)
+  read through a custom deserializer, since JSON objects have an order
+  and a script's author means it: the first animation is the one
+  `render` shows and `check` summarises. Sprite sheets follow suit; a
+  name written twice is refused.
+- **Keys in seconds.** The clock carries the animation's `fps` and
+  whether it counts in seconds; a key's time is a number (frames, or
+  seconds with `"time": "seconds"`) or text like `"1.5s"`, and `shift`
+  the same. Everything downstream still sees frames.
+- **Seeds hold.** A keyed `seed` gets `"ease": "step"` unless the keys
+  say otherwise: a pattern changes at a key, never half way, which is
+  the only thing a seed in between could mean.
+- **Entrances aren't warnings.** In `check`, an "entirely outside the
+  canvas" warning for a part is dropped when the part is on the canvas
+  in some other frame; one that never is still warns, with its frame
+  range. A layer is "empty in every frame" only when no frame paints it.
+  Painting by an animation's commands is numbered after the script's
+  own ("animation command 2") instead of colliding with them.
+- **Small things:** `export --animation` says which animations it
+  skipped; `render --scale 0.5` saves `name-50pct.png` (not
+  `-preview`, which is `--preview`'s); `render --pixels` prints a pixel
+  canvas as rows of palette letters with a legend, so an agent can read
+  a sprite without looking at it; the app's Text tool starts at a
+  twelfth of the canvas height instead of a fixed 48 pixels.
+

@@ -325,6 +325,20 @@ pub fn export(options: &ExportOptions) -> Result<(), Problem> {
     for line in &saved {
         say!("  {line}");
     }
+    if let Some(wanted) = &options.animation {
+        let skipped: Vec<&str> = script
+            .animations
+            .keys()
+            .filter(|name| *name != wanted)
+            .map(String::as_str)
+            .collect();
+        if !skipped.is_empty() {
+            say!(
+                "  skipped (not --animation {wanted}): {}",
+                skipped.join(", ")
+            );
+        }
+    }
     for note in &notes {
         say!("  {note}");
     }

@@ -561,6 +561,8 @@ impl Player {
         let clock = Clock {
             frame: options.frame,
             length: animation.as_ref().map(|(_, a)| (a.frames, a.looping)),
+            fps: animation.as_ref().map_or(12.0, |(_, a)| a.fps),
+            seconds: animation.as_ref().is_some_and(|(_, a)| a.seconds),
         };
         let animation = animation.map(|(name, a)| (name, Arc::new(a.commands.clone())));
         let palette: HashMap<String, Rgba> = script
@@ -1189,7 +1191,7 @@ impl Player {
         }
         self.remember_tiles(real, before);
         self.mark_painted(document, real);
-        let top = self.frames.first().map_or(0, |script| script.next);
+        let top = self.position().0;
         self.painted_by.entry(real).or_default().insert(top);
     }
 
@@ -1411,7 +1413,7 @@ impl Player {
         }
         let mut drawn = None;
         // The number of the script's own command this is part of.
-        let top = self.frames.first().map_or(0, |script| script.next);
+        let top = self.position().0;
         let on_scratch = self.on_scratch();
         let mut shaped = None;
         for job in self.jobs.iter().skip(queued) {
@@ -1844,7 +1846,7 @@ impl Player {
                         self.record(TileCommand::new("Transform layer", id, before));
                     }
                 }
-                let top = self.frames.first().map_or(0, |script| script.next);
+                let top = self.position().0;
                 self.painted_by.entry(id).or_default().insert(top);
                 Ok(())
             }
@@ -2602,7 +2604,7 @@ impl Player {
         }
         self.remember_tiles(id, before);
         self.mark_painted(document, id);
-        let top = self.frames.first().map_or(0, |script| script.next);
+        let top = self.position().0;
         self.painted_by.entry(id).or_default().insert(top);
     }
 
@@ -2629,7 +2631,7 @@ impl Player {
         let before = filters::apply(&mut layer.surface, &filters, limits);
         if !before.is_empty() {
             self.record(TileCommand::new("Filter", id, before));
-            let top = self.frames.first().map_or(0, |script| script.next);
+            let top = self.position().0;
             self.painted_by.entry(id).or_default().insert(top);
         }
         Ok(())
@@ -4142,6 +4144,20 @@ impl Player {
     /// A command's `seed` as written: a whole number, keyframes or a
     /// parameter (anything in between is rounded).
     fn seed_of(&self, written: Option<&Value>) -> Result<Option<u64>, String> {
+        // Seeds hold between keys (a pattern changes at a key, never
+        // halfway), unless the keys say otherwise.
+        let held;
+        let written = match written {
+            Some(Value::Object(keyed)) if animate::is_keyed(written.unwrap_or(&Value::Null)) => {
+                let mut keyed = keyed.clone();
+                keyed
+                    .entry("ease")
+                    .or_insert_with(|| Value::String("step".to_owned()));
+                held = Value::Object(keyed);
+                Some(&held)
+            }
+            other => other,
+        };
         match written {
             None => Ok(None),
             Some(value) => match self.value(value)? {
@@ -7937,5 +7953,79 @@ mod tests {
             "{nested}"
         );
         std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    // ---- Phase 2 review fixes (phase 3, step 7) ---------------------------------
+
+    #[test]
+    fn keys_may_be_in_seconds_and_animations_keep_their_written_order() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": {
+            "zebra": { "frames": 24, "fps": 12, "commands": [
+              { "cmd": "group", "translate": { "keys": [[0, [0, 0]], ["1.5s", [60, 0]]] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] } ] },
+            "apple": { "frames": 24, "fps": 12, "time": "seconds", "commands": [
+              { "cmd": "group", "translate": { "keys": [[0, [0, 0]], [1.5, [60, 0]]], "shift": "0.5s" }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] } ] } } }"##;
+        let parsed = Script::parse(script).unwrap();
+        let names: Vec<&String> = parsed.animations.keys().collect();
+        assert_eq!(names, ["zebra", "apple"], "as written, not alphabetical");
+        assert!(parsed.animations["apple"].seconds);
+        // "1.5s" at 12 fps is frame 18: half way at frame 9.
+        let frame = play_frame(script, Some("zebra"), 9).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 30, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        // In seconds, with a shift of half a second (6 frames): frame 15 is half way.
+        let shifted = play_frame(script, Some("apple"), 15).unwrap();
+        assert_eq!(png(&shifted), png(&by_hand));
+        // The first animation written is the one played by default.
+        let default = play_with(
+            script,
+            PlayOptions {
+                frame: 9,
+                ..PlayOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(png(&default), png(&by_hand));
+        let bad = Script::parse(&script.replace("\"time\": \"seconds\"", "\"time\": \"minutes\""))
+            .unwrap_err();
+        assert!(bad.to_string().contains("`time` is \"frames\""), "{bad}");
+        let twice = Script::parse(&script.replace("\"apple\"", "\"zebra\"")).unwrap_err();
+        assert!(twice.to_string().contains("written twice"), "{twice}");
+        let bad_key = play_frame(&script.replace("\"1.5s\"", "\"soon\""), Some("zebra"), 0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            bad_key.contains("seconds like \"1.5s\", not \"soon\""),
+            "{bad_key}"
+        );
+    }
+
+    #[test]
+    fn seed_keyframes_hold_until_the_next_key() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "twinkle": { "frames": 6, "commands": [
+            { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000",
+              "seed": { "keys": [[0, 1], [3, 2]] } } ] } } }"##;
+        let frames: Vec<Vec<u8>> = (0..6)
+            .map(|f| png(&play_frame(script, Some("twinkle"), f).unwrap()))
+            .collect();
+        assert_eq!(frames[0], frames[1], "seed 1 holds");
+        assert_eq!(frames[1], frames[2]);
+        assert_ne!(frames[2], frames[3], "the seed changes at the key");
+        assert_eq!(frames[3], frames[5], "seed 2 holds");
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000", "seed": 2 } ] }"##,
+        );
+        assert_eq!(frames[4], png(&by_hand));
     }
 }
