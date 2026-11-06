@@ -178,6 +178,8 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - Depth and light: `filter` with `blur` + `adjust` (less saturation) on far layers; a `group`
   with `"filter": {"glow": ...}` for a sun; a `use` with `"filter": {"shadow": ...}` for a
   character; a `"from": "below"` layer with a `gradient_map` at 0.4 to unify the picture.
+- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use` (no
+  seams between parts), `"rim": {...}` inside it for rim light.
 - Shading inside a shape: a `"clip": true` layer above the shape's layer (shows only on its
   paint); `"lock": true` recolours a layer without changing its edges; a group's `mask` (an
   area, `{"symbol": ...}` or `{"layer": ...}`) keeps a reflection on the water.

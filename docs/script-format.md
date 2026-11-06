@@ -391,6 +391,7 @@ of `hatch` and `scatter`.
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
 | `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
 | `filter` | Filters on what the group draws, on its own, before it lands on the layers: `{ "glow": {...} }`, `{ "shadow": {...} }`... See [Filters](#filters). |
+| `outline` | A line around the silhouette of everything the group draws, behind it, with optional rim light: `{ "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } }`. See [Outlines for whole shapes](#outlines-for-whole-shapes). |
 
 The order is always the same: around `origin`, first **mirror**, then **scale**, then **rotate**;
 then **translate**. So `"mirror": "x", "origin": [64, 0]` flips a drawing left to right around
@@ -423,7 +424,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 | | |
 |---|---|
 | `define` | `name` and `commands`. Only at the top level of the script (not inside a group, symbol or repeat), each name once, and before it's used. |
-| `use` | `name`, the group fields above (`mask` and `filter` too), and `colors`. |
+| `use` | `name`, the group fields above (`mask`, `filter` and `outline` too), and `colors`. |
 | `colors` | Colours to swap for this use: `{ "yellow": "#C04040" }` paints red wherever the symbol paints the palette colour `yellow`. The left side can also be a hex code (`"#F2C230"`). For enemy variants, team colours and so on. |
 
 - **Symbols can use other symbols.** A symbol using itself, even through others, is an error:
@@ -659,6 +660,7 @@ Give any of these; they're applied in this order (use two `filter` commands for 
 | `blur` | Pixels of softening (up to 500). |
 | `glow` | `radius` (how far, default 16), `threshold` (how light a pixel must be, 0 to 1, default 0.7), `strength` (default 1): the light parts spread and are added on top, brighter inside, a halo outside. |
 | `shadow` | `offset` `[x, y]` (default `[4, 4]`), `blur` (default 4), `color` (default half-transparent black): a soft copy of the silhouette, behind. |
+| `outline` | `{ "color", "size", "rim": {...} }`: a line around everything on the layer, behind it, and rim light on top (see below). |
 
 Every number may be keyframes. Sizes are in the drawing units of where the command is, so in a
 group scaled by 2 a blur of 3 is 6 pixels. In the app, **Filters** in the top bar has the same
@@ -680,6 +682,31 @@ falls behind the whole duck and no seam shows between its layers. Filtered group
   outside.
 - **Pixel canvas:** `blur`, `glow` and a `shadow` with blur are refused (pixels would melt);
   `shadow` with `"blur": 0`, `adjust` and `gradient_map` work and snap to the palette.
+
+## Outlines for whole shapes
+
+```json
+{ "cmd": "use", "name": "duck", "translate": [64, 96],
+  "outline": { "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } } }
+{ "cmd": "group", "name": "logo", "outline": { "color": "#FFFFFF", "size": 6 }, "commands": [
+  { "cmd": "text", "text": "DUCK FORGE", "at": [320, 40], "size": 64, "color": "ember", "align": "center" } ] }
+```
+
+A group or `use` with `outline` draws a line around the **silhouette of everything it draws
+together**, on the lowest layer it painted, behind it. So a head on a body shows no seam, even
+when they're on different layers, and text gets one clean outline around all its letters.
+
+| | |
+|---|---|
+| `color` | The line's colour (default black). |
+| `size` | How far out the line reaches, in pixels (default 2). Ends and corners are round. |
+| `rim` | Rim light: `color` (default white), `size` (default 1.5) and `angle` (degrees clockwise, 0 = light from the right, -45 from the top right; default -45). A line of that colour along the inside edge, on the side facing the light, on top of the drawing. |
+
+- It happens after the drawing, so it works with keyframes, `mirror`, `scale` and `rotate`;
+  `size` and the rim's numbers may be keyframes, and they scale with the group.
+- Shapes inside keep their own `outline` fields. `outline` and `filter` go together: shadow
+  furthest back, then the outline, then the drawing, then the rim light.
+- On a pixel canvas the line is whole pixels (like `pixel`'s own `outline`).
 
 ## Animations: frames and timing
 

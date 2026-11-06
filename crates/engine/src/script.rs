@@ -455,6 +455,10 @@ pub struct FilterCmd {
     /// every pixel recoloured by its lightness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gradient_map: Option<Value>,
+    /// `{"color": "ink", "size": 3, "rim": {...}}`: a line around
+    /// everything on the layer, behind it (and rim light on top).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
 }
 
 impl FilterCmd {
@@ -467,6 +471,7 @@ impl FilterCmd {
             ("shadow", &self.shadow),
             ("adjust", &self.adjust),
             ("gradient_map", &self.gradient_map),
+            ("outline", &self.outline),
         ] {
             if let Some(value) = value {
                 object.insert(name.to_owned(), value.clone());
@@ -812,6 +817,11 @@ pub struct GroupCmd {
     /// laid on the layers: the fields of `filter` (see `FilterCmd`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Value>,
+    /// `{"color": "ink", "size": 3, "rim": {"color": "cream", "size": 2,
+    /// "angle": -45}}`: a line around the silhouette of everything the
+    /// group draws, behind it, and rim light along the inside edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -861,6 +871,9 @@ pub struct UseCmd {
     /// As on a group: filters on what it draws.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Value>,
+    /// As on a group: an outline around everything it draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
     /// Colours to paint instead of the symbol's: `{"yellow": "#C04040"}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<BTreeMap<String, Value>>,

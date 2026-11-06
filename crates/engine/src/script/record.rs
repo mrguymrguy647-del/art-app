@@ -329,6 +329,20 @@ fn colors_in_fill(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
     }
 }
 
+/// Calls `f` on the colours of an `outline` object (and its `rim`).
+fn outline_colors(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+    if let Value::Object(object) = value {
+        if let Some(color) = object.get_mut("color") {
+            colors_in_value(color, f);
+        }
+        if let Some(Value::Object(rim)) = object.get_mut("rim")
+            && let Some(color) = rim.get_mut("color")
+        {
+            colors_in_value(color, f);
+        }
+    }
+}
+
 /// Calls `f` on every colour written in `command`.
 fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
     let paint = colors_in_fill;
@@ -428,6 +442,9 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             }
             if let Some(map) = &mut c.gradient_map {
                 paint(map, f);
+            }
+            if let Some(outline) = &mut c.outline {
+                outline_colors(outline, f);
             }
         }
         Command::Use(c) => {

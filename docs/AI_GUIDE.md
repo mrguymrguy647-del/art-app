@@ -122,6 +122,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
 | `stamp` | Copies of a `symbol` or dabs of a `tip` along a path, every `spacing`, turned to follow, varied in `size`, `angle` and `colors`. |
 | `filter` | On a layer: `blur`, `glow`, `shadow`, `adjust` (hue, saturation, brightness, contrast), `gradient_map`. On a `group`/`use` as `"filter": {...}`: applied to what it draws alone (a sun's glow, a duck's drop shadow). |
+| `outline` on `group`/`use` | One line around everything it draws (no seams between parts or layers): `{"color", "size", "rim": {"color", "size", "angle"}}`; `rim` is rim light along the inside edge facing the light. |
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
@@ -234,6 +235,10 @@ light hits. Or `stamp` the `grass` tip along the ground line, which gives real b
 { "cmd": "stamp", "tip": "grass", "points": [[0, 900], [800, 880], [1600, 900]], "spacing": 5,
   "size": [30, 60], "angle": [-12, 12], "follow": false, "colors": ["grass1", "grass2", "grass3"] }
 ```
+
+**One outline around a whole character:** put `"outline": {"color": "ink", "size": 3}` on the
+`use` instead of outlining each shape, so a head on a body shows no seam; add `"rim":
+{"color": "cream", "size": 2, "angle": -45}` for rim light from the top right.
 
 **Depth and light with filters:** far things get `blur` 2–4 and `adjust` with lower
 saturation and a little more brightness (haze); a sun or lamp is a `group` with a `glow`

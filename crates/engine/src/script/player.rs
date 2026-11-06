@@ -413,6 +413,8 @@ struct NewFrame {
     capture: Option<bool>,
     /// The group's `filter`, worked out once the frame has started.
     filter: Option<Value>,
+    /// The group's `outline`, likewise.
+    outline: Option<Value>,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -982,14 +984,23 @@ impl Player {
             self.brush = BrushSettings::default();
             self.brush_alpha = 255;
         }
-        if let Some(filter) = &new.filter {
-            let filters = self
+        let mut filters = match &new.filter {
+            Some(filter) => self
                 .read_filters(filter)
-                .map_err(|problem| format!("`filter`: {problem}"))?;
-            if !filters.is_empty() {
-                self.frames.last_mut().expect("just pushed").effect = Some(filters);
-                self.capture.push(Scratch::new(document, false));
-            }
+                .map_err(|problem| format!("`filter`: {problem}"))?,
+            None => Vec::new(),
+        };
+        if let Some(outline) = &new.outline {
+            let spec: OutlineSpec = serde_json::from_value(self.value(outline)?)
+                .map_err(|problem| format!("`outline`: {problem}"))?;
+            let more = self
+                .read_outline(spec)
+                .map_err(|problem| format!("`outline`: {problem}"))?;
+            filters.extend(more);
+        }
+        if !filters.is_empty() {
+            self.frames.last_mut().expect("just pushed").effect = Some(filters);
+            self.capture.push(Scratch::new(document, false));
         }
         if new.capture.is_some() {
             self.capture.push(Scratch::new(document, true));
@@ -1078,12 +1089,12 @@ impl Player {
         let limits = document.bounds();
         let per_part: Vec<Filter> = filters
             .iter()
-            .filter(|f| !matches!(f, Filter::Shadow { .. }))
+            .filter(|f| !f.from_silhouette())
             .cloned()
             .collect();
         let shadows: Vec<Filter> = filters
             .iter()
-            .filter(|f| matches!(f, Filter::Shadow { .. }))
+            .filter(|f| f.from_silhouette())
             .cloned()
             .collect();
         let mut parts: Vec<(LayerId, Surface)> = Vec::new();
@@ -1100,11 +1111,13 @@ impl Player {
         if parts.is_empty() {
             return;
         }
-        // The shadow goes under the lowest layer's part.
+        // Shadows and outlines go under the lowest layer's part (shadows
+        // furthest back); rim light goes over the highest layer's.
+        let mut rim = Surface::new();
         if !shadows.is_empty() {
             let surfaces: Vec<&Surface> = parts.iter().map(|(_, s)| s).collect();
             let silhouette = filters::silhouette(&surfaces);
-            let mut shadow = Surface::new();
+            let mut under = Surface::new();
             for filter in &shadows {
                 if let Filter::Shadow {
                     offset,
@@ -1113,7 +1126,20 @@ impl Player {
                 } = filter
                 {
                     let one = filters::shadow_of(&silhouette, *offset, *blur, *color, limits);
-                    filters::lay_over(&mut shadow, &one, limits);
+                    filters::lay_over(&mut under, &one, limits);
+                }
+            }
+            for filter in &shadows {
+                match filter {
+                    Filter::Outline { .. } => {
+                        let one = filters::line_of(&silhouette, filter, limits);
+                        filters::lay_over(&mut under, &one, limits);
+                    }
+                    Filter::Rim { .. } => {
+                        let one = filters::line_of(&silhouette, filter, limits);
+                        filters::lay_over(&mut rim, &one, limits);
+                    }
+                    _ => {}
                 }
             }
             let lowest = parts
@@ -1121,10 +1147,18 @@ impl Player {
                 .map(|(real, _)| *real)
                 .min_by_key(|real| document.layer_index(*real).unwrap_or(0))
                 .expect("there are parts");
-            self.lay_part(document, lowest, &shadow);
+            self.lay_part(document, lowest, &under);
         }
+        let highest = parts
+            .iter()
+            .map(|(real, _)| *real)
+            .max_by_key(|real| document.layer_index(*real).unwrap_or(0))
+            .expect("there are parts");
         for (real, part) in parts {
             self.lay_part(document, real, &part);
+        }
+        if rim.tile_count() > 0 {
+            self.lay_part(document, highest, &rim);
         }
     }
 
@@ -1870,6 +1904,7 @@ impl Player {
             mask: command.mask.clone(),
             capture: None,
             filter: command.filter.clone(),
+            outline: command.outline.clone(),
         };
         self.push_frame(document, new)
     }
@@ -1971,6 +2006,7 @@ impl Player {
             mask: command.mask.clone(),
             capture,
             filter: command.filter.clone(),
+            outline: command.outline.clone(),
         };
         self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
@@ -2015,6 +2051,7 @@ impl Player {
             mask: None,
             capture: None,
             filter: None,
+            outline: None,
         };
         let each = command.each.clone().unwrap_or_default();
         for (name, values) in &each {
@@ -2268,6 +2305,7 @@ impl Player {
             mask: None,
             capture: None,
             filter: None,
+            outline: None,
         };
         self.push_frame(document, new)?;
         let outer = self.frames.len() - 2;
@@ -2470,6 +2508,32 @@ impl Player {
         Ok(())
     }
 
+    /// An `outline` (and its `rim`) as filters, sizes in this frame's pixels.
+    fn read_outline(&self, spec: OutlineSpec) -> Result<Vec<Filter>, String> {
+        let scale = self.detail();
+        let hard = self.pixel.is_some();
+        let mut filters = vec![Filter::Outline {
+            size: not_negative("size", spec.size.unwrap_or(2.0))? * scale,
+            color: match &spec.color {
+                Some(color) => self.color(color)?,
+                None => [0, 0, 0, 255],
+            },
+            hard,
+        }];
+        if let Some(rim) = spec.rim {
+            filters.push(Filter::Rim {
+                size: not_negative("rim: size", rim.size.unwrap_or(1.5))? * scale,
+                color: match &rim.color {
+                    Some(color) => self.color(color).map_err(|p| format!("`rim`: {p}"))?,
+                    None => [255, 255, 255, 255],
+                },
+                angle: finite("rim: angle", rim.angle.unwrap_or(-45.0))?,
+                hard,
+            });
+        }
+        Ok(filters)
+    }
+
     /// Filters as written (`blur`, `glow`, `shadow`, `adjust`,
     /// `gradient_map`), with keyframes worked out and sizes in this
     /// frame's pixels, in the order they're applied.
@@ -2526,6 +2590,9 @@ impl Player {
                 blur: not_negative("shadow: blur", shadow.blur.unwrap_or(4.0))? * scale,
                 color,
             });
+        }
+        if let Some(outline) = spec.outline {
+            filters.extend(self.read_outline(outline)?);
         }
         if self.pixel.is_some()
             && let Some(blurry) = filters.iter().find(|f| f.blurs())
@@ -3957,6 +4024,23 @@ struct FilterFields {
     shadow: Option<ShadowSpec>,
     adjust: Option<AdjustSpec>,
     gradient_map: Option<MapSpec>,
+    outline: Option<OutlineSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutlineSpec {
+    color: Option<String>,
+    size: Option<f32>,
+    rim: Option<RimSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RimSpec {
+    color: Option<String>,
+    size: Option<f32>,
+    angle: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -7390,5 +7474,127 @@ mod tests {
               { "cmd": "gradient", "from": [0, 200], "to": [0, 400], "colors": ["#00000040", "transparent"] } ] } ] }"##,
         );
         assert!(fine.iter().all(|w| !w.contains("painted")), "{fine:?}");
+    }
+
+    // ---- Outlines and rim light (phase 3, step 5) --------------------------------
+
+    const TWO_LAYER_DUCK: &str = r##"{ "palette": { "ink": "#000000", "body": "#FFD000", "cream": "#FFFFFF" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "body" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "body" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            USE ] }"##;
+
+    #[test]
+    fn an_outline_goes_around_the_whole_silhouette_behind_it() {
+        let document = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "outline": { "color": "ink", "size": 4 } }"##,
+        ));
+        let body = &document.layers()[0].surface;
+        let head = &document.layers()[1].surface;
+        assert_eq!(
+            body.pixel(67, 100),
+            Rgba8::BLACK,
+            "around the body, on the body layer"
+        );
+        assert_eq!(
+            body.pixel(125, 57),
+            Rgba8::BLACK,
+            "around the head, also on the body layer"
+        );
+        assert_eq!(head.pixel(125, 57).a, 0);
+        assert_eq!(
+            seen(&document, 100, 100),
+            Rgba8::new(255, 208, 0, 255),
+            "the body on top"
+        );
+        assert_eq!(
+            seen(&document, 115, 85),
+            Rgba8::new(255, 208, 0, 255),
+            "no line where head meets body"
+        );
+        assert_eq!(seen(&document, 125, 75), Rgba8::new(255, 208, 0, 255));
+        assert_eq!(seen(&document, 60, 100), Rgba8::WHITE, "not 10 pixels out");
+        // With a rim from the right: light along the inside of the right
+        // edges, on the top layer, over the drawing.
+        let lit = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "outline": { "color": "ink", "size": 2, "rim": { "color": "cream", "size": 2, "angle": 0 } } }"##,
+        ));
+        assert_eq!(
+            seen(&lit, 129, 110),
+            Rgba8::WHITE,
+            "the body's right edge, inside"
+        );
+        assert_eq!(seen(&lit, 139, 80), Rgba8::WHITE, "the head's right edge");
+        assert_eq!(
+            seen(&lit, 71, 110),
+            Rgba8::new(255, 208, 0, 255),
+            "the left edge is not lit"
+        );
+        assert_eq!(
+            lit.layers()[1].surface.pixel(129, 110),
+            Rgba8::WHITE,
+            "the rim is on the top layer"
+        );
+        // A mirrored duck is outlined where it is.
+        let mirrored = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "mirror": "x", "outline": { "color": "ink", "size": 4 } }"##,
+        ));
+        assert_eq!(seen(&mirrored, 75, 57), Rgba8::BLACK);
+        assert_eq!(seen(&mirrored, 125, 57), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn outline_sizes_may_be_keyframes_and_pixel_outlines_are_whole_pixels() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "grow": { "frames": 5, "commands": [
+            { "cmd": "group", "outline": { "color": "#000000", "size": { "keys": [[0, 0], [4, 8]] } }, "commands": [
+              { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] } } }"##;
+        let frame = play_frame(script, Some("grow"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "outline": { "color": "#000000", "size": 4 }, "commands": [
+              { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_eq!(seen(&by_hand, 37, 50), Rgba8::BLACK);
+        let pixel = play(
+            r##"{ "palette": { "k": "#000000", "r": "#FF0000" }, "commands": [
+            { "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 1 } },
+            { "cmd": "group", "outline": { "color": "k", "size": 2, "rim": { "color": "r", "size": 1, "angle": 0 } }, "commands": [
+              { "cmd": "rect", "x": 10, "y": 10, "width": 10, "height": 10, "fill": "r" } ] } ] }"##,
+        );
+        let layer = &pixel.layers()[0].surface;
+        for y in 0..32 {
+            for x in 0..32 {
+                let a = layer.pixel(x, y).a;
+                assert!(a == 0 || a == 255, "({x}, {y}): {a}");
+            }
+        }
+        assert_eq!(layer.pixel(8, 15), Rgba8::BLACK);
+        assert_eq!(layer.pixel(7, 15).a, 0);
+        // The filter command takes an outline too.
+        let filtered = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" },
+            { "cmd": "filter", "outline": { "color": "#0000FF", "size": 3 } } ] }"##,
+        );
+        assert_eq!(seen(&filtered, 38, 50), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(seen(&filtered, 50, 50), Rgba8::new(255, 0, 0, 255));
+        let bad = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "group", "outline": { "width": 3 }, "commands": [] } ] }"##,
+        );
+        assert!(bad.contains("`outline`: unknown field `width`"), "{bad}");
     }
 }

@@ -43,6 +43,22 @@ pub enum Filter {
     },
     /// Every pixel recoloured by its lightness through the stops.
     GradientMap(Vec<GradientStop>),
+    /// A line `size` pixels wide in `color` (not premultiplied) around
+    /// the silhouette, behind it. `hard`: whole pixels (a pixel canvas).
+    Outline {
+        size: f32,
+        color: [u8; 4],
+        hard: bool,
+    },
+    /// Rim light: a line `size` pixels wide along the inside edge, on
+    /// the side facing `angle` (degrees clockwise, 0 = light from the
+    /// right), on top.
+    Rim {
+        size: f32,
+        color: [u8; 4],
+        angle: f32,
+        hard: bool,
+    },
 }
 
 impl Filter {
@@ -55,6 +71,8 @@ impl Filter {
                 blur_reach(*blur) + offset.0.abs().ceil() as i32 + offset.1.abs().ceil() as i32
             }
             Filter::Adjust { .. } | Filter::GradientMap(_) => 0,
+            Filter::Outline { size, .. } => size.ceil() as i32 + 2,
+            Filter::Rim { .. } => 1,
         }
     }
 
@@ -63,8 +81,20 @@ impl Filter {
         match self {
             Filter::Blur(radius) | Filter::Glow { radius, .. } => *radius > 0.0,
             Filter::Shadow { blur, .. } => *blur > 0.0,
-            Filter::Adjust { .. } | Filter::GradientMap(_) => false,
+            Filter::Adjust { .. }
+            | Filter::GradientMap(_)
+            | Filter::Outline { .. }
+            | Filter::Rim { .. } => false,
         }
+    }
+
+    /// True if it's made from the whole silhouette (behind or over the
+    /// drawing) rather than changing the drawing's own pixels.
+    pub fn from_silhouette(&self) -> bool {
+        matches!(
+            self,
+            Filter::Shadow { .. } | Filter::Outline { .. } | Filter::Rim { .. }
+        )
     }
 }
 
@@ -197,7 +227,111 @@ impl Block {
                 contrast,
             } => self.adjust(*hue, *saturation, *brightness, *contrast),
             Filter::GradientMap(stops) => self.gradient_map(stops),
+            Filter::Outline { size, color, hard } => {
+                let line = self.outline(*size, *color, *hard);
+                self.under(&line);
+            }
+            Filter::Rim {
+                size,
+                color,
+                angle,
+                hard,
+            } => {
+                let line = self.rim(*size, *color, *angle, *hard);
+                self.over(&line);
+            }
         }
+    }
+
+    /// Lays the pixels over `below` (so `below` shows through the gaps).
+    fn under(&mut self, below: &[[f32; 4]]) {
+        for (p, s) in self.pixels.iter_mut().zip(below) {
+            let keep = 1.0 - p[3] / 255.0;
+            for i in 0..4 {
+                p[i] += s[i] * keep;
+            }
+        }
+    }
+
+    /// Lays `above` over the pixels.
+    fn over(&mut self, above: &[[f32; 4]]) {
+        for (p, s) in self.pixels.iter_mut().zip(above) {
+            let keep = 1.0 - s[3] / 255.0;
+            for i in 0..4 {
+                p[i] = s[i] + p[i] * keep;
+            }
+        }
+    }
+
+    /// How far each pixel is from the silhouette (pixels at least half
+    /// opaque): 0 inside it, growing outside; and the same inside out.
+    fn distances(&self) -> (Vec<f32>, Vec<f32>) {
+        let inside: Vec<bool> = self.pixels.iter().map(|p| p[3] >= 127.5).collect();
+        let outside: Vec<bool> = inside.iter().map(|&b| !b).collect();
+        (
+            distance_transform(&inside, self.width, self.height),
+            distance_transform(&outside, self.width, self.height),
+        )
+    }
+
+    /// The outline alone: `size` pixels out from the silhouette's edge.
+    fn outline(&self, size: f32, color: [u8; 4], hard: bool) -> Vec<[f32; 4]> {
+        let (to_shape, _) = self.distances();
+        let tint = premultiply([color[0], color[1], color[2]], f32::from(color[3]));
+        to_shape
+            .iter()
+            .map(|&d| {
+                let coverage = if hard {
+                    if d <= size.round().max(1.0) { 1.0 } else { 0.0 }
+                } else {
+                    (size + 0.5 - d).clamp(0.0, 1.0)
+                };
+                tint.map(|c| c * coverage)
+            })
+            .collect()
+    }
+
+    /// The rim light alone: inside the silhouette, within `size` of its
+    /// edge, where the edge faces the light at `angle`.
+    fn rim(&self, size: f32, color: [u8; 4], angle: f32, hard: bool) -> Vec<[f32; 4]> {
+        let (_, to_edge) = self.distances();
+        let tint = premultiply([color[0], color[1], color[2]], f32::from(color[3]));
+        let (sin, cos) = angle.to_radians().sin_cos();
+        let (w, h) = (self.width, self.height);
+        let at = |x: usize, y: usize| to_edge[y * w + x];
+        let mut out = vec![[0.0; 4]; self.pixels.len()];
+        for y in 0..h {
+            for x in 0..w {
+                let d = at(x, y);
+                if d <= 0.0 || self.pixels[y * w + x][3] <= 0.0 {
+                    continue; // outside, or see-through
+                }
+                let band = if hard {
+                    if d <= size.round().max(1.0) { 1.0 } else { 0.0 }
+                } else {
+                    (size + 0.5 - d).clamp(0.0, 1.0)
+                };
+                if band <= 0.0 {
+                    continue;
+                }
+                // The way out of the shape: downhill in the distance to the edge.
+                let gx = at((x + 1).min(w - 1), y) - at(x.saturating_sub(1), y);
+                let gy = at(x, (y + 1).min(h - 1)) - at(x, y.saturating_sub(1));
+                let length = gx.hypot(gy);
+                if length <= 0.0 {
+                    continue;
+                }
+                let facing = (-gx * cos - gy * sin) / length;
+                let lit = if hard {
+                    if facing > 0.3 { 1.0 } else { 0.0 }
+                } else {
+                    facing.clamp(0.0, 1.0)
+                };
+                let coverage = band * lit * self.pixels[y * w + x][3] / 255.0;
+                out[y * w + x] = tint.map(|c| c * coverage);
+            }
+        }
+        out
     }
 
     fn glow(&mut self, radius: f32, threshold: f32, strength: f32) {
@@ -442,6 +576,109 @@ fn subtract(sum: &mut [f32; 4], p: [f32; 4]) {
     for i in 0..4 {
         sum[i] -= p[i];
     }
+}
+
+/// The distance from each pixel to the nearest pixel marked `true`
+/// (0 on those), in pixels: a straight-line distance, worked out
+/// exactly in two passes (Felzenszwalb and Huttenlocher's method).
+fn distance_transform(marked: &[bool], width: usize, height: usize) -> Vec<f32> {
+    const FAR: f32 = 1.0e12;
+    let mut squared: Vec<f32> = marked.iter().map(|&m| if m { 0.0 } else { FAR }).collect();
+    let longest = width.max(height);
+    let mut f = vec![0.0; longest];
+    let mut d = vec![0.0; longest];
+    let mut v = vec![0usize; longest];
+    let mut z = vec![0.0f32; longest + 1];
+    // One row or column: the lower envelope of the parabolas
+    // (q - p)^2 + f[p], then each point reads the lowest one.
+    let mut pass = |line: &mut [f32]| {
+        let n = line.len();
+        f[..n].copy_from_slice(line);
+        let mut k = 0usize; // the last parabola on the envelope
+        v[0] = 0;
+        z[0] = -FAR;
+        z[1] = FAR;
+        for q in 1..n {
+            // Where parabola q meets the last one on the envelope; if it's
+            // before that one started, the last one is never lowest.
+            let mut s;
+            loop {
+                let p = v[k];
+                s = ((f[q] + (q * q) as f32) - (f[p] + (p * p) as f32))
+                    / (2.0 * (q as f32 - p as f32));
+                if s <= z[k] && k > 0 {
+                    k -= 1;
+                } else {
+                    break;
+                }
+            }
+            if s <= z[k] {
+                // It even beats the first parabola: start over from q.
+                k = 0;
+                v[0] = q;
+                z[0] = -FAR;
+                z[1] = FAR;
+            } else {
+                k += 1;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = FAR;
+            }
+        }
+        let mut j = 0;
+        for (q, out) in d[..n].iter_mut().enumerate() {
+            while z[j + 1] < q as f32 {
+                j += 1;
+            }
+            let p = v[j];
+            *out = (q as f32 - p as f32).powi(2) + f[p];
+        }
+        line.copy_from_slice(&d[..n]);
+    };
+    for y in 0..height {
+        pass(&mut squared[y * width..(y + 1) * width]);
+    }
+    let mut column = vec![0.0; height];
+    for x in 0..width {
+        for y in 0..height {
+            column[y] = squared[y * width + x];
+        }
+        pass(&mut column);
+        for y in 0..height {
+            squared[y * width + x] = column[y];
+        }
+    }
+    squared.iter().map(|&s| s.min(FAR).sqrt()).collect()
+}
+
+/// The outline alone of everything on `surface`, or its rim light:
+/// `filter` must be `Outline` or `Rim`.
+pub fn line_of(surface: &Surface, filter: &Filter, limits: PixelRect) -> Surface {
+    let mut out = Surface::new();
+    let Some(painted) = surface.painted_area() else {
+        return out;
+    };
+    let reach = filter.reach();
+    let area = PixelRect::new(
+        painted.left - reach,
+        painted.top - reach,
+        painted.right + reach,
+        painted.bottom + reach,
+    )
+    .intersect(&limits);
+    let mut block = Block::copy(surface, area);
+    block.pixels = match filter {
+        Filter::Outline { size, color, hard } => block.outline(*size, *color, *hard),
+        Filter::Rim {
+            size,
+            color,
+            angle,
+            hard,
+        } => block.rim(*size, *color, *angle, *hard),
+        _ => return out,
+    };
+    block.write_back(&mut out);
+    out
 }
 
 /// The shadow alone of everything on `surface`: its silhouette in
@@ -770,5 +1007,101 @@ mod tests {
         assert_eq!(combined.pixel(1, 1), Rgba8::new(0, 0, 0, 255));
         assert_eq!(combined.pixel(5, 5), Rgba8::new(0, 0, 0, 255));
         assert_eq!(combined.pixel(7, 7).a, 0);
+    }
+
+    #[test]
+    fn the_distance_transform_measures_straight_line_distances() {
+        // One marked pixel in a 7 x 7 block.
+        let mut marked = vec![false; 49];
+        marked[3 * 7 + 3] = true;
+        let d = distance_transform(&marked, 7, 7);
+        assert_eq!(d[3 * 7 + 3], 0.0);
+        assert_eq!(d[3 * 7 + 6], 3.0);
+        assert_eq!(d[0], 18f32.sqrt());
+        assert!((d[7 + 1] - 8f32.sqrt()).abs() < 1e-4);
+        // Two marked pixels: the nearest one counts.
+        marked[0] = true;
+        let d = distance_transform(&marked, 7, 7);
+        assert_eq!(d[1], 1.0);
+        assert_eq!(d[2 * 7 + 2], 2f32.sqrt());
+        // Nothing marked: everything is far.
+        let none = distance_transform(&[false; 9], 3, 3);
+        assert!(none.iter().all(|&v| v > 1000.0));
+    }
+
+    #[test]
+    fn an_outline_rings_the_silhouette_and_rim_light_faces_the_light() {
+        let mut surface = Surface::new();
+        square(&mut surface, 40, 40, 20, Rgba8::new(255, 0, 0, 255));
+        let outline = line_of(
+            &surface,
+            &Filter::Outline {
+                size: 3.0,
+                color: [0, 0, 255, 255],
+                hard: false,
+            },
+            CANVAS,
+        );
+        assert_eq!(
+            outline.pixel(38, 50),
+            Rgba8::new(0, 0, 255, 255),
+            "just outside"
+        );
+        assert_eq!(
+            outline.pixel(50, 50),
+            Rgba8::new(0, 0, 255, 255),
+            "inside too (it goes behind)"
+        );
+        assert_eq!(outline.pixel(35, 50).a, 0, "but not 5 pixels out");
+        let corner = outline.pixel(38, 38);
+        assert!(corner.a > 0 && corner.a < 255, "round corners: {corner:?}");
+        // Applied to the layer: the red stays on top, blue around it.
+        apply(
+            &mut surface,
+            &[Filter::Outline {
+                size: 3.0,
+                color: [0, 0, 255, 255],
+                hard: false,
+            }],
+            CANVAS,
+        );
+        assert_eq!(surface.pixel(50, 50), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(surface.pixel(38, 50), Rgba8::new(0, 0, 255, 255));
+        // Rim light from the right: on the right edge inside, not the left.
+        let mut plain = Surface::new();
+        square(&mut plain, 40, 40, 20, Rgba8::new(255, 0, 0, 255));
+        let rim = line_of(
+            &plain,
+            &Filter::Rim {
+                size: 2.0,
+                color: [255, 255, 255, 255],
+                angle: 0.0,
+                hard: false,
+            },
+            CANVAS,
+        );
+        assert!(rim.pixel(59, 50).a > 200, "{:?}", rim.pixel(59, 50));
+        assert_eq!(rim.pixel(58, 50).a, 128, "fading in over the size");
+        assert_eq!(rim.pixel(41, 50).a, 0, "the far side is dark");
+        assert_eq!(rim.pixel(50, 50).a, 0, "the middle is untouched");
+        assert_eq!(rim.pixel(62, 50).a, 0, "nothing outside");
+        // Hard: whole pixels only.
+        let hard = line_of(
+            &plain,
+            &Filter::Outline {
+                size: 2.0,
+                color: [0, 0, 255, 255],
+                hard: true,
+            },
+            CANVAS,
+        );
+        for y in 30..70 {
+            for x in 30..70 {
+                let a = hard.pixel(x, y).a;
+                assert!(a == 0 || a == 255, "({x}, {y}): {a}");
+            }
+        }
+        assert_eq!(hard.pixel(38, 50).a, 255);
+        assert_eq!(hard.pixel(37, 50).a, 0);
     }
 }

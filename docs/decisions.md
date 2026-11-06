@@ -1104,3 +1104,24 @@ put it:
   gradient) doesn't warn: nothing there is misleading. Percentages are
   of the boxes, which is what an agent needs to find the command.
 
+## 64. Outlines and rim light from the silhouette (phase 3, step 5)
+
+- **An outline is a silhouette filter**, like a shadow: `Outline` and
+  `Rim` are `Filter`s, so a group's `outline` joins its `filter` list
+  and the same scratch mechanism handles both. In `lay_effect` the
+  silhouette filters are laid in a fixed order: shadow, then outline,
+  on the lowest layer under the parts; the parts; then the rim light on
+  the highest layer, over them. The `filter` command takes `outline`
+  too, for one layer.
+- **Distances, not dilation.** The line is `size + 0.5 - distance` to
+  the silhouette (pixels at least half opaque), from an exact
+  Euclidean distance transform (Felzenszwalb-Huttenlocher, two linear
+  passes), so corners are round, edges smooth, and the cost doesn't
+  depend on the size. Rim light uses the distance *inside* the
+  silhouette and the downhill direction of that field as the edge's
+  normal; `facing` is its dot with the light direction. On a pixel
+  canvas both are thresholded to whole pixels.
+- **Cost** (release, 1920 x 1080, an ellipse covering most of the
+  canvas: 0.04 s alone): outline 0.17 s; outline with rim 0.26 s; a
+  blurred shadow 0.18 s.
+
