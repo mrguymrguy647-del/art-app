@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use super::{
     Animations, BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd,
-    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
-    TransformLayerCmd,
+    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, SelectCmd,
+    StrokeCmd, TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
@@ -188,6 +188,12 @@ pub fn gradient(layer: &str, gradient: &Gradient, opacity: f32) -> Vec<Command> 
             erase: None,
         }),
     ]
+}
+
+/// A change of selection made in the app, as the `select` command that
+/// makes it again.
+pub fn select(command: SelectCmd) -> Vec<Command> {
+    vec![Command::Select(command)]
 }
 
 pub fn clear_layer(name: &str) -> Vec<Command> {
@@ -478,6 +484,7 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             }
         }
         Command::Layer(_)
+        | Command::Select(_)
         | Command::DeleteLayer(_)
         | Command::MoveLayer(_)
         | Command::RenameLayer(_)

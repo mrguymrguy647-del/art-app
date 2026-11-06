@@ -18,7 +18,7 @@
 //! with examples, is in `docs/script-format.md`.
 
 pub mod animate;
-mod geometry;
+pub(crate) mod geometry;
 mod player;
 pub mod record;
 pub mod reuse;
@@ -445,6 +445,7 @@ pub enum Command {
     ClearLayer(ClearLayerCmd),
     TransformLayer(TransformLayerCmd),
     Brush(BrushCmd),
+    Select(SelectCmd),
     Stroke(StrokeCmd),
     Erase(StrokeCmd),
     Line(LineCmd),
@@ -481,6 +482,7 @@ impl Command {
             Command::ClearLayer(_) => "clear_layer",
             Command::TransformLayer(_) => "transform_layer",
             Command::Brush(_) => "brush",
+            Command::Select(_) => "select",
             Command::Stroke(_) => "stroke",
             Command::Erase(_) => "erase",
             Command::Line(_) => "line",
@@ -673,6 +675,42 @@ pub struct BrushCmd {
     /// (`{}` turns them all off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamics: Option<DynamicsCmd>,
+}
+
+/// `select`: from here on, every painting command stays inside the
+/// selection (as inside a group's `mask`, and as with a selection in the
+/// app). One shape (`rect`, `ellipse`, `circle`, `polygon`, written like
+/// an area), or `layer` (where a layer has paint), or `all`, `none` or
+/// `invert`. `mode` "add" or "subtract" combines the shape with the
+/// selection there is; `feather` softens the shape's edge (or, alone,
+/// the selection's).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rect: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ellipse: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Value>,
+    /// Where this layer has paint, as much as each pixel is opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<bool>,
+    /// `true`: no selection any more; everything can be painted again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub none: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invert: Option<bool>,
+    /// "replace" (the default), "add" or "subtract".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// How many pixels the edge fades over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feather: Option<f32>,
 }
 
 /// A brush's dynamics, as written: see `brush::Dynamics`. Anything left

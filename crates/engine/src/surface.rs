@@ -62,6 +62,32 @@ impl PixelRect {
         self.left >= self.right || self.top >= self.bottom
     }
 
+    /// The smallest rectangle holding both (an empty one adds nothing).
+    pub fn union(&self, other: &PixelRect) -> PixelRect {
+        if self.is_empty() {
+            return *other;
+        }
+        if other.is_empty() {
+            return *self;
+        }
+        PixelRect::new(
+            self.left.min(other.left),
+            self.top.min(other.top),
+            self.right.max(other.right),
+            self.bottom.max(other.bottom),
+        )
+    }
+
+    /// Bigger by `pixels` on every side.
+    pub fn grown(&self, pixels: i32) -> PixelRect {
+        PixelRect::new(
+            self.left - pixels,
+            self.top - pixels,
+            self.right + pixels,
+            self.bottom + pixels,
+        )
+    }
+
     /// The part both rectangles have in common.
     pub fn intersect(&self, other: &PixelRect) -> PixelRect {
         PixelRect::new(

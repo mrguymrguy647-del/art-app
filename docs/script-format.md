@@ -684,6 +684,32 @@ fill and dab inside is multiplied by the mask. A mask is one of:
   warning too (`painted 100% of the canvas, but its shapes cover 1%`): usually a `gradient` or
   `fill` without an `area` inside a `not` mask. Give it an `area`.
 
+### `select`: a selection, like the app's
+
+From a `select` on, every command that paints (strokes, shapes, fills, gradients, text, filters)
+stays inside the selection, as inside a group's `mask`, until the next `select`. It's the same as
+selecting in the app, and Export strokes writes the app's selections this way.
+
+```json
+{ "cmd": "select", "rect": [100, 80, 300, 200] }
+{ "cmd": "select", "ellipse": [400, 300, 120, 80], "mode": "add" }
+{ "cmd": "select", "circle": [250, 180, 40], "mode": "subtract", "feather": 6 }
+{ "cmd": "select", "layer": "Duck" }
+{ "cmd": "select", "invert": true }
+{ "cmd": "select", "none": true }
+```
+
+| Field | |
+|---|---|
+| `rect`, `ellipse`, `circle`, `polygon` | A shape, written like an [area](#areas); placed by the groups around it. |
+| `layer` | Where that layer has paint (as much as each pixel is opaque). |
+| `all`, `none`, `invert` | `true`: everything; no selection (paint anywhere again); everything not selected. |
+| `mode` | `"replace"` (the default), `"add"` or `"subtract"`: how the shape combines with the selection there is. |
+| `feather` | Pixels the shape's edge fades over. On its own, it softens the selection there is. |
+
+One shape (or `layer`, `all`, `none`, `invert`) per command. A selection that comes out empty is
+dropped, with a warning. Unlike a group's `mask`, a selection stays after the group that made it.
+
 ## Filters
 
 ```json

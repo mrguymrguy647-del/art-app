@@ -8,7 +8,7 @@
 //! they were for undo.
 
 use crate::color::Hsv;
-use crate::fill::{GradientStop, color_through_stops};
+use crate::fill::{GradientStop, Mask, color_through_stops};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
 
@@ -104,6 +104,60 @@ fn blur_reach(radius: f32) -> i32 {
     } else {
         (radius * 2.0).ceil() as i32 + 2
     }
+}
+
+/// Like [`apply`], but each pixel changes only as much as `clip` (a
+/// selection) covers it: outside it everything stays as it was, and on a
+/// soft edge the filtered and the old pixel are mixed.
+pub fn apply_within(
+    surface: &mut Surface,
+    filters: &[Filter],
+    limits: PixelRect,
+    clip: Option<&Mask>,
+) -> TilesBefore {
+    let mut before = apply(surface, filters, limits);
+    let Some(clip) = clip else {
+        return before;
+    };
+    before.retain(|coord, old| {
+        let (left, top) = coord.origin();
+        let mut changed = false;
+        let mut new = surface.tile(*coord).cloned().unwrap_or_default();
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let amount = u32::from(clip.get(left + x as i32, top + y as i32));
+                let was = old.as_ref().map_or(Rgba8::TRANSPARENT, |t| t.pixel(x, y));
+                let now = new.pixel(x, y);
+                // Premultiplied colours mix channel by channel.
+                let mix = |a: u8, b: u8| {
+                    ((u32::from(a) * (255 - amount) + u32::from(b) * amount + 127) / 255) as u8
+                };
+                let pixel = Rgba8 {
+                    r: mix(was.r, now.r),
+                    g: mix(was.g, now.g),
+                    b: mix(was.b, now.b),
+                    a: mix(was.a, now.a),
+                };
+                if pixel != was {
+                    changed = true;
+                }
+                new.set_pixel(x, y, pixel);
+            }
+        }
+        if changed {
+            *surface.tile_mut(*coord) = new;
+        } else {
+            // Nothing selected here changed: put the tile back as it was.
+            match old {
+                Some(tile) => *surface.tile_mut(*coord) = tile.clone(),
+                None => {
+                    surface.remove_tile(*coord);
+                }
+            }
+        }
+        changed
+    });
+    before
 }
 
 /// Applies `filters`, in order, to everything on `surface`, never
@@ -1103,5 +1157,40 @@ mod tests {
         }
         assert_eq!(hard.pixel(38, 50).a, 255);
         assert_eq!(hard.pixel(37, 50).a, 0);
+    }
+
+    #[test]
+    fn a_filter_inside_a_selection_changes_only_what_is_selected() {
+        use crate::selection;
+        let limits = PixelRect::new(0, 0, 300, 100);
+        let mut surface = Surface::new();
+        // A hard black bar across the middle: blurring softens its edges.
+        for y in 40..60 {
+            for x in 0..300 {
+                surface.set_pixel(
+                    x,
+                    y,
+                    Rgba8 {
+                        r: 0,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    },
+                );
+            }
+        }
+        let original = surface.clone();
+        let left_half = selection::rect(0.0, 0.0, 150.0, 100.0, limits);
+        let blur = [Filter::Blur(4.0)];
+        let before = apply_within(&mut surface, &blur, limits, Some(&left_half));
+        assert!(!before.is_empty());
+        // Selected: softened. Not selected: exactly as it was.
+        assert!(surface.pixel(50, 39).a > 0, "the left half is blurred");
+        assert_eq!(surface.pixel(250, 39), original.pixel(250, 39));
+        assert_eq!(surface.pixel(250, 40), original.pixel(250, 40));
+        // Without a selection it's the plain filter.
+        let mut plain = original.clone();
+        apply_within(&mut plain, &blur, limits, None);
+        assert!(plain.pixel(250, 39).a > 0);
     }
 }

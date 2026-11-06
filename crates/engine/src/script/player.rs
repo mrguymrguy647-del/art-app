@@ -32,7 +32,7 @@ use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
     HatchCmd, IncludeCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd,
-    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd,
+    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, SelectCmd, StampCmd, StrokeCmd, TextCmd,
     TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
@@ -53,6 +53,7 @@ use crate::layer_transform::transform_layer;
 use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
+use crate::selection::{self, Combine, Selection};
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
@@ -576,6 +577,12 @@ pub struct Player {
     textures: HashMap<String, Arc<TextureImage>>,
     /// Patterns a brush paints with, by the number in `BrushSettings::source`.
     sources: Vec<Arc<Paint>>,
+    /// The `select` command's selection: painting stays inside it.
+    selection: Option<Selection>,
+    /// The selection combined with a group's mask, kept so it isn't worked
+    /// out again for every stroke: which two masks (by address) it was
+    /// made from, and the result.
+    clip_cache: Option<(usize, usize, Arc<Mask>)>,
     /// Palette colours that came from included files (not the script's
     /// own, so not "never used" warnings), and which file each came from.
     included_colors: HashMap<String, String>,
@@ -697,6 +704,8 @@ impl Player {
             tip_files: HashMap::new(),
             textures: HashMap::new(),
             sources: Vec::new(),
+            selection: None,
+            clip_cache: None,
             included_colors: HashMap::new(),
         })
     }
@@ -1826,7 +1835,7 @@ impl Player {
     /// Does `job` on `document`: the picture, or a scratch picture if
     /// `capture` (then nothing is remembered for undo or the report).
     fn do_job(&mut self, document: &mut Document, job: Job, capture: bool) -> f32 {
-        let clip = self.frame().mask.clone();
+        let clip = self.clip();
         match job {
             Job::Stroke {
                 layer,
@@ -2078,6 +2087,7 @@ impl Player {
                 Ok(())
             }
             Command::Brush(brush) => self.set_brush(brush),
+            Command::Select(select) => self.select(document, select),
             Command::Stroke(stroke) => self.stroke(document, stroke, BrushMode::Paint),
             Command::Erase(stroke) => self.stroke(document, stroke, BrushMode::Erase),
             Command::Line(line) => self.line(document, line),
@@ -2842,6 +2852,157 @@ impl Player {
         self.painted_by.entry(id).or_default().insert(top);
     }
 
+    /// Where painting may land now: inside the group's mask and the
+    /// `select` selection, whichever there are.
+    fn clip(&mut self) -> Option<Arc<Mask>> {
+        let group = self.frame().mask.clone();
+        let selected = self.selection.as_ref().map(|s| Arc::clone(s.mask()));
+        match (group, selected) {
+            (None, selected) => selected,
+            (group, None) => group,
+            (Some(group), Some(selected)) => {
+                let key = (
+                    Arc::as_ptr(&group) as usize,
+                    Arc::as_ptr(&selected) as usize,
+                );
+                if let Some((a, b, both)) = &self.clip_cache
+                    && (*a, *b) == key
+                {
+                    return Some(Arc::clone(both));
+                }
+                let both = Arc::new(group.intersect(&selected));
+                self.clip_cache = Some((key.0, key.1, Arc::clone(&both)));
+                Some(both)
+            }
+        }
+    }
+
+    /// `select`: sets, adds to, takes from, inverts, feathers or drops
+    /// the selection that painting stays inside.
+    fn select(&mut self, document: &Document, command: &SelectCmd) -> Result<(), String> {
+        let limits = document.bounds();
+        let how = match command.mode.as_deref() {
+            None | Some("replace") => Combine::Replace,
+            Some("add") => Combine::Add,
+            Some("subtract") => Combine::Subtract,
+            Some(other) => {
+                return Err(format!(
+                    "`mode` is \"replace\", \"add\" or \"subtract\", not \"{other}\""
+                ));
+            }
+        };
+        let shapes = [
+            ("rect", &command.rect),
+            ("ellipse", &command.ellipse),
+            ("circle", &command.circle),
+            ("polygon", &command.polygon),
+        ];
+        let given: Vec<&str> = shapes
+            .iter()
+            .filter(|(_, v)| v.is_some())
+            .map(|(name, _)| *name)
+            .chain(command.layer.as_ref().map(|_| "layer"))
+            .chain(command.all.filter(|&a| a).map(|_| "all"))
+            .chain(command.none.filter(|&n| n).map(|_| "none"))
+            .chain(command.invert.filter(|&i| i).map(|_| "invert"))
+            .collect();
+        if given.len() > 1 {
+            return Err(format!(
+                "one at a time: `{}` (use two `select` commands, with \"mode\": \"add\")",
+                given.join("`, `")
+            ));
+        }
+        let feather = match command.feather {
+            Some(f) if f < 0.0 || !f.is_finite() => {
+                return Err("`feather` is a number of pixels, 0 or more".into());
+            }
+            Some(f) => f * self.detail(),
+            None => 0.0,
+        };
+        let soften = |mask: Mask| {
+            if feather > 0.0 {
+                mask.feathered(feather, limits)
+            } else {
+                mask
+            }
+        };
+        let current = self.selection.take();
+        let new = match given.first().copied() {
+            Some("none") => {
+                if command.mode.is_some() || command.feather.is_some() {
+                    return Err("`none` drops the selection: leave out `mode` and `feather`".into());
+                }
+                None
+            }
+            Some("invert") => {
+                if command.mode.is_some() {
+                    return Err("`invert` takes no `mode`".into());
+                }
+                Selection::inverted(current.as_ref(), limits).and_then(|s| {
+                    if feather > 0.0 {
+                        s.feathered(feather, limits)
+                    } else {
+                        Some(s)
+                    }
+                })
+            }
+            Some("all") => {
+                Selection::combine(current.as_ref(), soften(selection::all(limits)), how)
+            }
+            Some("layer") => {
+                let name = command.layer.as_deref().unwrap_or_default();
+                let id = find_layer(document, name)?;
+                self.note_read(id);
+                let layer = document.layer(id).ok_or("no such layer")?;
+                let mask = selection::layer_contents(&layer.surface, limits);
+                Selection::combine(current.as_ref(), soften(mask), how)
+            }
+            Some(kind) => {
+                let value = shapes
+                    .iter()
+                    .find(|(name, _)| *name == kind)
+                    .and_then(|(_, v)| v.as_ref())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut area = serde_json::Map::new();
+                area.insert(kind.to_owned(), self.value(&value)?);
+                let polygon = self.area(&Value::Object(area))?;
+                let placed = self.place_polygon(polygon);
+                let mut mask = geometry::polygons_mask(&[placed], limits);
+                if self.pixel.is_some() {
+                    mask.threshold(); // a pixel canvas has hard edges
+                }
+                Selection::combine(current.as_ref(), soften(mask), how)
+            }
+            None => match (command.feather, current.as_ref()) {
+                (Some(_), Some(current)) => current.feathered(feather, limits),
+                (Some(_), None) => {
+                    return Err(
+                        "`feather` alone softens the selection, but there is none yet".into(),
+                    );
+                }
+                (None, _) => {
+                    return Err(
+                        "`select` needs a shape (`rect`, `ellipse`, `circle`, `polygon`), `layer`, \
+                         `all`, `none`, `invert` or `feather`"
+                            .into(),
+                    );
+                }
+            },
+        };
+        // As in the app: a selection that comes out empty (everything
+        // subtracted, a shape off the canvas) is no selection.
+        if new.is_none() && given.first() != Some(&"none") && !self.options.dry_run {
+            self.warnings.push(format!(
+                "command {}: the selection came out empty, so it's dropped and painting is no \
+                 longer limited",
+                self.position().0
+            ));
+        }
+        self.selection = new;
+        Ok(())
+    }
+
     /// `filter`: changes a layer in place.
     fn filter(&mut self, document: &mut Document, command: &FilterCmd) -> Result<(), String> {
         let filters = self.read_filters(&command.fields())?;
@@ -2859,10 +3020,13 @@ impl Player {
         }
         self.flush_tiles();
         let limits = document.bounds();
+        // Inside the `select` selection, if there is one. (Not a group's
+        // mask: filters never were, and old scripts must paint the same.)
+        let clip = self.selection.as_ref().map(|s| Arc::clone(s.mask()));
         let Some(layer) = document.layer_mut(id) else {
             return Ok(());
         };
-        let before = filters::apply(&mut layer.surface, &filters, limits);
+        let before = filters::apply_within(&mut layer.surface, &filters, limits, clip.as_deref());
         if !before.is_empty() {
             self.record(TileCommand::new("Filter", id, before));
             let top = self.position().0;
@@ -5287,6 +5451,129 @@ mod tests {
         let document = play(&docs[start..end]);
         let names: Vec<&str> = document.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["Sky", "Sun", "Sea"]);
+    }
+
+    // ---- Selections -------------------------------------------------------------
+
+    /// A 100 x 60 canvas, `before` (select commands) then a red rect over
+    /// everything: what ends up red is what was selected.
+    fn selected(before: &str) -> Document {
+        play(&format!(
+            r##"{{ "commands": [
+              {{ "cmd": "canvas", "width": 100, "height": 60 }},
+              {before}
+              {{ "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60, "fill": "#FF0000" }}
+            ] }}"##
+        ))
+    }
+
+    fn alpha(document: &Document, x: i32, y: i32) -> u8 {
+        document.active_layer().surface.pixel(x, y).a
+    }
+
+    #[test]
+    fn select_limits_painting_to_the_shape() {
+        let d = selected(r#"{ "cmd": "select", "rect": [10, 10, 30, 20] },"#);
+        assert_eq!(alpha(&d, 20, 20), 255);
+        assert_eq!(alpha(&d, 50, 20), 0);
+        let d = selected(r#"{ "cmd": "select", "circle": [50, 30, 10] },"#);
+        assert_eq!(alpha(&d, 50, 30), 255);
+        assert_eq!(alpha(&d, 50, 45), 0);
+        // `none` drops it again.
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 5, 5] }, { "cmd": "select", "none": true },"#,
+        );
+        assert_eq!(alpha(&d, 90, 50), 255);
+    }
+
+    #[test]
+    fn select_adds_subtracts_inverts_and_feathers() {
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 20, 60] },
+               { "cmd": "select", "rect": [80, 0, 20, 60], "mode": "add" },
+               { "cmd": "select", "rect": [0, 0, 100, 10], "mode": "subtract" },"#,
+        );
+        assert_eq!(alpha(&d, 10, 30), 255);
+        assert_eq!(alpha(&d, 90, 30), 255);
+        assert_eq!(alpha(&d, 50, 30), 0);
+        assert_eq!(alpha(&d, 10, 5), 0);
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 50, 60] }, { "cmd": "select", "invert": true },"#,
+        );
+        assert_eq!(alpha(&d, 10, 30), 0);
+        assert_eq!(alpha(&d, 70, 30), 255);
+        let d = selected(r#"{ "cmd": "select", "rect": [30, 0, 40, 60], "feather": 6 },"#);
+        assert_eq!(alpha(&d, 50, 30), 255);
+        let edge = alpha(&d, 30, 30);
+        assert!(edge > 40 && edge < 220, "a soft edge, got {edge}");
+        // Feather alone softens the selection there is.
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [30, 0, 40, 60] }, { "cmd": "select", "feather": 6 },"#,
+        );
+        let edge = alpha(&d, 30, 30);
+        assert!(edge > 40 && edge < 220, "a soft edge, got {edge}");
+    }
+
+    #[test]
+    fn select_layer_uses_where_a_layer_has_paint() {
+        let d = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 60 },
+              { "cmd": "layer", "name": "Shape" },
+              { "cmd": "ellipse", "center": [30, 30], "radius": 15, "fill": "#000000" },
+              { "cmd": "layer", "name": "Colour" },
+              { "cmd": "select", "layer": "Shape" },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60, "fill": "#FF0000" }
+            ] }"##,
+        );
+        assert_eq!(alpha(&d, 30, 30), 255);
+        assert_eq!(alpha(&d, 80, 30), 0);
+    }
+
+    #[test]
+    fn a_filter_stays_inside_the_selection() {
+        let d = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 60 },
+              { "cmd": "rect", "x": 0, "y": 20, "width": 100, "height": 20, "fill": "#000000" },
+              { "cmd": "select", "rect": [0, 0, 50, 60] },
+              { "cmd": "filter", "blur": 4 }
+            ] }"##,
+        );
+        assert!(alpha(&d, 25, 18) > 0, "blurred inside");
+        assert_eq!(alpha(&d, 75, 18), 0, "untouched outside");
+    }
+
+    #[test]
+    fn select_mistakes_are_explained() {
+        let base = r#"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 }, SELECT ] }"#;
+        let e = |select: &str| error(&base.replace("SELECT", select));
+        assert!(
+            e(r#"{ "cmd": "select", "rect": [0, 0, 5, 5], "circle": [5, 5, 2] }"#)
+                .contains("one at a time")
+        );
+        assert!(
+            e(r#"{ "cmd": "select", "rect": [0, 0, 5, 5], "mode": "xor" }"#).contains("\"add\"")
+        );
+        assert!(e(r#"{ "cmd": "select" }"#).contains("needs a shape"));
+        assert!(e(r#"{ "cmd": "select", "feather": 3 }"#).contains("there is none yet"));
+        assert!(e(r#"{ "cmd": "select", "none": true, "feather": 3 }"#).contains("leave out"));
+        assert!(e(r#"{ "cmd": "select", "layer": "Nope" }"#).contains("Nope"));
+    }
+
+    #[test]
+    fn an_empty_selection_is_dropped_with_a_warning() {
+        let report = report_of(
+            r#"{ "commands": [
+              { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "select", "rect": [50, 50, 5, 5] }
+            ] }"#,
+        );
+        assert!(
+            report.warnings.iter().any(|w| w.contains("came out empty")),
+            "{:?}",
+            report.warnings
+        );
     }
 
     // ---- Groups ---------------------------------------------------------------
