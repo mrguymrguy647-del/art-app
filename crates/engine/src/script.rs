@@ -1833,20 +1833,23 @@ mod tests {
     /// typo there can't teach anyone (or any AI) the wrong thing.
     #[test]
     fn the_examples_in_the_documentation_are_valid() {
-        let quick_start = include_str!("../../../docs/QUICKSTART.md");
+        // On Windows, Git may check the files out with "\r\n" line endings;
+        // the examples are found by "\n", so read them with Unix endings.
+        let unix = |text: &str| text.replace("\r\n", "\n");
+        let quick_start = unix(include_str!("../../../docs/QUICKSTART.md"));
         let docs = [
-            include_str!("../../../docs/script-format.md"),
-            include_str!("../../../docs/AI_GUIDE.md"),
-            quick_start,
+            unix(include_str!("../../../docs/script-format.md")),
+            unix(include_str!("../../../docs/AI_GUIDE.md")),
+            quick_start.clone(),
         ];
         // The quick start's first script is the example file, word for word.
-        let example = include_str!("../../../examples/two-ducks.json");
+        let example = unix(include_str!("../../../examples/two-ducks.json"));
         assert!(
             quick_start.contains(example.trim()),
             "QUICKSTART.md and two-ducks.json differ"
         );
         let mut checked = 0;
-        for doc in docs {
+        for doc in &docs {
             for block in doc.split("```json\n").skip(1) {
                 let block = block.split("```").next().unwrap_or("").trim();
                 if block.contains('…') || block.contains("...") {

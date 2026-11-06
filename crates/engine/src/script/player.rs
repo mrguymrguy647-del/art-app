@@ -5280,7 +5280,8 @@ mod tests {
 
     #[test]
     fn the_first_example_in_the_documentation_plays() {
-        let docs = include_str!("../../../../docs/script-format.md");
+        // Unix line endings, however Git checked the file out.
+        let docs = include_str!("../../../../docs/script-format.md").replace("\r\n", "\n");
         let start = docs.find("```json\n{").expect("an example") + "```json\n".len();
         let end = start + docs[start..].find("```").expect("its end");
         let document = play(&docs[start..end]);
