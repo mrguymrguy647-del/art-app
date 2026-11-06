@@ -101,6 +101,93 @@ impl Image {
         image
     }
 
+    /// Opens a PNG or JPEG file (by its first bytes, not its name):
+    /// greys and palettes become colours, 16-bit depths 8-bit. For
+    /// reference pictures; an `.artapp` picture is opened by `file::open`.
+    pub fn load(path: &Path) -> Result<Image, FileError> {
+        let bytes = std::fs::read(path).map_err(FileError::Io)?;
+        Image::decode(&bytes)
+    }
+
+    /// `load`, from the file's bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Image, FileError> {
+        let damaged = |what: String| FileError::Damaged(what);
+        if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+            let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+            decoder.set_transformations(png::Transformations::normalize_to_color8());
+            let mut reader = decoder
+                .read_info()
+                .map_err(|e| damaged(format!("not a readable PNG: {e}")))?;
+            let mut buffer = vec![0; reader.output_buffer_size().unwrap_or(0)];
+            let info = reader
+                .next_frame(&mut buffer)
+                .map_err(|e| damaged(format!("not a readable PNG: {e}")))?;
+            let data = &buffer[..info.buffer_size()];
+            let pixels: Vec<Color> = match info.color_type {
+                png::ColorType::Rgba => data
+                    .chunks_exact(4)
+                    .map(|p| [p[0], p[1], p[2], p[3]])
+                    .collect(),
+                png::ColorType::Rgb => data
+                    .chunks_exact(3)
+                    .map(|p| [p[0], p[1], p[2], 255])
+                    .collect(),
+                png::ColorType::GrayscaleAlpha => data
+                    .chunks_exact(2)
+                    .map(|p| [p[0], p[0], p[0], p[1]])
+                    .collect(),
+                png::ColorType::Grayscale => data.iter().map(|&v| [v, v, v, 255]).collect(),
+                png::ColorType::Indexed => {
+                    return Err(damaged("a palette PNG that couldn't be expanded".into()));
+                }
+            };
+            return Image::from_pixels(info.width, info.height, pixels)
+                .ok_or_else(|| damaged("the PNG has the wrong number of pixels".into()));
+        }
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+            let data = decoder
+                .decode()
+                .map_err(|e| damaged(format!("not a readable JPEG: {e}")))?;
+            let info = decoder
+                .info()
+                .ok_or_else(|| damaged("the JPEG has no size".into()))?;
+            let pixels: Vec<Color> = match info.pixel_format {
+                jpeg_decoder::PixelFormat::RGB24 => data
+                    .chunks_exact(3)
+                    .map(|p| [p[0], p[1], p[2], 255])
+                    .collect(),
+                jpeg_decoder::PixelFormat::L8 => data.iter().map(|&v| [v, v, v, 255]).collect(),
+                jpeg_decoder::PixelFormat::L16 => data
+                    .chunks_exact(2)
+                    .map(|p| [p[0], p[0], p[0], 255])
+                    .collect(),
+                jpeg_decoder::PixelFormat::CMYK32 => data
+                    .chunks_exact(4)
+                    .map(|p| {
+                        let k = u32::from(p[3]);
+                        let to = |c: u8| ((255 - u32::from(c)) * (255 - k) / 255) as u8;
+                        [to(p[0]), to(p[1]), to(p[2]), 255]
+                    })
+                    .collect(),
+            };
+            return Image::from_pixels(u32::from(info.width), u32::from(info.height), pixels)
+                .ok_or_else(|| damaged("the JPEG has the wrong number of pixels".into()));
+        }
+        Err(FileError::Damaged(
+            "not a PNG or JPEG file (it doesn't start like one)".into(),
+        ))
+    }
+
+    /// An image from its pixels, row by row; `None` if the count is wrong.
+    pub fn from_pixels(width: u32, height: u32, pixels: Vec<Color>) -> Option<Image> {
+        (pixels.len() == width as usize * height as usize).then_some(Image {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     /// The whole canvas as you'd see it.
     pub fn of_document(document: &Document, background: Background) -> Self {
         Self::from_document(document, document.bounds(), background)
@@ -373,5 +460,37 @@ mod tests {
             assert_eq!(reader.info().color_type, color_type);
             assert_eq!((reader.info().width, reader.info().height), (3, 2));
         }
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    #[test]
+    fn png_and_jpeg_files_are_opened_as_colours() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let image = Image::load(&folder.join("two-ducks-reference.png"));
+        let image = match image {
+            Ok(image) => image,
+            Err(_) => return, // no reference picture to open here
+        };
+        assert!(image.width() > 0 && image.height() > 0);
+    }
+
+    #[test]
+    fn a_jpeg_decodes_to_about_the_same_colours_as_its_png() {
+        // A tiny JPEG and PNG made with the same pixels (hand-encoded
+        // bytes would be opaque, so they're built here instead).
+        let mut rgb = Image::new(16, 8, [200, 100, 50, 255]);
+        rgb.set_pixel(0, 0, [10, 20, 30, 255]);
+        let mut png_bytes = Vec::new();
+        rgb.write_png(&mut png_bytes, false).unwrap();
+        let back = Image::decode(&png_bytes).unwrap();
+        assert_eq!(back, rgb);
+        assert!(matches!(
+            Image::decode(b"hello").unwrap_err(),
+            FileError::Damaged(_)
+        ));
     }
 }

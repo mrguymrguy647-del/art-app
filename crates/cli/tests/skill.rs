@@ -284,3 +284,38 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
         assert!(warnings.is_empty(), "{}: {warnings:?}", folder.display());
     }
 }
+
+/// The senses are tested against reality: the gallery's known mistakes
+/// are flagged, and what's right about the pieces isn't.
+#[test]
+fn the_critique_catches_the_gallerys_known_mistakes() {
+    let gallery = root().join("skills/art-app/gallery");
+    let critique = |piece: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+            .arg("critique")
+            .arg(gallery.join(piece).join("script.json"))
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(output.status.success(), "{text}");
+        text
+    };
+    // The sunset pond: the green lily pads are out of key with the warm
+    // light; the eye goes to the duck, as meant; the values aren't flat.
+    let pond = critique("sunset-pond");
+    assert!(
+        pond.contains("out of key: a saturated yellow-green at x ") && pond.contains("(lilypad, "),
+        "{pond}"
+    );
+    assert!(pond.contains("focal point: the eye goes to duck"), "{pond}");
+    assert!(!pond.contains("looks flat"), "{pond}");
+    assert!(
+        pond.contains("focal contrast: ") && pond.contains("(good;"),
+        "{pond}"
+    );
+    // The portrait: nothing out of key, the eye inside the duck.
+    let portrait = critique("duck-portrait");
+    assert!(portrait.contains("out of key: nothing"), "{portrait}");
+    assert!(portrait.contains("inside the focal part"), "{portrait}");
+    assert!(!portrait.contains("looks flat"), "{portrait}");
+}

@@ -16,3 +16,5 @@ serde_json = "1"
 # (assets/fonts). Only what's needed: no system fonts are ever used.
 ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }
 gif = "0.13"
+# For reading reference pictures (JPEG; PNG comes with the png crate).
+jpeg-decoder = { version = "0.3", default-features = false }

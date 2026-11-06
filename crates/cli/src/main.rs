@@ -21,6 +21,7 @@ macro_rules! complain {
     };
 }
 
+mod critique;
 mod export;
 mod font;
 mod grid;
@@ -70,6 +71,11 @@ USAGE
                                            named parts' silhouettes, and a heat
                                            map of where the eye goes, with the
                                            intent's focal point ringed
+  art-cli critique <script.json> [options] about fifteen findings in numbers:
+                                           values, focal point, colour and key,
+                                           texture, readability at thumbnail
+                                           size, composition (warnings to look
+                                           at, never goals)
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -115,6 +121,12 @@ VIEWS OPTIONS
   --frame <n>        for a script with animations: frame n (from 0)
   --animation <name> which animation, if the script has more than one
 
+CRITIQUE OPTIONS
+  --detail           also every named part's numbers (texture, thumbnail size)
+  --frame <n>        for a script with animations: critique frame n (from 0)
+  --frames <a>-<b>   one short line per frame, and which frame is worst
+  --animation <name> which animation, if the script has more than one
+
 EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
   --out <folder>     where to save (default: out)
   --sheet            <name>.png (one row per animation) and <name>.json: the
@@ -135,6 +147,7 @@ EXAMPLES
   art-cli render examples/sunset.json --preview --layers \"Sky,Sun\"
   art-cli export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
   art-cli views examples/sunset.json
+  art-cli critique examples/sunset.json
 
 The script format is described in docs/script-format.md.";
 
@@ -157,6 +170,9 @@ fn main() -> ExitCode {
         },
         Some("measure") => measure(&args[1..]),
         Some("views") => views::parse_views(&args[1..]).and_then(|options| views::views(&options)),
+        Some("critique") => {
+            critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
+        }
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
             Ok(())

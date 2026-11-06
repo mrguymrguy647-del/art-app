@@ -6,6 +6,13 @@
     "whole bird, a soft bokeh background, and a faint unifying pass."
   ],
   "seed": 21,
+  "intent": {
+    "subject": "a portrait of a yellow duck, lit from the top right, against soft blue bokeh",
+    "focal": "duck",
+    "light": "top right",
+    "mood": "bright, friendly, studio",
+    "key_colors": ["yellow", "bg_mid", "beak"]
+  },
   "palette": {
     "bg_dark": "#2E3A5A", "bg_mid": "#5A7A9A", "bg_light": "#C8D8E0", "bokeh": "#FFF1C0",
     "yellow": "#F2C230", "yellow_light": "#FFE070", "yellow_dark": "#C8901A", "wing": "#D9A21E", "wing_dark": "#A06E12",

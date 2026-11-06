@@ -84,10 +84,15 @@ impl Grey {
             self.height as usize,
             radius,
         );
+        // The blur sees nothing outside the picture: dividing by the
+        // blurred opacity keeps the edges their own value.
         Grey {
             width: self.width,
             height: self.height,
-            values: pixels.iter().map(|p| p[0]).collect(),
+            values: pixels
+                .iter()
+                .map(|p| if p[3] > 0.0 { p[0] / p[3] } else { 0.0 })
+                .collect(),
         }
     }
 

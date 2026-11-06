@@ -8,6 +8,13 @@
     "and sways the reeds; frame 0 is the still."
   ],
   "seed": 11,
+  "intent": {
+    "subject": "a duck on a pond at sunset",
+    "focal": "duck",
+    "light": [1300, 470],
+    "mood": "calm, warm, end of the day",
+    "key_colors": ["sky_low", "sun", "water_dark"]
+  },
   "palette": {
     "sky_top": "#2A2448", "sky_mid": "#C4583C", "sky_low": "#F7B25A", "cloud_light": "#FFD9A6", "cloud_shade": "#B86A5A",
     "sun": "#FFF1C0", "sun_core": "#FFFBE8",

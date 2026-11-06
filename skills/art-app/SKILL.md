@@ -106,8 +106,7 @@ Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `o
 { "cmd": "text", "text": "Player 1", "at": [256, 20], "size": 32, "color": "ink", "align": "center", "outline": "#FFFFFF", "outline_size": 3 }
 ```
 
-`at` is the **top** of the first line (by `align`); a line is 1.21 × `size` high; `\n` starts a
-new line; `rotate` turns it around `at`.
+`at` is the **top** of the first line (by `align`); a line is 1.21 × `size` high; `\n` starts a new line; `rotate` turns it around `at`.
 
 ## Animation: frames, keyframes, parameters
 
@@ -156,8 +155,7 @@ keyframes; a symbol's `params` are set by a `use`'s `with` (keyframes allowed).
 ## Pixel art
 
 `{ "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 8, "outline": "ink" } }`:
-every command is painted 8 times bigger and shrunk to crisp whole pixels in the palette's colours
-(the palette is locked: no hex colours; 4 to 8 colours is right). Decimals are fine in positions.
+every command is painted 8 times bigger and shrunk to crisp whole pixels in the palette's colours (the palette is locked: no hex colours; 4 to 8 colours is right). Decimals are fine in positions.
 Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k": "ink", "w": "body" }, "rows": ["kw"] }`.
 Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for the game, `--scale 8` for people. `examples/duck-pixel.json` is a 32-pixel duck with idle and walk.
 
@@ -166,13 +164,15 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - `art-cli views picture.json` saves `out/picture-views.png`: the picture, gray, squint (big shapes),
   thumb, flip, the named parts' silhouettes, and a heat map of where the eye goes with the `focal`
   point ringed; `--heat` (`--gray`, `--squint`, `--thumb`, `--flip`, `--silhouette`) saves one alone.
+- `art-cli critique picture.json`: about fifteen findings in numbers with hints (values, focal point,
+  colour and key, texture, readability at 96 px, composition; `--detail` every part; `--frames 0-7` an
+  animation). Numbers are warnings, never goals: never trade a better picture for a better number.
 - `art-cli check picture.json --detail` also lists the groups and uses inside others;
   `art-cli info picture.json` gives each layer's box and which commands painted it.
 - `--layers "Characters"` shows only some layers; `--hide "Background"` all but some. `--snapshots --sheet`
-  saves a picture at every `snapshot` command and layer change, and one sheet of them all. Add
-  `{ "cmd": "snapshot", "name": "blocked in" }` after big stages.
-- `--crop` may go past the canvas edges (grey squares outside); `--scale 0.5` saves `name-50pct.png`;
-  `--pixels` prints a pixel canvas as rows of palette letters. Previews make thin lines faint: use `--crop`.
+  saves a picture at every `snapshot` command and layer change (add `{ "cmd": "snapshot", "name": "blocked in" }`
+  after big stages) and one sheet of them all. `--crop` may go past the canvas edges (grey squares outside);
+  `--scale 0.5` saves `name-50pct.png`; `--pixels` prints a pixel canvas as palette letters; thin lines look faint in previews.
 
 ## Making it beautiful (in this order, checking between moves)
 
@@ -191,8 +191,8 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - Shading inside a shape: a `"clip": true` layer above it; `"lock": true` recolours a layer
   without changing its edges; a group's `mask` (an area, a symbol, a layer) limits its paint.
 - `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it.
-- Judge the squint and thumb (`views`) before any detail: if it doesn't read small, fix values and shapes.
-  The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
+- Judge the squint and thumb (`views`) and run `critique` before any detail: if it doesn't read small, fix
+  values and shapes. The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 

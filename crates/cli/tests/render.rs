@@ -981,3 +981,72 @@ fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() 
     assert_eq!(output.status.code(), Some(2));
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
+    let out = folder("critique");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("flat.json");
+    // A mid-grey picture with a faint disc: flat, and the disc merges.
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "paper": "#808080", "faint": "#8C8C8C", "orange": "#E08030", "green": "#30C040" },
+          "intent": { "subject": "a test", "focal": "disc", "key_colors": ["orange", "paper"] },
+          "commands": [
+            { "cmd": "canvas", "width": 400, "height": 300, "paper": "paper" },
+            { "cmd": "group", "name": "disc", "commands": [
+              { "cmd": "ellipse", "center": [200, 150], "radius": 60, "fill": "faint" } ] },
+            { "cmd": "group", "name": "leaf", "commands": [
+              { "cmd": "ellipse", "center": [60, 60], "radius": 40, "fill": "green" } ] } ] }"##,
+    )
+    .unwrap();
+    let output = art_cli()
+        .args(["critique", script.to_str().unwrap(), "--detail"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("intent: a test"), "{text}");
+    assert!(text.contains("the picture looks flat"), "{text}");
+    assert!(
+        text.contains("out of key: a saturated green at x "),
+        "{text}"
+    );
+    assert!(text.contains("(leaf, "), "{text}");
+    assert!(
+        text.contains("readability: disc merges with its surroundings"),
+        "{text}"
+    );
+    assert!(text.contains("the focal point is dead centre"), "{text}");
+    assert!(text.contains("every part's numbers:"), "{text}");
+    assert!(text.contains("Numbers can't judge beauty"), "{text}");
+    let again = art_cli()
+        .args(["critique", script.to_str().unwrap(), "--detail"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.stdout, again.stdout,
+        "the same picture gives the same critique"
+    );
+
+    // Frames of an animation: one line each, and the worst named.
+    let walk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
+    let output = art_cli()
+        .args(["critique", walk.to_str().unwrap(), "--frames", "0-2"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("frame 0: ") && text.contains("frame 2: "),
+        "{text}"
+    );
+    assert!(text.contains("worst frame: "), "{text}");
+    let output = art_cli()
+        .args(["critique", script.to_str().unwrap(), "--frames", "0-2"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no animations"));
+    std::fs::remove_dir_all(out).ok();
+}

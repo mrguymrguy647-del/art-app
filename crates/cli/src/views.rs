@@ -6,10 +6,13 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use art_engine::critique::Part as CritiquePart;
 use art_engine::document::Background;
+use art_engine::fill::Mask;
 use art_engine::image::Image;
 use art_engine::script::{PlayOptions, Report, focal_point};
 use art_engine::senses::{self, GRID, Grey, Heat, SILHOUETTE_COLORS};
+use art_engine::surface::PixelRect;
 
 use crate::sheet::{Entry, THUMB_HEIGHT, THUMB_WIDTH, contact_sheet};
 use crate::{Problem, failed, load, paint_frame, shown_animation};
@@ -282,13 +285,11 @@ fn describe_cell(heat: &Heat) -> String {
     format!("cell ({column}, {row}) of {GRID} x {GRID}, around ({x:.0}, {y:.0})")
 }
 
-/// The outermost named parts' silhouettes, each in its own colour, and
-/// their names in the same order (a part that drew nothing is left out).
-fn silhouettes_of(report: &Report, width: u32, height: u32) -> (Image, Vec<String>) {
-    let mut masks = Vec::new();
-    let mut names = Vec::new();
-    // In the order the parts started (the report lists them so), so the
-    // colours follow the script.
+/// The outermost named parts that drew something, with their
+/// silhouettes in canvas pixels (scaled down from the painted size on a
+/// pixel canvas), in the order they started in the script.
+pub fn named_parts(report: &Report, painted: (u32, u32), canvas: (u32, u32)) -> Vec<CritiquePart> {
+    let mut parts = Vec::new();
     for (index, part) in report.parts.iter().enumerate() {
         if part.inside.is_some() {
             continue;
@@ -296,9 +297,61 @@ fn silhouettes_of(report: &Report, width: u32, height: u32) -> (Image, Vec<Strin
         let Some((_, mask)) = report.silhouettes.iter().find(|(i, _)| *i == index) else {
             continue;
         };
-        masks.push(mask.clone());
-        names.push(part_name(&part.path));
+        let (mask, area) = if painted == canvas {
+            (mask.clone(), part.area.unwrap_or_else(|| mask.rect()))
+        } else {
+            let sx = canvas.0 as f32 / painted.0.max(1) as f32;
+            let sy = canvas.1 as f32 / painted.1.max(1) as f32;
+            let scaled = scaled_mask(mask, sx, sy);
+            let area = part.area.map_or_else(
+                || scaled.rect(),
+                |a| {
+                    PixelRect::new(
+                        (a.left as f32 * sx).floor() as i32,
+                        (a.top as f32 * sy).floor() as i32,
+                        (a.right as f32 * sx).ceil() as i32,
+                        (a.bottom as f32 * sy).ceil() as i32,
+                    )
+                },
+            );
+            (scaled, area)
+        };
+        parts.push(CritiquePart {
+            name: part_name(&part.path),
+            mask,
+            area,
+        });
     }
+    parts
+}
+
+/// A mask scaled by `sx`, `sy` (nearest pixel), for a pixel canvas whose
+/// silhouettes were painted bigger than the picture.
+fn scaled_mask(mask: &Mask, sx: f32, sy: f32) -> Mask {
+    let r = mask.rect();
+    let rect = PixelRect::new(
+        (r.left as f32 * sx).floor() as i32,
+        (r.top as f32 * sy).floor() as i32,
+        (r.right as f32 * sx).ceil() as i32,
+        (r.bottom as f32 * sy).ceil() as i32,
+    );
+    let mut out = Mask::new(rect);
+    for y in rect.top..rect.bottom {
+        for x in rect.left..rect.right {
+            let ox = ((x as f32 + 0.5) / sx).floor() as i32;
+            let oy = ((y as f32 + 0.5) / sy).floor() as i32;
+            out.set(x, y, mask.get(ox, oy));
+        }
+    }
+    out
+}
+
+/// The outermost named parts' silhouettes, each in its own colour, and
+/// their names in the same order (a part that drew nothing is left out).
+fn silhouettes_of(report: &Report, width: u32, height: u32) -> (Image, Vec<String>) {
+    let parts = named_parts(report, (width, height), (width, height));
+    let masks: Vec<Mask> = parts.iter().map(|p| p.mask.clone()).collect();
+    let names: Vec<String> = parts.iter().map(|p| p.name.clone()).collect();
     let picture = senses::silhouettes(width, height, &masks);
     let mut names = counted(&names);
     if masks.len() > SILHOUETTE_COLORS.len() {
@@ -312,7 +365,7 @@ fn silhouettes_of(report: &Report, width: u32, height: u32) -> (Image, Vec<Strin
 
 /// `command 12 (group "duck")` -> `duck`; `... > 2 (use "pair")` -> `pair`;
 /// an included symbol's `(use "reed" (from ../lib.json, command 1))` -> `reed`.
-fn part_name(path: &str) -> String {
+pub fn part_name(path: &str) -> String {
     let last = path.rsplit(" > ").next().unwrap_or(path);
     let mut quoted = last.split('"');
     match (quoted.next(), quoted.next()) {
@@ -374,6 +427,20 @@ mod tests {
         assert_eq!(options.frame, 2);
         assert!(parse_views(&args(&["--heat"])).is_err());
         assert!(parse_views(&args(&["pic.json", "--sheet"])).is_err());
+    }
+
+    #[test]
+    fn a_mask_is_scaled_to_the_canvas() {
+        let mut mask = Mask::new(PixelRect::new(0, 0, 16, 8));
+        for y in 0..8 {
+            for x in 8..16 {
+                mask.set(x, y, 255);
+            }
+        }
+        let small = scaled_mask(&mask, 0.25, 0.25);
+        assert_eq!(small.rect(), PixelRect::new(0, 0, 4, 2));
+        assert_eq!(small.get(1, 0), 0);
+        assert_eq!(small.get(2, 1), 255);
     }
 
     fn args(words: &[&str]) -> Vec<String> {

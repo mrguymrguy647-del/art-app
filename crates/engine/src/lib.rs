@@ -7,6 +7,7 @@
 pub mod blend;
 pub mod brush;
 pub mod color;
+pub mod critique;
 pub mod document;
 pub mod file;
 pub mod fill;

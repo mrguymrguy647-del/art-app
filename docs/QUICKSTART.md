@@ -52,6 +52,7 @@ the second one mirrored and red; a title with an outline.
 art-cli check two-ducks.json             # mistakes, and where everything landed
 art-cli render two-ducks.json --preview  # a quick look: out/two-ducks-preview.png
 art-cli views two-ducks.json             # seven views on one sheet: out/two-ducks-views.png
+art-cli critique two-ducks.json          # about fifteen findings in numbers, with hints
 art-cli render two-ducks.json            # full size: out/two-ducks.png and .artapp
 ```
 
@@ -78,7 +79,9 @@ Seeing more: `--crop x,y,w,h --zoom 3` (a close-up), `--grid 50` (coordinates on
 `--snapshots --sheet` (every stage). The views sheet shows the picture as painted, in gray,
 squinted (blurred: the big shapes), as a thumbnail, flipped, the named parts' silhouettes, and a
 heat map of where the eye goes with the intent's focal point ringed; `--heat` (or `--gray`,
-`--squint`, `--thumb`, `--flip`, `--silhouette`) saves that one view alone.
+`--squint`, `--thumb`, `--flip`, `--silhouette`) saves that one view alone. The critique
+measures values, the focal point, colour and key, texture, readability at thumbnail size and
+composition; its numbers are warnings to look at, never goals, and it ends by saying so.
 
 ## 4. The rules that matter
 

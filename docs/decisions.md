@@ -1288,3 +1288,67 @@ the painted picture, a process sheet and honest notes, listed in
   real 96-pixel thumbnail (what reads at a glance); on the sheet it's
   magnified with sharp pixels so a person can see it.
 
+## 71. The critique (phase 4, step 3)
+
+- **Every threshold is a named constant** in `critique.rs`, so a line in
+  a report can be read back to the rule that made it, and changing a
+  rule is one number with a comment.
+- **Tested against reality, and calibrated by it.** The design's numbers
+  were tried on the two gallery pieces and changed where they lied:
+  - *Value groups* were going to be runs of histogram bins. On a sunset
+    gradient the histogram has no gaps, so the whole picture was "1
+    group (mid 99%)" while 54% of it was dark. Groups are now the
+    squint's five value bands that cover at least 4% of the picture: a
+    count of big value shapes, which is what "three to five value
+    groups" means to a painter.
+  - *Focal contrast* was the focal cell against the median cell. The
+    middle of a shape is flat; its edges carry the contrast. It's now
+    the strongest cell within 4 cells of the focal point, over the
+    median (floored at 0.02 so a flat picture gives a finite ratio).
+  - *Out of key* was 50 degrees from every key colour. The gallery
+    pond's lily pads, pulled towards yellow-green by the warm mood pass
+    (hue 66 to 81), passed against the sun's pale cream (hue 47). Now
+    a key colour sets a hue only when it's at least 0.35 saturated (a
+    cream is a value, not a hue), the distance is 40 degrees, and a hue
+    *between* two key hues the short way round is in key (dusk violets
+    between an orange sky and blue water were being called magenta and
+    out of key: a false alarm). With this the pads are flagged and the
+    sky isn't.
+  - *Detail at the focal point* was "aim for half or more there"; the
+    pond's duck, a small subject in a landscape, had 22% within 4 cells
+    (an area of 8%), which is plenty. The finding now fires when the
+    share is under 1.5 times the area's share.
+  - *Heavy on one side* was 5% off centre; the portrait at 55% down was
+    "bottom-heavy". It's 8% now (the design's own example called 58%
+    "a little", 62% heavy).
+  - *Readability* judged every part; nine reeds, small on purpose, gave
+    nine lines. Parts under 1% of the canvas are skipped unless they're
+    the focal part, and the same finding on parts of one name is said
+    once ("reed (x9) is too small").
+  - The squint's blur saw black outside the picture, so a flat grey
+    picture had a darker rim and a second value group; the blurred
+    value is now divided by the blurred opacity, so edges keep their own
+    value.
+- **What the numbers catch and don't, on the gallery:** the pond's green
+  lily pads out of key, yes; the duck's focal point and contrast, yes;
+  the duck merging with the sun's reflection at thumbnail size, yes
+  (a true weakness the notes hadn't named). The "smudge" clouds are
+  not low-structure by the numbers (squint range 0.52: they have light
+  tops and dark undersides; they look like smudges because of their
+  soft edges, which nothing here measures). The portrait's "noisy
+  marbled" body is not dirty by the numbers either: the marbling is
+  low-contrast marks, not grain (grain 0.017 of the part's range), and
+  the approved rule says only grain without structure is dirt. The haze
+  band on the far hills isn't a named part, so nothing judges it. These
+  are written here so nobody expects the critique to catch them.
+- **Known false alarms on good pictures:** a soft background part (the
+  portrait's bokeh) is "too small to read" at thumbnail size because its
+  dots never fill half a thumbnail pixel; a blush or a glint that is
+  the focal part would be too. Public-domain reference paintings could
+  not be fetched in this environment (the network policy blocks
+  Wikimedia Commons), so the thresholds are calibrated on the gallery
+  and on synthetic pictures only; the reference folder is for step 4
+  or later, once a picture can be brought in.
+- **Silhouettes come from a second painting** (as for `views`), so the
+  critique's picture is exactly the render.
+
