@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use art_engine::critique::Part as CritiquePart;
-use art_engine::document::Background;
+use art_engine::document::{Background, Document};
 use art_engine::fill::Mask;
 use art_engine::image::Image;
 use art_engine::script::{PlayOptions, Report, focal_point};
@@ -294,9 +294,10 @@ pub fn named_parts(report: &Report, painted: (u32, u32), canvas: (u32, u32)) -> 
         if part.inside.is_some() {
             continue;
         }
-        let Some((_, mask)) = report.silhouettes.iter().find(|(i, _)| *i == index) else {
+        let Some(silhouette) = report.silhouettes.iter().find(|s| s.part == index) else {
             continue;
         };
+        let mask = &silhouette.mask;
         let (mask, area) = if painted == canvas {
             (mask.clone(), part.area.unwrap_or_else(|| mask.rect()))
         } else {
@@ -316,10 +317,56 @@ pub fn named_parts(report: &Report, painted: (u32, u32), canvas: (u32, u32)) -> 
             );
             (scaled, area)
         };
+        // The part's own paint, at the canvas's scale.
+        let rect = mask.rect();
+        let (w, h) = (
+            (rect.right - rect.left).max(1) as u32,
+            (rect.bottom - rect.top).max(1) as u32,
+        );
+        let own = if painted == canvas {
+            silhouette.own.clone()
+        } else {
+            silhouette.own.fit_within(w, h)
+        };
         parts.push(CritiquePart {
             name: part_name(&part.path),
             mask,
             area,
+            own: Some(own),
+        });
+    }
+    parts
+}
+
+/// Every visible layer as a part with its own paint, bottom to top
+/// (layers that have no paint are left out).
+pub fn layer_parts(document: &Document) -> Vec<CritiquePart> {
+    let bounds = document.bounds();
+    let mut parts = Vec::new();
+    for layer in document.layers().iter().filter(|l| l.visible()) {
+        let id = layer.id();
+        let own = Image::from_document_showing(document, bounds, Background::Transparent, |l| {
+            l.id() == id
+        });
+        let mut mask = Mask::new(bounds);
+        let mut any = false;
+        for y in 0..own.height() {
+            for x in 0..own.width() {
+                if own.pixel(x, y)[3] >= 128 {
+                    mask.set(x as i32, y as i32, 255);
+                    any = true;
+                }
+            }
+        }
+        if !any {
+            continue;
+        }
+        let area = mask.content_bounds();
+        parts.push(CritiquePart {
+            name: format!("layer \"{}\"", layer.name()),
+            mask,
+            area,
+            own: Some(own),
         });
     }
     parts

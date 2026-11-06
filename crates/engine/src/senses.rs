@@ -96,10 +96,42 @@ impl Grey {
         }
     }
 
+    /// `blurred`, but only the pixels `inside` count: the blur never
+    /// bleeds in from outside them (a layer's or a part's own paint,
+    /// judged without its surroundings). Outside pixels come back 0.
+    pub fn blurred_where(&self, radius: f32, inside: &[bool]) -> Grey {
+        let mut pixels: Vec<[f32; 4]> = self
+            .values
+            .iter()
+            .zip(inside)
+            .map(|(&v, &i)| if i { [v, v, v, 1.0] } else { [0.0; 4] })
+            .collect();
+        filters::blur(
+            &mut pixels,
+            self.width as usize,
+            self.height as usize,
+            radius,
+        );
+        Grey {
+            width: self.width,
+            height: self.height,
+            values: pixels
+                .iter()
+                .zip(inside)
+                .map(|(p, &i)| if i && p[3] > 0.0 { p[0] / p[3] } else { 0.0 })
+                .collect(),
+        }
+    }
+
     /// The squint: blurred by a fortieth of the picture's width, so only
     /// the big shapes are left.
     pub fn squint(&self) -> Grey {
-        self.blurred((self.width as f32 / 40.0).max(1.0))
+        self.blurred(self.squint_radius())
+    }
+
+    /// `squint`'s blur radius: a fortieth of the width, at least 1.
+    pub fn squint_radius(&self) -> f32 {
+        (self.width as f32 / 40.0).max(1.0)
     }
 
     /// The lightness range (95th minus 5th percentile) of the pixels in
@@ -161,6 +193,11 @@ pub struct HeatCell {
     pub saturation: f32,
     /// Fine detail: what the squint takes away.
     pub detail: f32,
+    /// How much the cell stands out from its surroundings in brightness:
+    /// its mean value against the mean of the ring of cells
+    /// `SURROUND_CELLS` away (a big soft bright shape on a darker field
+    /// has no edges or detail, but the eye goes there).
+    pub standout: f32,
     /// The weighted sum, smoothed over the neighbours.
     pub heat: f32,
 }
@@ -175,8 +212,13 @@ pub struct Heat {
     pub peak: (usize, usize),
 }
 
-/// The fixed weights of the four parts of the heat.
-pub const HEAT_WEIGHTS: [f32; 4] = [0.35, 0.3, 0.15, 0.2];
+/// The fixed weights of the five parts of the heat: contrast, edges,
+/// saturation, detail, standout.
+pub const HEAT_WEIGHTS: [f32; 5] = [0.25, 0.2, 0.15, 0.15, 0.25];
+/// The surround a cell's brightness is compared with: the cells from
+/// `SURROUND_CELLS.0` to `SURROUND_CELLS.1` cells away (a ring, so a big
+/// soft shape is compared with what's around it, not with itself).
+pub const SURROUND_CELLS: (i32, i32) = (2, 6);
 
 impl Heat {
     pub fn of(image: &Image) -> Heat {
@@ -188,10 +230,12 @@ impl Heat {
     pub fn of_grey(image: &Image, grey: &Grey, squint: &Grey) -> Heat {
         let (w, h) = (image.width(), image.height());
         let mut cells = vec![HeatCell::default(); GRID * GRID];
+        let mut means = vec![0.0f32; GRID * GRID];
         for (i, cell) in cells.iter_mut().enumerate() {
             let (left, top, right, bottom) = cell_box(i, w, h);
             cell.contrast = grey.range_in(left, top, right, bottom);
             let (mut edge_sum, mut sat_sum, mut detail_sum, mut count) = (0.0, 0.0, 0.0, 0.0);
+            let mut value_sum = 0.0;
             for y in top..bottom {
                 for x in left..right {
                     // Sobel-like: the differences to the next pixels.
@@ -209,6 +253,7 @@ impl Heat {
                     let (_, s, v) = hsv(on_white(image.pixel(x, y)));
                     sat_sum += s * v;
                     detail_sum += (grey.get(x, y) - squint.get(x, y)).abs();
+                    value_sum += grey.get(x, y);
                     count += 1.0;
                 }
             }
@@ -216,6 +261,35 @@ impl Heat {
                 cell.edges = edge_sum / count;
                 cell.saturation = sat_sum / count;
                 cell.detail = detail_sum / count;
+                means[i] = value_sum / count;
+            }
+        }
+        // Standout: the cell's brightness against its surround.
+        for row in 0..GRID {
+            for column in 0..GRID {
+                let (mut sum, mut n) = (0.0f32, 0.0f32);
+                let (inner, outer) = SURROUND_CELLS;
+                for dy in -outer..=outer {
+                    for dx in -outer..=outer {
+                        let (c, r) = (column as i32 + dx, row as i32 + dy);
+                        if dx.abs().max(dy.abs()) < inner
+                            || c < 0
+                            || r < 0
+                            || c >= GRID as i32
+                            || r >= GRID as i32
+                        {
+                            continue;
+                        }
+                        sum += means[r as usize * GRID + c as usize];
+                        n += 1.0;
+                    }
+                }
+                let i = row * GRID + column;
+                cells[i].standout = if n > 0.0 {
+                    (means[i] - sum / n).abs()
+                } else {
+                    0.0
+                };
             }
         }
         // Each part 0..1 over the picture (its biggest cell is 1).
@@ -231,6 +305,7 @@ impl Heat {
         normalise(|c| c.edges, |c, v| c.edges = v);
         normalise(|c| c.saturation, |c, v| c.saturation = v);
         normalise(|c| c.detail, |c, v| c.detail = v);
+        normalise(|c| c.standout, |c, v| c.standout = v);
         let raw: Vec<f32> = cells
             .iter()
             .map(|c| {
@@ -238,6 +313,7 @@ impl Heat {
                     + HEAT_WEIGHTS[1] * c.edges
                     + HEAT_WEIGHTS[2] * c.saturation
                     + HEAT_WEIGHTS[3] * c.detail
+                    + HEAT_WEIGHTS[4] * c.standout
             })
             .collect();
         // Smoothed over the 8 neighbours (the cell itself counts double).

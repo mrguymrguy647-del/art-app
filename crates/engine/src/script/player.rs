@@ -44,6 +44,7 @@ use crate::fill::{
 };
 use crate::filters::{self, Filter};
 use crate::history::{Command as UndoStep, TileCommand};
+use crate::image::Image;
 use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
 use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
@@ -127,9 +128,21 @@ pub struct Report {
     pub used_colors: BTreeSet<String>,
     pub palette: BTreeSet<String>,
     /// With [`PlayOptions::silhouettes`]: where each named part that drew
-    /// something has paint, in the pixels being painted, with its place
-    /// in `parts`; in the order the parts finished.
-    pub silhouettes: Vec<(usize, Mask)>,
+    /// something has paint, and that paint on its own; in the order the
+    /// parts finished.
+    pub silhouettes: Vec<Silhouette>,
+}
+
+/// A named part's own paint, kept by [`PlayOptions::silhouettes`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Silhouette {
+    /// The part's place in [`Report::parts`].
+    pub part: usize,
+    /// Where it has paint, in the pixels being painted.
+    pub mask: Mask,
+    /// Its paint on its own (every layer's share laid together, bottom
+    /// to top), the size of `mask`'s box, see-through where it has none.
+    pub own: Image,
 }
 
 /// Warnings about symbols defined but never used and palette colours
@@ -522,7 +535,7 @@ pub struct Player {
     /// symbols defined (with their command numbers) and used, and the
     /// palette colours used.
     parts: Vec<Part>,
-    silhouettes: Vec<(usize, Mask)>,
+    silhouettes: Vec<Silhouette>,
     warnings: Vec<String>,
     defined: Vec<(String, usize)>,
     used_symbols: HashSet<String>,
@@ -1185,7 +1198,30 @@ impl Player {
         {
             let surfaces: Vec<&Surface> = parts.iter().map(|(_, s)| s).collect();
             let mask = Mask::from_alpha(&filters::silhouette(&surfaces), limits);
-            self.silhouettes.push((index, mask));
+            // The part's own paint: its layers' shares laid bottom to top.
+            let mut order: Vec<&(LayerId, Surface)> = parts.iter().collect();
+            order.sort_by_key(|(real, _)| document.layer_index(*real).unwrap_or(0));
+            let mut own = Surface::new();
+            for (_, surface) in order {
+                filters::lay_over(&mut own, surface, limits);
+            }
+            let rect = mask.rect();
+            let mut image = Image::new(
+                (rect.right - rect.left).max(0) as u32,
+                (rect.bottom - rect.top).max(0) as u32,
+                [0, 0, 0, 0],
+            );
+            for y in rect.top..rect.bottom {
+                for x in rect.left..rect.right {
+                    let p = own.pixel(x, y);
+                    image.set_pixel(x - rect.left, y - rect.top, crate::image::unpremultiply(p));
+                }
+            }
+            self.silhouettes.push(Silhouette {
+                part: index,
+                mask,
+                own: image,
+            });
         }
         // Shadows and outlines go under the lowest layer's part (shadows
         // furthest back); rim light goes over the highest layer's.
@@ -8126,10 +8162,21 @@ mod tests {
             ]
         );
         // The inner part finishes first; the empty group has no silhouette.
-        let order: Vec<usize> = report.silhouettes.iter().map(|(i, _)| *i).collect();
+        let order: Vec<usize> = report.silhouettes.iter().map(|s| s.part).collect();
         assert_eq!(order, [1, 0]);
-        let dot = &report.silhouettes[0].1;
-        let duck = &report.silhouettes[1].1;
+        let dot = &report.silhouettes[0].mask;
+        let duck = &report.silhouettes[1].mask;
+        // The duck's own paint: the rect in ink, the dot in red, nothing else.
+        let own = &report.silhouettes[1].own;
+        let rect = duck.rect();
+        assert_eq!(
+            own.pixel((100 - rect.left) as u32, (50 - rect.top) as u32),
+            [0x20, 0x20, 0x20, 255]
+        );
+        assert_eq!(
+            own.pixel((140 - rect.left) as u32, (50 - rect.top) as u32),
+            [0xE0, 0x20, 0x20, 255]
+        );
         assert_eq!(dot.get(140, 50), 255, "inside the dot");
         assert_eq!(dot.get(100, 50), 0, "the rect isn't the dot's");
         assert_eq!(duck.get(100, 50), 255, "the rect");

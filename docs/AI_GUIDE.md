@@ -436,11 +436,13 @@ place, the number behind it and a hint:
 critique: pond.json (painted in 4.0 s)
   canvas 1920 x 1080; intent: a duck on a pond at sunset
   values: 4 value groups when squinted (black 29%, dark 42%, mid 21%, light 6%); dark 54%, mid 42%, light 4%
-  focal contrast: 16.0x the rest (good; 1.5x or more stands out, under 1x is lost)
+  focal contrast: the focal point has the strongest contrast in the picture (1.5x the next strongest, at sun reflection (x 1410, y 726))
   focal point: the eye goes to duck (x 990, y 861); 16 px from the intent's focal point
   colour: 8 hues carry 90% of the colour; warm 78%, cool 9%, neutral 13%
   out of key: a saturated yellow-green at x 505, y 983 (lilypad, 1.1% of the picture) is far from every key colour; tint it towards the key or mute it
-  detail: 22% of the marks are within 4 cells of the focal point (an area of 8%), 78% elsewhere
+  texture: clouds is blotchy inside: soft blobs with no direction over 54% of it (coherence 0.34, sharpness 2.0); feathers, grass and strokes have a direction and edges, noise fills have neither: shade with big soft shapes and a few directed marks
+  edge: layer "Far hills"'s lower left edge is soft and the lighter background shows through it (+0.08 just inside): it reads as a haze band or a smudge; a blur on the silhouette does this: blur the fill, not the edge, or give it a crisp side
+  detail: 25% of the marks are within 4 cells of the focal point (an area of 8%), 78% elsewhere
   readability at 96 px: 8 of 18 parts still read
   readability: duck merges with its surroundings at thumbnail size (value gap 0.01, hue gap 14 degrees); separate it by value
   composition: visual weight sits at 49% across, 50% down
@@ -448,17 +450,24 @@ critique: pond.json (painted in 4.0 s)
 ```
 
 What it measures: *values* (the squint's value bands with real area; "flat" when 70% of the
-pixels sit in the middle three of ten bins; the contrast near the focal point against the
-median cell); *the focal point* (the heat peak against the intent); *colour* (hues carrying
-90% of the saturation, warm against cool, and cells whose hue is more than 40 degrees from
-every key colour and not between two of them); *texture* per named part (grain is what a
-1.5 px blur removes, marks what a 6 px blur removes beyond that; a part is *noisy* when grain
-without marks covers over half of it, *flat* when a quarter of its cells don't change in
-value, a *smudge* when its squint has no light and dark side); *readability* at 96 px (a part
-merges when its value differs from the ring around it by under 0.12 and its hue by under 30
-degrees); *composition* (the heat's centre of weight, a dead-centre focal point, a focal part
-cut by the edge, a part called `horizon` in the middle). `--detail` prints every part's
-numbers; `--frames 0-7` gives one line per frame of an animation and names the worst.
+pixels sit in the middle three of ten bins; the contrast at the focal point against the
+strongest contrast anywhere else: "the focal point has the strongest contrast" or "the sun's
+edge is 1.6x the focal point's"); *the focal point* (the heat peak against the intent; the heat
+counts how much a cell stands out from the ring around it in brightness, so a big soft bright
+shape is warm); *colour* (hues carrying 90% of the saturation, warm against cool, and cells
+whose hue is more than 40 degrees from every key colour and not between two of them);
+*texture* on each named part's own paint and on each layer's (grain is what a 1.5 px blur
+removes, marks what a 6 px blur removes beyond that, blotches and blobs what 24 and 96 px blurs
+remove; a part is *noisy* when fine grain without marks covers over half of it, *blotchy* when
+soft blobs with no direction do (feathers, grass and strokes have a direction and edges, noise
+fills have neither), a *smudge* when its squint has no light and dark side; a part much lighter
+than the ring around it is a light, which may be flat; a few tiny sparkles are marks, not grain);
+*edges* (a part whose own silhouette is soft and lets a lighter background through reads as a
+haze band); *readability* at 96 px (a part merges when its value differs from the ring around
+it by under 0.12 and its hue by under 30 degrees); *composition* (the heat's centre of weight,
+a dead-centre focal point, a focal part cut by the edge, a part called `horizon` in the middle).
+`--detail` prints every part's and layer's numbers; `--frames 0-7` gives one line per frame of
+an animation and names the worst.
 
 The numbers are warnings, never goals. Never trade a better-looking picture for a better
 number, and a person's rating outranks every number. They can't tell whether a cloud looks

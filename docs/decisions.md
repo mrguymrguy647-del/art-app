@@ -1401,3 +1401,90 @@ the painted picture, a process sheet and honest notes, listed in
   Friedrich's Wanderer is dead centre on purpose, another reminder
   that a composition finding is a reason to look, not a rule.
 
+## 73. The critique after review: direction, layers, lights, the haze band (phase 4)
+
+The reviewer found two known mistakes still passing, a focal-contrast
+number that always said "good", a heat map blind to big soft lights, and
+two false alarms. Every finding, before and after:
+
+- **The marbled duck body (portrait).** Before: "blotchy over 0%", not
+  flagged: marks were only 1.5 to 6 px, the marble is 20 to 90 px, and
+  nothing measured direction. After: four bands of fineness (grain
+  0-1.5 px, marks 1.5-6, blotches 6-24, blobs 24-96), each judged for
+  *direction* (the structure tensor's coherence over a window as big
+  as the blobs: 1, 5 and 9 cells; a single blob in a small window
+  looks like a slope, so the window must hold several) and for *edges*
+  (the 95th-percentile gradient over the mean, on the picture blurred
+  to the band's scale: smooth blobs 1.5 to 2.5, strokes more). A cell
+  is blotchy when some band with energy is both directionless
+  (coherence under 0.5) and soft (sharpness under 2.5), and a part when
+  over half its cells are. The duck: blotchy over 59% (coherence 0.39,
+  sharpness 1.7 at the blob scale, while its fine hatch is 6.7 sharp
+  and 0.94 coherent: judged per band, the hatch doesn't excuse the
+  marble). Three things had to be learned on the way: the part's
+  silhouette edge (its outline) dominates the tensor, so texture is
+  judged 8 px in from the edge; the fine hatch made the whole part look
+  sharp, so sharpness is per band; and direction over one cell is
+  meaningless for blobs bigger than a cell.
+- **The smudge clouds (pond).** Before: squint range 0.52 on the
+  picture, "has a light and dark side", not flagged, because the sky
+  gradient behind the semi-transparent clouds was being measured.
+  After: texture and structure are judged on a part's *own paint*
+  (kept by the silhouettes pass: every layer's share of the group laid
+  together), and on every *layer's* own paint too. The clouds' own
+  paint: blotchy over 54% (coherence 0.34, sharpness 2.0): soft blobs
+  with no direction, which is what a smudge is.
+- **The haze band (pond, far hills).** Before: never checked (not a
+  named part). After: every layer is checked, and a new edge measure:
+  how soft a part's own silhouette is (255 minus its own opacity over
+  the first 3 px inside, per side) and how much lighter the picture is
+  than the own paint just inside a soft side (the background showing
+  through). The far hills (blur 5 on the whole group): softest edge
+  100, the sky shows through +0.08 on the lower left: "reads as a haze
+  band". A first version compared the picture's fringe with its
+  interior "beyond what the own paint does there", and flagged the
+  portrait's duck: its clipped highlight layer lightens the upper
+  right edge in the picture but not in the own paint. The rule now
+  needs the own edge to be soft, which an outlined duck's isn't.
+- **Focal contrast.** Before: "16.0x the rest" on both pieces: the
+  median cell is flat, the ratio sat on its floor and always said
+  "good". After: the strongest contrast near the focal point (within
+  4 cells, or inside the focal part's box) against the strongest
+  anywhere else, named: "the focal point has the strongest contrast
+  (1.5x the next strongest, at sun reflection)" or "the strongest
+  contrast is elsewhere: bokeh is 1.1x the focal point's".
+- **The heat map and the sun.** Before: the pond's sun almost cold
+  (no edges, no detail, little saturation). After: a fifth term,
+  *standout*: the cell's mean brightness against the ring of cells 2
+  to 6 away (a ring, so a shape 5 cells wide is compared with what's
+  around it, not with itself; with a solid 3-cell surround the sun
+  scored 0.9 of the duck, with the ring 0.96 of the maximum). Weights
+  are now contrast 0.25, edges 0.2, saturation 0.15, detail 0.15,
+  standout 0.25. The sun is the second-warmest area; the eye still
+  goes to the duck first, which has edges, saturation and contrast.
+- **The sun "flat".** Before: "sun is flat over 47% of it". After: a
+  part whose mean value is 0.3 above the ring around it is a *light*:
+  flat, noisy, blotchy and smudge are not findings for it (the detail
+  line says "a light").
+- **Sparkles as grain.** Before: a few bright 2 px glints made a cell's
+  mean grain high. After: a cell's grain is the median over its pixels,
+  so a few sparkles don't move it and dense noise does (tested with a
+  checker against a disc with twenty sparkles).
+- **Also:** layers aren't judged "flat" (a sky may be smooth; a named
+  part that's flat is a shape with nothing inside), and a layer that is
+  one colour with a soft opacity (a vignette, a glow) is a tint with
+  nothing to judge.
+- **Known limits, on the references.** Judging each reference as one
+  whole part: none is noisy but Monet (the canvas grain of a photograph
+  of an impressionist painting at 1024 px reads as fine grain), and Van
+  Gogh's Starry Night is "blotchy over 87%": his curving strokes at
+  this size are soft and point in every direction within a window, so
+  the numbers can't tell them from a noise fill. Photographs of soft
+  things (a face, fur, a cup) read as soft blobs at the biggest scale
+  too. Hokusai, Vermeer and Friedrich pass. A test keeps the Van Gogh
+  result on record so a change that hides it is noticed. The rule the
+  numbers can't learn: blotchy is a reason to look; if the blobs are
+  strokes you meant, say so and move on.
+- **Cost.** The critique paints the picture twice and measures every
+  layer and part: the pond takes about 14 s now instead of 4.
+

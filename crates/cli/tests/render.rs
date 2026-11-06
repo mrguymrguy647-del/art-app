@@ -1024,8 +1024,17 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
         .args(["critique", script.to_str().unwrap(), "--detail"])
         .output()
         .unwrap();
+    // The same findings every time (the first line has the time taken).
+    let findings = |text: &[u8]| {
+        String::from_utf8_lossy(text)
+            .lines()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     assert_eq!(
-        output.stdout, again.stdout,
+        findings(&output.stdout),
+        findings(&again.stdout),
         "the same picture gives the same critique"
     );
 

@@ -301,23 +301,40 @@ fn the_critique_catches_the_gallerys_known_mistakes() {
         text
     };
     // The sunset pond: the green lily pads are out of key with the warm
-    // light; the eye goes to the duck, as meant; the values aren't flat.
+    // light; the smudge clouds are soft blobs with no direction; the far
+    // hills' blurred silhouette lets the sky through (the haze band);
+    // the eye goes to the duck, as meant, and it has the strongest
+    // contrast; the values aren't flat; the sun is a light, not "flat".
     let pond = critique("sunset-pond");
     assert!(
         pond.contains("out of key: a saturated yellow-green at x ") && pond.contains("(lilypad, "),
         "{pond}"
     );
-    assert!(pond.contains("focal point: the eye goes to duck"), "{pond}");
-    assert!(!pond.contains("looks flat"), "{pond}");
+    assert!(pond.contains("texture: clouds is blotchy inside"), "{pond}");
     assert!(
-        pond.contains("focal contrast: ") && pond.contains("(good;"),
+        pond.contains("edge: layer \"Far hills\"'s")
+            && pond.contains("edge is soft and the lighter background shows through"),
         "{pond}"
     );
-    // The portrait: nothing out of key, the eye inside the duck.
+    assert!(pond.contains("focal point: the eye goes to duck"), "{pond}");
+    assert!(
+        pond.contains("focal contrast: the focal point has the strongest contrast"),
+        "{pond}"
+    );
+    assert!(!pond.contains("looks flat"), "{pond}");
+    assert!(!pond.contains("sun is flat over"), "{pond}");
+    // The portrait: the marbled body is blotchy (soft blobs, no
+    // direction); nothing out of key; the eye inside the duck; the rim
+    // light is not mistaken for a haze band.
     let portrait = critique("duck-portrait");
+    assert!(
+        portrait.contains("texture: duck is blotchy inside"),
+        "{portrait}"
+    );
     assert!(portrait.contains("out of key: nothing"), "{portrait}");
     assert!(portrait.contains("inside the focal part"), "{portrait}");
     assert!(!portrait.contains("looks flat"), "{portrait}");
+    assert!(!portrait.contains("edge: duck's"), "{portrait}");
 }
 
 /// Every reference picture has the right to be here (a licence from the

@@ -13,7 +13,7 @@ use art_engine::image::Image;
 use art_engine::script::{Focal, PlayOptions, Report, Script, focal_point, parse_hex};
 use art_engine::surface::PixelRect;
 
-use crate::views::{named_parts, part_name};
+use crate::views::{layer_parts, named_parts, part_name};
 use crate::{Problem, load, paint_frame, shown_animation};
 
 /// What `critique` was asked for.
@@ -94,6 +94,8 @@ pub struct Painted {
     pub focal_part: Option<(String, PixelRect)>,
     pub key_colors: Vec<(String, [u8; 4])>,
     pub parts: Vec<art_engine::critique::Part>,
+    /// The visible layers, each with its own paint.
+    pub layers: Vec<art_engine::critique::Part>,
     /// Problems with the intent (a focal part that isn't there).
     pub notes: Vec<String>,
 }
@@ -118,6 +120,7 @@ pub fn paint_subject(
     let (document, report, _) = paint_frame(path, script, play(false))?;
     let image = Image::of_document(&document, Background::Paper);
     let canvas = (document.width(), document.height());
+    let layers = layer_parts(&document);
     let (second, with_parts, _) = paint_frame(path, script, play(true))?;
     let painted = (second.width(), second.height());
     let parts = named_parts(&with_parts, painted, canvas);
@@ -147,6 +150,7 @@ pub fn paint_subject(
         focal_part,
         key_colors,
         parts,
+        layers,
         notes,
     })
 }
@@ -182,6 +186,7 @@ impl Painted {
             focal_part: self.focal_part.clone(),
             key_colors: self.key_colors.clone(),
             parts: self.parts.clone(),
+            layers: self.layers.clone(),
         })
     }
 }

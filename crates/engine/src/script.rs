@@ -29,7 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use player::{
-    Event, Part, PlayOptions, Player, Progress, Report, focal_point, layer_named, unused_warnings,
+    Event, Part, PlayOptions, Player, Progress, Report, Silhouette, focal_point, layer_named,
+    unused_warnings,
 };
 
 /// Written at the top of every script, so it can be recognised.
