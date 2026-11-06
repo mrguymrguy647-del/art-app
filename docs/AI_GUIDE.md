@@ -317,6 +317,82 @@ group or symbol, so they move with it.
 **Rows and rings:** `repeat` with a `step`: fence posts (`translate`), petals or spokes (`rotate`
 around the centre as `origin`), shrinking copies (`scale`).
 
+## 5b. Making it beautiful: the five moves
+
+The phase 3 tools are for finish. Use them in this order, each on its own layers, checking
+with `--preview` between moves; a picture that doesn't read before move 2 won't be saved by
+moves 3 to 5.
+
+1. **Block in with living fills.** Big shapes back to front, and wherever a flat fill would
+   look dead, a `noise` fill: clouds in the sky, a two-blue water, grain in rock. Far things
+   get a `filter` with a little `blur` and `adjust` with less saturation (haze).
+2. **Shade inside shapes.** A clipping layer (`"clip": true`, `multiply` for shadow, `screen`
+   for light) above each big shape's layer; paint across it carelessly, only the shape shows.
+   A `mask` on a group keeps a reflection on the water or a highlight off a notch.
+3. **Texture with brushes.** A `tip` and `dynamics` on the brush, then the same `stroke`,
+   `path`, `hatch` and `scatter` as always; `stamp` for grass, leaves, pebbles and lights along
+   a line. Mostly near the focal point; far things stay smooth.
+4. **Light and depth.** A `glow` filter on the sun or a lamp, a `shadow` filter on each
+   character's `use`, one `outline` (with `rim` light) around a whole character.
+5. **Unify.** A `"from": "below"` layer with a `gradient_map` from the shadow colour through a
+   mid tone to the highlight, at 0.2 to 0.4; then `{"texture": "paper"}` on a `multiply` layer
+   at 0.2. Stop before it looks like a filter: the picture should still read as painted.
+
+All five on one small scene (26 commands):
+
+```json
+{
+  "title": "Making it beautiful: the four moves on one small scene",
+  "seed": 3,
+  "palette": { "sky": "#8EC1E6", "cloud": "#FFFFFF", "far": "#7A9AB0", "hill": "#4E7A4A", "hill_light": "#8CC25A",
+               "water_dark": "#2E5C8A", "water_light": "#6FA6D4", "yellow": "#F2C230", "wing": "#D9A21E", "beak": "#E8892B",
+               "ink": "#1A1410", "warm": "#FFF3DC", "mid": "#C2651C", "dark": "#1B2433" },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 400, "paper": "sky" },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "polygon", "points": [[-24, -8], [-44, -20], [-30, 4]], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [0, 0], "radius": [30, 20], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [22, -28], "radius": 14, "fill": "yellow" },
+      { "cmd": "polygon", "points": [[33, -32], [50, -26], [33, -21]], "fill": "beak" },
+      { "cmd": "ellipse", "center": [-6, 0], "radius": [17, 9], "rotation": -12, "fill": "wing" },
+      { "cmd": "ellipse", "center": [27, -32], "radius": 2.5, "fill": "ink" } ] },
+
+    { "cmd": "layer", "name": "Sky", "note": "1. Block in, back to front: big shapes, noise where a flat fill would look dead" },
+    { "cmd": "gradient", "area": { "rect": [0, 0, 640, 240] },
+      "fill": { "noise": { "scale": 180, "detail": 4, "contrast": 1.4, "stops": [[0, "sky"], [0.55, "sky"], [1, "cloud"]], "seed": 5 } } },
+    { "cmd": "layer", "name": "Far hills" },
+    { "cmd": "ellipse", "center": [180, 300], "radius": [280, 110], "fill": "far" },
+    { "cmd": "ellipse", "center": [520, 310], "radius": [240, 100], "fill": "far" },
+    { "cmd": "filter", "blur": 4, "adjust": { "saturation": -0.3, "brightness": 0.1 }, "note": "haze: far things are soft and pale" },
+    { "cmd": "layer", "name": "Hill" },
+    { "cmd": "ellipse", "center": [320, 420], "radius": [420, 190], "fill": "hill" },
+    { "cmd": "layer", "name": "Hill light", "clip": true, "blend": "screen", "note": "2. Shading that stays inside: clipping layers" },
+    { "cmd": "gradient", "from": [320, 230], "to": [320, 330], "colors": ["hill_light", "transparent"], "opacity": 0.5 },
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "rect", "x": 0, "y": 300, "width": 640, "height": 100,
+      "fill": { "noise": { "scale": 70, "detail": 3, "contrast": 1.0, "colors": ["water_dark", "water_light"], "seed": 2 } } },
+
+    { "cmd": "layer", "name": "Grass", "note": "3. Texture with brushes: a tip and dynamics, stamps along a line" },
+    { "cmd": "stamp", "tip": "grass", "points": [[0, 302], [320, 296], [640, 302]], "spacing": 5, "size": [14, 26], "angle": [-12, 12], "follow": false, "colors": ["hill", "hill_light"] },
+
+    { "cmd": "layer", "name": "Duck", "note": "4. Light and depth with filters and outlines" },
+    { "cmd": "use", "name": "duck", "translate": [230, 340], "outline": { "color": "ink", "size": 2.5, "rim": { "color": "warm", "size": 2, "angle": -45 } },
+      "filter": { "shadow": { "offset": [0, 10], "blur": 8, "color": "#00000060" } } },
+    { "cmd": "layer", "name": "Reflection" },
+    { "cmd": "group", "mask": { "layer": "Water" }, "opacity": 0.3, "filter": { "blur": 2 }, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [230, 364], "mirror": "y" } ] },
+    { "cmd": "layer", "name": "Sun" },
+    { "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 40, "threshold": 0.6, "strength": 1.2 } }, "commands": [
+      { "cmd": "ellipse", "center": [540, 80], "radius": 30, "fill": "warm" } ] },
+
+    { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.22, "note": "5. Unify: one gradient map over everything, faint" },
+    { "cmd": "filter", "gradient_map": { "stops": [[0, "dark"], [0.5, "mid"], [1, "warm"]] } },
+    { "cmd": "layer", "name": "Paper", "blend": "multiply", "opacity": 0.2 },
+    { "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 400, "fill": { "texture": "paper" } }
+  ]
+}
+```
+
 ## 6. Light, colour and shapes: rules of thumb
 
 - **Values first.** A picture works when its lights and darks work. Render a tiny preview

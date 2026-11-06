@@ -59,8 +59,7 @@ before opening any picture. Errors name the command: `command 8 (use "duck") > 2
 ## Ready parts: the library
 
 `skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck,
-each a `define` with parameters, an example and a preview (its `README.md` lists them).
-Include one relative to your script, then `use` it:
+each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
 
 ```json
 { "cmd": "include", "file": "../skills/art-app/library/tree.json" }
@@ -175,7 +174,7 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
   `name-50pct.png`; `--pixels` prints a pixel canvas as rows of palette letters.
 - Previews make lines thinner than a pixel faint; check fine lines with `--crop`.
 
-## Look and quality
+## Making it beautiful (in this order, checking between moves)
 
 - Block in big shapes back to front first; details last, mostly at the focal point.
 - Shadows: a `multiply` layer in a dark cool colour; glows: `screen` or `add`.
@@ -184,15 +183,16 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
   `hatch` and `scatter` all use it. `stamp` puts a symbol or tip along a path every `spacing`.
 - Clouds, water, rock, skin: a `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}`;
   paper grain: `{"texture": "paper"}` on a `multiply` layer at 0.3.
-- Depth and light: `filter` with `blur` + `adjust` (less saturation) on far layers; a `group`
-  with `"filter": {"glow": ...}` for a sun; a `use` with `"filter": {"shadow": ...}` for a
-  character; a `"from": "below"` layer with a `gradient_map` at 0.4 to unify the picture.
-- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use` (no
-  seams between parts), `"rim": {...}` inside it for rim light.
+- Depth and light: `filter` with `blur` + `adjust` on far layers; `"filter": {"glow": ...}` on
+  a sun's group, `{"shadow": ...}` on a character's `use`; a `"from": "below"` layer with a
+  `gradient_map` at 0.3 to unify.
+- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use`
+  (no seams between parts), `"rim": {...}` inside it for rim light.
 - Shading inside a shape: a `"clip": true` layer above it; `"lock": true` recolours a layer
   without changing its edges; a group's `mask` (an area, a symbol, a layer) limits its paint.
-- `jitter` (2–6) on shapes gives a hand-made edge; give random commands a `seed` once you like them.
-- Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not detail.
+- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it.
+- Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not
+  detail. The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 

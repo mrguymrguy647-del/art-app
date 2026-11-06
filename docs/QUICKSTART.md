@@ -131,6 +131,15 @@ Pixel art: `{ "cmd": "canvas", "width": 32, "height": 32, "pixel": true }` paint
 commands bigger and shrinks them to crisp whole pixels in the palette's colours. Examples:
 `examples/duck-animated.json` and `examples/duck-pixel.json`.
 
+## 6b. Making it beautiful
+
+Once a picture reads, five moves make it rich, each on its own layers: living fills (`noise`
+in skies, water and rock; `blur` + `adjust` on far things), shading inside shapes (`"clip":
+true` layers, `mask` on groups), texture with brushes (`tip`, `dynamics`, `stamp`), light and
+depth (`glow`, `shadow` and `outline` filters on groups), and one faint unifying pass (a
+`"from": "below"` layer with a `gradient_map`, paper `texture` on `multiply`). The order and a
+worked example are in [AI_GUIDE.md](AI_GUIDE.md), "Making it beautiful".
+
 ## 7. Where next
 
 - [script-format.md](script-format.md): every command and option, with examples.
