@@ -2651,6 +2651,7 @@ dependencies = [
  "eframe",
  "quill_engine",
  "rfd",
+ "serde",
  "serde_json",
  "windows",
  "winit",

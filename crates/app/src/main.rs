@@ -8,6 +8,7 @@
 
 mod about;
 mod animation_view;
+mod autosave;
 mod brush_panel;
 mod canvas_view;
 mod color_panel;
@@ -22,7 +23,9 @@ mod playback;
 mod presets_panel;
 mod references_view;
 mod select_tool;
+mod settings;
 mod settings_folder;
+mod shortcut_sheet;
 mod symmetry_view;
 mod text_tool;
 mod theme;
@@ -42,6 +45,17 @@ use pen_test::PenTestScreen;
 use playback::{BarAction, Playback};
 use transform_tool::layer_menu;
 
+use std::path::{Path, PathBuf};
+use std::time::{Instant, SystemTime};
+
+use autosave::{Autosave, LeftBehind};
+use settings::{Settings, WindowPlace};
+use shortcut_sheet::ShortcutSheet;
+
+/// The settings are saved at most this often while Duck Quill runs (and
+/// when it closes).
+const SETTINGS_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn main() -> eframe::Result {
     let pen_input = PenInput::default();
 
@@ -51,13 +65,21 @@ fn main() -> eframe::Result {
         eframe::icon_data::from_png_bytes(include_bytes!("../../../brand/duck-quill-icon-256.png"))
             .expect("brand/duck-quill-icon-256.png should be a valid PNG file");
 
+    // What was remembered from last time (or the defaults).
+    let folder = settings_folder::settings_folder();
+    let settings = Settings::load(folder.as_deref());
+    // Painting needs room: start maximized, unless it was left smaller.
+    let place = settings.window.unwrap_or(WindowPlace {
+        size: [1280.0, 800.0],
+        maximized: true,
+    });
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Duck Quill")
-            // Painting needs room: start maximized. This is the size
-            // used when you un-maximize the window.
-            .with_inner_size([1280.0, 800.0])
-            .with_maximized(true)
+            // The size used when the window isn't maximized.
+            .with_inner_size(place.size)
+            .with_maximized(place.maximized)
             .with_min_inner_size([640.0, 400.0])
             .with_icon(icon),
         // Lets pen_input see Windows' pen messages (does nothing elsewhere).
@@ -71,11 +93,11 @@ fn main() -> eframe::Result {
         Box::new(|creation_context| {
             let ctx = &creation_context.egui_ctx;
             // Dark grey, like most painting apps, so the colours you paint
-            // with stand out. View → Theme can change it.
-            ctx.set_theme(egui::Theme::Dark);
+            // with stand out. View → Theme can change it (and it's remembered).
+            ctx.set_theme(theme::from_name(settings.theme.as_deref()));
             theme::apply_brand(ctx);
             pen_input.set_egui_context(ctx);
-            Ok(Box::new(DuckQuill::new(pen_input)))
+            Ok(Box::new(DuckQuill::new(pen_input, settings, folder)))
         }),
     )
 }
@@ -110,16 +132,35 @@ struct DuckQuill {
     onion_shown: bool,
     /// Help → About Duck Quill.
     about: about::About,
+    /// Help → Keyboard shortcuts.
+    shortcut_sheet: ShortcutSheet,
+    /// What's remembered between runs, and where it's kept.
+    settings: Settings,
+    settings_folder: Option<PathBuf>,
+    /// The window's size when not maximized, and whether it is.
+    window: Option<WindowPlace>,
+    autosave: Autosave,
+    /// Copies of unsaved work left behind last time, offered back.
+    restore_offer: Vec<LeftBehind>,
+    /// When the last key, click or pen movement came (autosave waits
+    /// for a quiet moment).
+    last_input: Instant,
+    /// For saving the theme when the window closes.
+    ctx: Option<egui::Context>,
+    /// When the settings were last saved (they're saved now and then, so
+    /// a crash doesn't forget the brush).
+    settings_saved: Instant,
 }
 
 impl DuckQuill {
-    fn new(pen_input: PenInput) -> Self {
+    fn new(pen_input: PenInput, settings: Settings, settings_folder: Option<PathBuf>) -> Self {
         // `DuckQuill.exe picture.quill` opens that picture, and
         // `DuckQuill.exe script.json` plays that painting script on a new
         // picture. That's also how Windows starts us for "Open with".
         // Otherwise (or if it can't be opened) start with a blank picture
         // of the standard size.
         let mut files = Files::default();
+        files.set_recent(settings.recent_files.clone());
         let mut playback = None;
         let mut animation = None;
         let argument = std::env::args_os().nth(1).map(std::path::PathBuf::from);
@@ -174,6 +215,10 @@ impl DuckQuill {
         .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
         let mut canvas = CanvasView::default();
         canvas.fit_text_size(document.height());
+        canvas.apply_settings(&settings);
+        let now = SystemTime::now();
+        let autosave = Autosave::new(settings_folder.as_ref().map(|f| f.join("recovery")), now);
+        let restore_offer = autosave.left_behind();
         Self {
             pen_input,
             document,
@@ -188,6 +233,101 @@ impl DuckQuill {
             frame_shown: None,
             onion_shown: false,
             about: about::About::default(),
+            shortcut_sheet: ShortcutSheet::default(),
+            window: settings.window,
+            settings,
+            settings_folder,
+            autosave,
+            restore_offer,
+            last_input: Instant::now(),
+            ctx: None,
+            settings_saved: Instant::now(),
+        }
+    }
+
+    /// Saves what's remembered between runs (quietly: if it can't, the
+    /// defaults come back next time, nothing worse).
+    fn save_settings(&mut self, ctx: &egui::Context) {
+        self.settings_saved = Instant::now();
+        let Some(folder) = &self.settings_folder else {
+            return;
+        };
+        let before = self.settings.clone();
+        self.canvas.store_settings(&mut self.settings);
+        self.settings.recent_files = self.files.recent().to_vec();
+        self.settings.theme = Some(theme::name(ctx.options(|o| o.theme_preference)).to_owned());
+        self.settings.window = self.window;
+        if self.settings != before || !folder.join("settings.json").exists() {
+            let _ = self.settings.save(folder);
+        }
+    }
+
+    /// Notes the window's size (when it isn't maximized) for next time.
+    fn watch_window(&mut self, ctx: &egui::Context) {
+        let (rect, maximized) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().maximized));
+        let maximized = maximized.unwrap_or(false);
+        let size = match (maximized, rect, self.window) {
+            (false, Some(rect), _) => [rect.width(), rect.height()],
+            (_, _, Some(place)) => place.size,
+            _ => [1280.0, 800.0],
+        };
+        self.window = Some(WindowPlace { size, maximized });
+    }
+
+    /// "Restore the picture that wasn't saved?" for each copy left behind.
+    fn restore_window(&mut self, ctx: &egui::Context) {
+        let Some(left) = self.restore_offer.first().cloned() else {
+            return;
+        };
+        let now = SystemTime::now();
+        let mut choice = None;
+        egui::Modal::new(egui::Id::unique("restore")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Restore unsaved work?");
+            ui.label(format!(
+                "Duck Quill closed before \"{}\" was saved. A copy was kept {}.",
+                left.note.name,
+                autosave::how_long_ago(left.note.copied, now)
+            ));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::primary_button("Restore")).clicked() {
+                    choice = Some(true);
+                }
+                if ui
+                    .button("Throw it away")
+                    .on_hover_text("Delete the copy for good")
+                    .clicked()
+                {
+                    choice = Some(false);
+                }
+            });
+        });
+        match choice {
+            Some(true) => match quill_engine::file::open(&left.picture) {
+                Ok(document) => {
+                    self.document = document;
+                    self.history = History::default();
+                    // Never saved by you, so it counts as unsaved.
+                    self.history.mark_unsaved();
+                    self.files.restored(left.note.original.clone());
+                    self.canvas.reset();
+                    self.canvas.fit_text_size(self.document.height());
+                    self.animation = None;
+                    self.autosave.adopt(&left);
+                    self.restore_offer.clear(); // one picture at a time
+                }
+                Err(error) => {
+                    self.files
+                        .show_message("Couldn't restore it", error.to_string());
+                    self.restore_offer.remove(0);
+                }
+            },
+            Some(false) => {
+                Autosave::throw_away(&left);
+                self.restore_offer.remove(0);
+            }
+            None => {}
         }
     }
 
@@ -307,9 +447,20 @@ impl DuckQuill {
 }
 
 impl eframe::App for DuckQuill {
+    fn on_exit(&mut self) {
+        // Closing normally: either nothing was unsaved, or you chose not
+        // to save it. Either way the autosaved copy isn't needed.
+        self.autosave.finish();
+        if let Some(ctx) = self.ctx.clone() {
+            self.save_settings(&ctx);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
+        let had_ink = !ink_events.is_empty();
+        self.ctx = Some(ui.ctx().clone());
 
         // Closing the window while a script plays: keep what it painted
         // (as an undo step), so "Save changes?" knows about it.
@@ -385,6 +536,12 @@ impl eframe::App for DuckQuill {
                     );
                 }
                 ui.menu_button("Help", |ui| {
+                    if ui
+                        .add(Button::new("Keyboard shortcuts").shortcut_text("?"))
+                        .clicked()
+                    {
+                        self.shortcut_sheet.open = true;
+                    }
                     if ui.button("About Duck Quill").clicked() {
                         self.about.open = true;
                     }
@@ -525,6 +682,44 @@ impl eframe::App for DuckQuill {
         self.canvas.locked = self.playback.is_some() || watching || self.animation.is_some();
 
         self.about.ui(ui.ctx());
+        if !dialog && !busy {
+            self.shortcut_sheet.keys(ui.ctx());
+        }
+        self.shortcut_sheet.ui(ui.ctx());
+        self.restore_window(ui.ctx());
+        if self.files.take_recent_changed() {
+            self.save_settings(ui.ctx());
+        }
+        self.watch_window(ui.ctx());
+
+        // Autosave, in a quiet moment.
+        let input = ui.input(|i| !i.events.is_empty() || i.pointer.any_down());
+        if input || had_ink {
+            self.last_input = Instant::now();
+        }
+        let idle = self.last_input.elapsed() >= autosave::IDLE
+            && !self.canvas.is_painting()
+            && self.playback.is_none();
+        let name = self.files.picture_name();
+        let original = self.files.path().map(Path::to_path_buf);
+        self.autosave.tick(
+            &self.document,
+            &self.history,
+            &name,
+            original.as_deref(),
+            idle,
+            SystemTime::now(),
+        );
+        if idle && self.settings_saved.elapsed() >= SETTINGS_EVERY {
+            self.save_settings(ui.ctx());
+        }
+        // Wake up for these even if nothing else happens (egui only
+        // redraws when something does).
+        if self.history.is_modified() {
+            ui.ctx().request_repaint_after(autosave::IDLE);
+        }
+        ui.ctx()
+            .request_repaint_after(SETTINGS_EVERY.saturating_sub(self.settings_saved.elapsed()));
 
         match self.screen {
             Screen::Canvas => self

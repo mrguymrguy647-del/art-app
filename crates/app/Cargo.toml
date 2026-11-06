@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 quill_engine.workspace = true
 # egui is the interface library; eframe opens the window and runs egui in it.
 eframe = "0.37"

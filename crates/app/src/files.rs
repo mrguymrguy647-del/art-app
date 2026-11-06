@@ -61,6 +61,9 @@ pub enum FileAction {
     Export(Background),
     PlayStrokes,
     ExportStrokes,
+    /// File → Open recent: the picture at this place in the list.
+    OpenRecent(usize),
+    ClearRecent,
 }
 
 /// A script to start playing, handed over to the app.
@@ -101,6 +104,8 @@ pub enum AnimationExport {
 enum Discard {
     New,
     Open,
+    /// Open `Files::pending_open`.
+    OpenPath,
     CloseWindow,
     /// Play a script on a new picture of the script's canvas size.
     PlayNew,
@@ -142,6 +147,12 @@ pub struct Files {
     animation_export: Option<AnimationExport>,
     /// A script ready to start playing.
     ready_play: Option<PlayRequest>,
+    /// Pictures opened or saved lately, newest first (File → Open recent).
+    recent: Vec<PathBuf>,
+    /// The recent list changed (so the settings should be saved).
+    recent_changed: bool,
+    /// A recent picture waiting for "Save changes?" before it's opened.
+    pending_open: Option<PathBuf>,
 }
 
 impl Files {
@@ -173,6 +184,14 @@ impl Files {
         egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
             ui.set_min_width(260.0);
             for (label, shortcut, action) in entries {
+                if action == FileAction::Save {
+                    // Open recent goes right under Open.
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.menu_button("Open recent", |ui| {
+                            chosen = chosen.or(self.recent_menu(ui));
+                        });
+                    });
+                }
                 // The menu closes by itself after a click.
                 let shortcut_text =
                     shortcut.map_or_else(String::new, |s| ui.ctx().format_shortcut(&s));
@@ -192,6 +211,66 @@ impl Files {
             }
         });
         chosen
+    }
+
+    /// File → Open recent's list.
+    fn recent_menu(&self, ui: &mut egui::Ui) -> Option<FileAction> {
+        let mut chosen = None;
+        if self.recent.is_empty() {
+            ui.weak("Nothing opened or saved yet");
+            return None;
+        }
+        for (index, path) in self.recent.iter().enumerate() {
+            let entry = Button::new(file_name(path)).min_size(vec2(0.0, 28.0));
+            if ui
+                .add(entry)
+                .on_hover_text(path.display().to_string())
+                .clicked()
+            {
+                chosen = Some(FileAction::OpenRecent(index));
+            }
+        }
+        ui.separator();
+        if ui.button("Clear the list").clicked() {
+            chosen = Some(FileAction::ClearRecent);
+        }
+        chosen
+    }
+
+    /// The recent pictures, newest first.
+    pub fn recent(&self) -> &[PathBuf] {
+        &self.recent
+    }
+
+    pub fn set_recent(&mut self, recent: Vec<PathBuf>) {
+        self.recent = recent;
+    }
+
+    /// True once after the recent list changed.
+    pub fn take_recent_changed(&mut self) -> bool {
+        std::mem::take(&mut self.recent_changed)
+    }
+
+    fn remember(&mut self, path: &Path) {
+        crate::settings::add_recent(&mut self.recent, path);
+        self.recent_changed = true;
+    }
+
+    /// The file the picture was opened from or saved to, if any.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// The picture's name, as the title shows it.
+    pub fn picture_name(&self) -> String {
+        self.name()
+    }
+
+    /// A picture restored after a crash: it belongs to `original` (if it
+    /// had a file), so Save writes there, but it counts as unsaved.
+    pub fn restored(&mut self, original: Option<PathBuf>) {
+        self.opened_from = original.as_deref().map(file_name);
+        self.path = original;
     }
 
     /// Checks the keyboard for the File shortcuts (Ctrl+N, Ctrl+O, ...).
@@ -368,6 +447,16 @@ impl Files {
                 }
                 FileAction::ExportStrokes => self.export_strokes(frame, document, history),
                 FileAction::ExportAnimation => self.asking_animation_export = true,
+                FileAction::OpenRecent(index) => {
+                    if let Some(path) = self.recent.get(index).cloned() {
+                        self.pending_open = Some(path);
+                        replacement = self.discard(Discard::OpenPath, ctx, frame, history);
+                    }
+                }
+                FileAction::ClearRecent => {
+                    self.recent.clear();
+                    self.recent_changed = true;
+                }
             }
         }
         if self.asking_animation_export {
@@ -425,6 +514,16 @@ impl Files {
                 None
             }
             Discard::Open => self.open(frame),
+            Discard::OpenPath => {
+                let path = self.pending_open.take()?;
+                let opened = self.open_path(path.clone());
+                if opened.is_none() {
+                    // Moved or deleted: take it off the list.
+                    self.recent.retain(|p| p != &path);
+                    self.recent_changed = true;
+                }
+                opened
+            }
             Discard::CloseWindow => {
                 self.closing = true;
                 ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -697,7 +796,7 @@ impl Files {
 
         let question = match next {
             Discard::New => "before starting a new picture?",
-            Discard::Open => "before opening another picture?",
+            Discard::Open | Discard::OpenPath => "before opening another picture?",
             Discard::CloseWindow => "before closing?",
             Discard::PlayNew => "before playing the script on a new picture?",
         };
@@ -882,6 +981,7 @@ impl Files {
         match file::open(&path) {
             Ok(document) => {
                 self.opened_from = Some(file_name(&path));
+                self.remember(&path);
                 self.path = Some(path);
                 Some(document)
             }
@@ -921,6 +1021,7 @@ impl Files {
         match file::save(document, &path) {
             Ok(()) => {
                 history.mark_saved();
+                self.remember(&path);
                 self.path = Some(path);
                 self.show_notice(format!("Saved {}", self.name()));
                 true

@@ -1910,3 +1910,34 @@ two false alarms. Every finding, before and after:
   pixels are shown shrunk (graphics cards limit texture sizes); colours
   are picked from the full picture. The wheel over a reference zooms the
   reference, not the canvas.
+
+## 86. Autosave, recent files, what's remembered, the shortcut sheet (phase 5, step 7)
+
+- **Autosave copies, it never saves.** Copies go into the settings
+  folder's `recovery` folder, never next to (or over) your files, and
+  are deleted when you save or choose not to. A copy is made only when
+  the picture has changes the last copy doesn't have
+  (`History::generation`), at most every two minutes, and only after two
+  seconds without input and with no stroke or script running. The
+  document is cloned in that quiet moment (about 100 ms for 4000 x 3000
+  with 20 layers) and compressed and written by a background thread, so
+  painting never waits for it.
+- **Telling a crash from a running Duck Quill.** Each run holds a lock
+  on its own `<session>.lock` file (`File::try_lock`); the system lets go
+  of it when Duck Quill stops, even in a crash. A copy whose lock can be
+  taken was left behind, so it's offered at once on the next start, and
+  two Duck Quills open together never offer each other's work. (A first
+  version used a "still alive" time stamp, which made a crash wait three
+  minutes before its copy was offered.)
+- **Restoring** opens the copy as unsaved (`History::mark_unsaved`), tied
+  to the file it came from, so Save writes there; the copy becomes the
+  new run's own, so it stays safe until then.
+- **Settings** are one readable `settings.json`: the window's size, the
+  brush and eraser (stored as presets, so they're checked like any
+  preset), colours, theme, the Presets section and Hide reference
+  pictures, and the recent files. Written on closing, when the recent
+  list changes, and every 30 seconds in a quiet moment if anything
+  changed (so a crash doesn't forget the brush). A broken file means
+  the defaults; unknown fields are ignored.
+- **The shortcut sheet** is one table in `shortcut_sheet.rs`; a test
+  checks every tool key and the main shortcuts are on it once.

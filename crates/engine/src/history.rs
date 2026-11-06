@@ -165,6 +165,9 @@ pub struct History {
     /// How many of the settled steps had no script command.
     unrecordable_settled: usize,
     memory_limit: usize,
+    /// Goes up with every change, undo and redo: something that keeps
+    /// a copy (autosave) can tell whether it's still up to date.
+    generation: u64,
     /// How many undo steps there were when the picture was last saved.
     /// `None` if that point can't be reached any more (e.g. you undid past
     /// it and then made a new change).
@@ -186,6 +189,7 @@ impl History {
             settled: Vec::new(),
             unrecordable_settled: 0,
             memory_limit,
+            generation: 0,
             saved_at: Some(0),
         }
     }
@@ -193,6 +197,18 @@ impl History {
     /// Remembers that the picture was just saved (or freshly opened).
     pub fn mark_saved(&mut self) {
         self.saved_at = Some(self.undo.len());
+    }
+
+    /// Counts as changed since it was saved, whatever the undo steps say
+    /// (a picture restored after a crash was never saved by you).
+    pub fn mark_unsaved(&mut self) {
+        self.saved_at = None;
+        self.generation += 1;
+    }
+
+    /// A number that changes whenever the picture does (see `generation`).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// True if the picture has changed since it was last saved. Undoing
@@ -215,6 +231,7 @@ impl History {
             self.saved_at = None;
         }
         self.redo.clear();
+        self.generation += 1;
         self.undo.push_back(Step {
             command,
             script,
@@ -240,6 +257,7 @@ impl History {
         };
         step.command.undo(document);
         self.redo.push(step);
+        self.generation += 1;
         true
     }
 
@@ -251,6 +269,7 @@ impl History {
         };
         step.command.redo(document);
         self.undo.push_back(step);
+        self.generation += 1;
         true
     }
 
@@ -311,6 +330,7 @@ mod tests {
 
     use super::*;
     use crate::brush::{BrushMode, BrushSettings};
+    use crate::layer_commands::LayerPresenceCommand;
     use crate::stroke::{Stroke, StrokePoint};
     use crate::tile::Rgba8;
 
@@ -598,5 +618,24 @@ mod tests {
         assert!(history.memory_used() <= 3 * TILE_BYTES);
         assert!(history.undo_steps() < 6, "some old steps were dropped");
         assert!(history.undo_steps() >= 1, "the newest step is always kept");
+    }
+
+    #[test]
+    fn the_generation_counts_every_change_and_a_restored_picture_is_unsaved() {
+        let mut document = Document::new(64, 64);
+        let mut history = History::default();
+        let start = history.generation();
+        history.push(Box::new(LayerPresenceCommand::add_layer(&mut document)));
+        assert_eq!(history.generation(), start + 1);
+        history.undo(&mut document);
+        history.redo(&mut document);
+        assert_eq!(history.generation(), start + 3);
+        history.mark_saved();
+        assert!(!history.is_modified());
+        history.mark_unsaved();
+        assert!(history.is_modified());
+        // Undoing back to the start doesn't make it look saved.
+        history.undo(&mut document);
+        assert!(history.is_modified());
     }
 }

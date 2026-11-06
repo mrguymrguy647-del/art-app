@@ -47,3 +47,22 @@ pub fn theme_menu(ui: &mut egui::Ui) {
         ctx.set_theme(choice);
     }
 }
+
+/// The theme saved in the settings ("dark", "light", "system"); dark if
+/// none was saved.
+pub fn from_name(name: Option<&str>) -> ThemePreference {
+    match name {
+        Some("light") => ThemePreference::Light,
+        Some("system") => ThemePreference::System,
+        _ => ThemePreference::Dark,
+    }
+}
+
+/// The name a theme is saved under.
+pub fn name(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::Dark => "dark",
+        ThemePreference::Light => "light",
+        ThemePreference::System => "system",
+    }
+}

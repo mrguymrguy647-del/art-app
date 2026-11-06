@@ -18,11 +18,12 @@ use eframe::egui::{
     self, Color32, ColorImage, CursorIcon, Key, Mesh, MouseWheelUnit, PointerButton, Pos2, Rect,
     Sense, Shape, Stroke, TextureFilter, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
-use quill_engine::brush::{MAX_SIZE, MIN_SIZE};
+use quill_engine::brush::{BrushMode, BrushSettings, MAX_SIZE, MIN_SIZE};
 use quill_engine::document::{Background, Document};
 use quill_engine::history::{History, TileCommand};
 use quill_engine::image::Image;
 use quill_engine::layer::{BlendMode, blend_over};
+use quill_engine::presets::Preset;
 use quill_engine::reference::{Reference, ReferenceCommand};
 use quill_engine::script::record;
 use quill_engine::surface::{PixelRect, TileCoord};
@@ -32,6 +33,7 @@ use quill_engine::view::{Point, View};
 
 use crate::brush_panel::brush_panel;
 use crate::color_panel::ColorPicker;
+use crate::color_panel::MAX_RECENT_COLORS;
 use crate::edit::{self, Clipboard, EditAction, FeatherWindow};
 use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
@@ -39,6 +41,7 @@ use crate::pen_input::InkEvent;
 use crate::presets_panel::PresetsPanel;
 use crate::references_view::{ReferenceAction, ReferencesView};
 use crate::select_tool::{self, Ants, SelectShape};
+use crate::settings::Settings;
 use crate::symmetry_view::MirrorHandles;
 use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
@@ -281,6 +284,56 @@ impl CanvasView {
         history.push(Box::new(ReferenceCommand::add(document, reference)));
         self.references.hidden = false;
         Ok(())
+    }
+
+    /// Takes up what was remembered from last time: the brush and
+    /// eraser, colours and panels.
+    pub fn apply_settings(&mut self, settings: &Settings) {
+        let tools = &mut self.tools;
+        if let Some(brush) = settings.brush.as_ref().and_then(|p| p.settings().ok()) {
+            tools.brush = BrushSettings {
+                mode: BrushMode::Paint,
+                ..brush
+            };
+            tools.smoothing = settings
+                .brush
+                .as_ref()
+                .map_or(tools.smoothing, |p| p.smoothing);
+        }
+        if let Some(eraser) = settings.eraser.as_ref().and_then(|p| p.settings().ok()) {
+            tools.eraser = BrushSettings {
+                mode: BrushMode::Erase,
+                ..eraser
+            };
+        }
+        if let Some(color) = settings.color {
+            tools.brush.color = color;
+        }
+        tools.recent_colors = settings.recent_colors.clone();
+        tools.recent_colors.truncate(MAX_RECENT_COLORS);
+        if let Some(open) = settings.presets_open {
+            self.presets.open = open;
+        }
+        self.references.hidden = settings.references_hidden;
+    }
+
+    /// Puts what should be remembered into `settings`.
+    pub fn store_settings(&self, settings: &mut Settings) {
+        let tools = &self.tools;
+        settings.brush = Some(Preset::from_settings(
+            "Brush",
+            &tools.brush,
+            tools.smoothing,
+        ));
+        settings.eraser = Some(Preset::from_settings(
+            "Eraser",
+            &tools.eraser,
+            tools.smoothing,
+        ));
+        settings.color = Some(tools.brush.color);
+        settings.recent_colors = tools.recent_colors.clone();
+        settings.presets_open = Some(self.presets.open);
+        settings.references_hidden = self.references.hidden;
     }
 
     /// View → Hide references.

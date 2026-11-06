@@ -376,8 +376,9 @@ enum Asking {
     Rename(String, String),
 }
 
-#[derive(Default)]
 pub struct PresetsPanel {
+    /// The section is open (remembered between runs).
+    pub open: bool,
     /// Loaded the first time the panel is shown.
     library: Option<PresetLibrary>,
     /// Each preset's preview, with the settings it was drawn for.
@@ -385,6 +386,18 @@ pub struct PresetsPanel {
     asking: Option<Asking>,
     /// The last thing that went wrong (shown under the grid).
     problem: Option<String>,
+}
+
+impl Default for PresetsPanel {
+    fn default() -> Self {
+        Self {
+            open: true,
+            library: None,
+            previews: HashMap::new(),
+            asking: None,
+            problem: None,
+        }
+    }
 }
 
 /// How a preview tile is shown, in points.
@@ -413,9 +426,10 @@ impl PresetsPanel {
 
     /// The grid. Clicking a preset changes `tools`.
     pub fn ui(&mut self, ui: &mut egui::Ui, tools: &mut PaintTool) {
-        egui::CollapsingHeader::new("Presets")
-            .default_open(true)
+        let shown = egui::CollapsingHeader::new("Presets")
+            .default_open(self.open)
             .show(ui, |ui| self.grid(ui, tools));
+        self.open = shown.openness > 0.5;
     }
 
     fn grid(&mut self, ui: &mut egui::Ui, tools: &mut PaintTool) {
