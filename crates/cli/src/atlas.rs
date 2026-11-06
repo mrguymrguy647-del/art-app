@@ -90,7 +90,7 @@ fn pack(sizes: &[(u32, u32)], columns: Option<u32>, padding: u32) -> (Vec<(u32, 
     let mut places = Vec::with_capacity(sizes.len());
     let (mut x, mut y, mut row_height, mut width) = (padding, padding, 0, 0);
     for (i, &(w, h)) in sizes.iter().enumerate() {
-        if i as u32 % columns == 0 && i > 0 {
+        if (i as u32).is_multiple_of(columns) && i > 0 {
             x = padding;
             y += row_height + padding;
             row_height = 0;
