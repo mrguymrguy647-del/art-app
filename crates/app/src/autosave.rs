@@ -391,7 +391,9 @@ mod tests {
         let mut document = Document::new(64, 64);
         let mut history = History::default();
         paint(&mut document, &mut history, 1);
-        let original = Path::new("/pictures/duck.quill");
+        // (A full path, as the note keeps it, on Windows and Linux alike.)
+        let original_path = std::env::temp_dir().join("pictures").join("duck.quill");
+        let original = original_path.as_path();
         crashed.tick(
             &document,
             &history,
