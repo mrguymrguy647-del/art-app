@@ -1,7 +1,7 @@
 //! A light grid with coordinates over a picture (`--grid`), so positions
 //! can be read straight off a preview or a close-up.
 
-use art_engine::image::{Color, Image};
+use quill_engine::image::{Color, Image};
 
 use crate::font::{draw_text, text_height, text_width};
 

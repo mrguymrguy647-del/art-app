@@ -7,12 +7,12 @@
 //! you paint on (choosing a layer isn't undoable, like in other painting
 //! apps).
 
-use art_engine::document::Document;
-use art_engine::history::History;
-use art_engine::layer::{BlendMode, LayerId, LayerProps};
-use art_engine::layer_commands::{LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand};
-use art_engine::script::record;
 use eframe::egui::{self, Button, Key, TextEdit, vec2};
+use quill_engine::document::Document;
+use quill_engine::history::History;
+use quill_engine::layer::{BlendMode, LayerId, LayerProps};
+use quill_engine::layer_commands::{LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand};
+use quill_engine::script::record;
 
 use crate::brush_panel::percent_slider;
 

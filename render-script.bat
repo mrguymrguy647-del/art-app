@@ -22,8 +22,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Building art-cli... (the first time takes a minute)
-cargo build --release -p art_cli
+echo Building quill... (the first time takes a minute)
+cargo build --release -p quill_cli
 if errorlevel 1 (
     echo.
     echo Something went wrong while building.
@@ -38,7 +38,7 @@ for %%F in ("%SCRIPT%") do (
     set "NAME=%%~nF"
 )
 echo.
-"target\release\art-cli.exe" render "%SCRIPT%" --out "%FOLDER%" --sheet
+"target\release\quill.exe" render "%SCRIPT%" --out "%FOLDER%" --sheet
 if errorlevel 1 (
     echo.
     echo The script has a problem: see the message above.

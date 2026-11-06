@@ -5,12 +5,12 @@
 //! command is what's applied, so "Export strokes" replays exactly what
 //! you saw. Applying is one undo step.
 
-use art_engine::color::{from_hex, to_hex};
-use art_engine::document::Document;
-use art_engine::filters;
-use art_engine::history::{History, TileCommand};
-use art_engine::script::{FilterCmd, record};
 use eframe::egui::{self, Button, Id, Modal, Slider, vec2};
+use quill_engine::color::{from_hex, to_hex};
+use quill_engine::document::Document;
+use quill_engine::filters;
+use quill_engine::history::{History, TileCommand};
+use quill_engine::script::{FilterCmd, record};
 use serde_json::{Value, json};
 
 /// Which filter the window is for.
@@ -315,7 +315,7 @@ fn read(command: &FilterCmd) -> Result<Vec<filters::Filter>, String> {
             .enumerate()
             .map(|(i, c)| {
                 let [r, g, b] = c.as_str().and_then(from_hex).ok_or("a colour")?;
-                Ok(art_engine::fill::GradientStop {
+                Ok(quill_engine::fill::GradientStop {
                     position: i as f32 / (colors.len() - 1).max(1) as f32,
                     color: [r, g, b, 255],
                 })
@@ -342,7 +342,7 @@ fn read(command: &FilterCmd) -> Result<Vec<filters::Filter>, String> {
         let color = shadow
             .get("color")
             .and_then(Value::as_str)
-            .and_then(|hex| art_engine::script::parse_hex(hex).ok())
+            .and_then(|hex| quill_engine::script::parse_hex(hex).ok())
             .unwrap_or([0, 0, 0, 128]);
         out.push(filters::Filter::Shadow {
             offset: (number(&offset[0], "offset")?, number(&offset[1], "offset")?),
@@ -356,7 +356,7 @@ fn read(command: &FilterCmd) -> Result<Vec<filters::Filter>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use art_engine::tile::Rgba8;
+    use quill_engine::tile::Rgba8;
 
     #[test]
     fn the_window_writes_a_filter_command_and_applying_it_can_be_undone() {
@@ -393,9 +393,9 @@ mod tests {
         assert_eq!(history.undo_name(), Some("Filter"));
         let recorded = history.recorded_script();
         assert!(
-            recorded
-                .iter()
-                .any(|c| matches!(c, art_engine::script::Command::Filter(f) if f.layer.is_some())),
+            recorded.iter().any(
+                |c| matches!(c, quill_engine::script::Command::Filter(f) if f.layer.is_some())
+            ),
             "{recorded:?}"
         );
         history.undo(&mut document);

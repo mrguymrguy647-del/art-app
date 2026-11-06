@@ -103,7 +103,7 @@ impl Image {
 
     /// Opens a PNG or JPEG file (by its first bytes, not its name):
     /// greys and palettes become colours, 16-bit depths 8-bit. For
-    /// reference pictures; an `.artapp` picture is opened by `file::open`.
+    /// reference pictures; a `.quill` picture is opened by `file::open`.
     pub fn load(path: &Path) -> Result<Image, FileError> {
         let bytes = std::fs::read(path).map_err(FileError::Io)?;
         Image::decode(&bytes)

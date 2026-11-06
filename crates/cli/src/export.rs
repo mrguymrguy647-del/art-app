@@ -1,4 +1,4 @@
-//! `art-cli export`: an animated script as a sprite sheet with its JSON,
+//! `quill export`: an animated script as a sprite sheet with its JSON,
 //! numbered frames, a GIF and an MP4 (see `docs/sprite-sheet-format.md`).
 //!
 //! Every frame is painted once, at full size with a see-through
@@ -8,11 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use art_engine::document::Background;
-use art_engine::gif::save_gif;
-use art_engine::image::{Color, Image, unpremultiply};
-use art_engine::script::{PlayOptions, Sequence, parse_hex};
-use art_engine::sprites::{SheetAnimation, sprite_sheet};
+use quill_engine::document::Background;
+use quill_engine::gif::save_gif;
+use quill_engine::image::{Color, Image, unpremultiply};
+use quill_engine::script::{PlayOptions, Sequence, parse_hex};
+use quill_engine::sprites::{SheetAnimation, sprite_sheet};
 
 use crate::{Problem, failed, load};
 

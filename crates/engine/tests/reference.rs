@@ -14,14 +14,14 @@
 //! on Linux, exactly.
 //!
 //! If a change is *meant* to change pictures, make new references with
-//! `ARTAPP_UPDATE_REFERENCES=1 cargo test -p art_engine --test reference`
+//! `ARTAPP_UPDATE_REFERENCES=1 cargo test -p quill_engine --test reference`
 //! and look at them before committing.
 
 use std::path::{Path, PathBuf};
 
-use art_engine::document::Background;
-use art_engine::image::Image;
-use art_engine::script::{PlayOptions, Player, Script};
+use quill_engine::document::Background;
+use quill_engine::image::Image;
+use quill_engine::script::{PlayOptions, Player, Script};
 
 /// The share of pixels allowed to differ: none where the references were
 /// made (Linux), a tiny few elsewhere (see the top of this file).

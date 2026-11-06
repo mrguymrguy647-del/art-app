@@ -1,4 +1,4 @@
-//! Art App: program entry point.
+//! Duck Quill: program entry point.
 //!
 //! Opens the window, sets up pen input, and shows the top bar (File menu,
 //! screens, undo/redo) and the current screen: the canvas, or the pen test.
@@ -6,6 +6,7 @@
 // In release builds on Windows, don't open a black console window next to the app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
 mod animation_view;
 mod brush_panel;
 mod canvas_view;
@@ -18,11 +19,12 @@ mod pen_input;
 mod pen_test;
 mod playback;
 mod text_tool;
+mod theme;
 mod transform_tool;
 
-use art_engine::document::Document;
-use art_engine::history::History;
 use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};
+use quill_engine::document::Document;
+use quill_engine::history::History;
 
 use animation_view::{AnimationView, PanelAction};
 use canvas_view::CanvasView;
@@ -36,12 +38,15 @@ use transform_tool::layer_menu;
 fn main() -> eframe::Result {
     let pen_input = PenInput::default();
 
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("assets/icon.png should be a valid PNG file");
+    // The window and taskbar icon. (DuckQuill.exe's own icon, the one File
+    // Explorer shows, is put in by build.rs.)
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../brand/duck-quill-icon-256.png"))
+            .expect("brand/duck-quill-icon-256.png should be a valid PNG file");
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Art App")
+            .with_title("Duck Quill")
             // Painting needs room: start maximized. This is the size
             // used when you un-maximize the window.
             .with_inner_size([1280.0, 800.0])
@@ -54,15 +59,16 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Art App",
+        "Duck Quill",
         options,
         Box::new(|creation_context| {
             let ctx = &creation_context.egui_ctx;
             // Dark grey, like most painting apps, so the colours you paint
-            // with stand out.
+            // with stand out. View → Theme can change it.
             ctx.set_theme(egui::Theme::Dark);
+            theme::apply_brand(ctx);
             pen_input.set_egui_context(ctx);
-            Ok(Box::new(ArtApp::new(pen_input)))
+            Ok(Box::new(DuckQuill::new(pen_input)))
         }),
     )
 }
@@ -75,7 +81,7 @@ enum Screen {
 }
 
 /// The whole app. eframe calls `ui` every time the window needs redrawing.
-struct ArtApp {
+struct DuckQuill {
     pen_input: PenInput,
     document: Document,
     /// Undo and redo.
@@ -95,12 +101,14 @@ struct ArtApp {
     /// when that changes.
     frame_shown: Option<(String, usize)>,
     onion_shown: bool,
+    /// Help → About Duck Quill.
+    about: about::About,
 }
 
-impl ArtApp {
+impl DuckQuill {
     fn new(pen_input: PenInput) -> Self {
-        // `ArtApp.exe picture.artapp` opens that picture, and
-        // `ArtApp.exe script.json` plays that painting script on a new
+        // `DuckQuill.exe picture.quill` opens that picture, and
+        // `DuckQuill.exe script.json` plays that painting script on a new
         // picture. That's also how Windows starts us for "Open with".
         // Otherwise (or if it can't be opened) start with a blank picture
         // of the standard size.
@@ -172,6 +180,7 @@ impl ArtApp {
             animation,
             frame_shown: None,
             onion_shown: false,
+            about: about::About::default(),
         }
     }
 
@@ -290,7 +299,7 @@ impl ArtApp {
     }
 }
 
-impl eframe::App for ArtApp {
+impl eframe::App for DuckQuill {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Pen and touch events since the last frame, for whichever screen is showing.
         let ink_events = self.pen_input.take_events();
@@ -323,6 +332,12 @@ impl eframe::App for ArtApp {
                 file_action = file_action.or(self.files.menu(ui, busy));
                 layer_action = layer_menu(ui, busy || self.screen != Screen::Canvas);
                 self.filters.menu(ui, busy || self.screen != Screen::Canvas);
+                ui.menu_button("View", theme::theme_menu);
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About Duck Quill").clicked() {
+                        self.about.open = true;
+                    }
+                });
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
@@ -452,6 +467,8 @@ impl eframe::App for ArtApp {
         self.update_playback(ui);
         self.update_animation(ui);
         self.canvas.locked = self.playback.is_some() || watching || self.animation.is_some();
+
+        self.about.ui(ui.ctx());
 
         match self.screen {
             Screen::Canvas => self

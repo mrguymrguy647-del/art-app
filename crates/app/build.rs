@@ -1,11 +1,12 @@
 //! Build script: Cargo runs this before compiling the app.
 //!
-//! On Windows it puts the icon and version details into ArtApp.exe, so File
-//! Explorer, the taskbar and desktop shortcuts show them.
+//! On Windows it puts the Duck Quill icon and version details into
+//! DuckQuill.exe, so File Explorer, the taskbar and desktop shortcuts show
+//! them. On other systems it does nothing.
 
 fn main() {
     // Only run again when the icon or the version number changes.
-    println!("cargo:rerun-if-changed=assets/icon.ico");
+    println!("cargo:rerun-if-changed=../../brand/duck-quill.ico");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=../../Cargo.toml");
 
@@ -15,11 +16,11 @@ fn main() {
     }
 
     let mut resource = winresource::WindowsResource::new();
-    resource.set_icon("assets/icon.ico");
-    resource.set("ProductName", "Art App");
-    resource.set("FileDescription", "Art App");
+    resource.set_icon("../../brand/duck-quill.ico");
+    resource.set("ProductName", "Duck Quill");
+    resource.set("FileDescription", "Duck Quill");
     if let Err(error) = resource.compile() {
         // A missing icon is not worth failing the whole build over.
-        println!("cargo:warning=Could not add the icon to ArtApp.exe: {error}");
+        println!("cargo:warning=Could not add the icon to DuckQuill.exe: {error}");
     }
 }

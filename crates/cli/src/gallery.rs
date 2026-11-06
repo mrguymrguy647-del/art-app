@@ -1,4 +1,4 @@
-//! `art-cli gallery add` and `gallery rate`: finished pieces go into the
+//! `quill gallery add` and `gallery rate`: finished pieces go into the
 //! gallery with everything the process asks for (the picture, the
 //! process sheet, the views sheet, the critique, a blind-read skeleton,
 //! notes with a "Proposed lessons" section, an index entry with tags),
@@ -44,7 +44,7 @@ fn parse_add(args: &[String]) -> Result<AddOptions, Problem> {
     let mut options = AddOptions {
         script: PathBuf::new(),
         name: String::new(),
-        out: PathBuf::from("skills/art-app/gallery"),
+        out: PathBuf::from("skills/duck-quill/gallery"),
         title: None,
         tags: Vec::new(),
     };
@@ -99,11 +99,11 @@ fn parse_add(args: &[String]) -> Result<AddOptions, Problem> {
 }
 
 /// What the index says about itself (kept current by `add`).
-const ABOUT: &str = "Finished pieces made with Art App's scripts: each folder has script.json \
+const ABOUT: &str = "Finished pieces made with Duck Quill's scripts: each folder has script.json \
     (the painting, with its intent), final.png (as painted), process.png (one picture per stage, \
     from --snapshots --sheet), views.png (the views sheet), critique.md (the report as printed), \
     blind-read.md (the blind-read test), and notes.md (what each tool did, what's still weak, and \
-    proposed lessons). `rating` is the person's alone (art-cli gallery rate), 1 to 5 with a \
+    proposed lessons). `rating` is the person's alone (quill gallery rate), 1 to 5 with a \
     comment; it outranks every number. Include library parts with paths relative to the script.";
 
 fn read_index(folder: &Path) -> Result<Map<String, Value>, Problem> {
@@ -135,7 +135,7 @@ fn write_index(folder: &Path, index: &Map<String, Value>) -> Result<(), Problem>
 /// The features a script uses, as tags: the painterly tools (noise,
 /// texture, clip, lock, mask, the filters, outline, rim, stamp, brush
 /// tips), library includes, text, pixel canvases and animation.
-fn feature_tags(script_text: &str, script: &art_engine::script::Script) -> Vec<String> {
+fn feature_tags(script_text: &str, script: &quill_engine::script::Script) -> Vec<String> {
     let mut tags = Vec::new();
     let has = |key: &str| script_text.contains(&format!("\"{key}\""));
     for (key, tag) in [
@@ -242,7 +242,7 @@ fn add(args: &[String]) -> Result<(), Problem> {
     let painted = paint_subject(&target, &script, shown, 0)?;
     let critique = painted.critique();
     let mut report = format!(
-        "# Critique: {}\n\nAs `art-cli critique script.json --detail` printed it. Numbers are \
+        "# Critique: {}\n\nAs `quill critique script.json --detail` printed it. Numbers are \
          warnings, never goals: a finding is a reason to look, and the person's rating outranks \
          every number.\n\n```\n",
         options.name
@@ -268,10 +268,10 @@ fn add(args: &[String]) -> Result<(), Problem> {
     let blind = folder.join("blind-read.md");
     if !blind.exists() {
         let mut text = format!(
-            "# Blind read: {}\n\nNot done yet. Run `art-cli blind-read script.json` to make a \
+            "# Blind read: {}\n\nNot done yet. Run `quill blind-read script.json` to make a \
              packet (the picture under a neutral name and the questions, nothing else), give \
              only that folder to a separate agent or a fresh session, then record its answers \
-             with `art-cli blind-read script.json --record answers.txt --verdict \"reads\"` (or \
+             with `quill blind-read script.json --record answers.txt --verdict \"reads\"` (or \
              `\"doesn't read: ...\"`). Never send the script, the notes or a named file.\n\n## \
              Questions\n\n",
             options.name
@@ -382,7 +382,7 @@ fn add(args: &[String]) -> Result<(), Problem> {
     say!("  index.json: tags {}", tags.join(", "));
     say!(
         "  next: fill in notes.md (what each tool did, honest notes, proposed lessons), run the \
-         blind-read test, and ask the person to rate it (art-cli gallery rate {} 4 \"...\")",
+         blind-read test, and ask the person to rate it (quill gallery rate {} 4 \"...\")",
         options.name
     );
     Ok(())
@@ -478,7 +478,7 @@ fn pathdiff(path: &Path, from: &Path) -> Option<String> {
 }
 
 fn rate(args: &[String]) -> Result<(), Problem> {
-    let mut out = PathBuf::from("skills/art-app/gallery");
+    let mut out = PathBuf::from("skills/duck-quill/gallery");
     let mut words: Vec<String> = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -498,7 +498,7 @@ fn rate(args: &[String]) -> Result<(), Problem> {
     let [name, score, comment] = words.as_slice() else {
         return Err(Problem::Usage(
             "gallery rate needs a piece name, a score from 1 to 5 and a comment in quotes, like \
-             `art-cli gallery rate sunset-pond 4 \"the duck reads, the clouds don't\"`"
+             `quill gallery rate sunset-pond 4 \"the duck reads, the clouds don't\"`"
                 .into(),
         ));
     };
@@ -570,15 +570,15 @@ mod tests {
     #[test]
     fn paths_are_rewritten_relative_to_the_new_folder() {
         let diff = pathdiff(
-            Path::new("/repo/skills/art-app/library/tree.json"),
-            Path::new("/repo/skills/art-app/gallery/forest"),
+            Path::new("/repo/skills/duck-quill/library/tree.json"),
+            Path::new("/repo/skills/duck-quill/gallery/forest"),
         );
         assert_eq!(diff.as_deref(), Some("../../library/tree.json"));
         let text = r#"{ "commands": [ { "cmd": "include", "file": "../lib/tree.json" } ] }"#;
         let out = with_includes_relative_to(
             text,
             Path::new("/repo/examples/forest.json"),
-            Path::new("/repo/skills/art-app/gallery/forest"),
+            Path::new("/repo/skills/duck-quill/gallery/forest"),
         )
         .unwrap_or_else(|_| panic!("should rewrite"));
         assert!(

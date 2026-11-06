@@ -902,7 +902,7 @@ impl Critique {
     }
 
     /// The benchmark's five scores from the numbers (1 to 5 each), by
-    /// the fixed mapping in `skills/art-app/exercises/benchmark.md`:
+    /// the fixed mapping in `skills/duck-quill/exercises/benchmark.md`:
     /// readability, values, colour, focal point, detail. Overall appeal
     /// is not a number's to give.
     pub fn scores(&self) -> Scores {
@@ -2392,7 +2392,7 @@ mod reference_tests {
 
     fn critique_of(file: &str) -> Critique {
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../skills/art-app/references");
+            .join("../../skills/duck-quill/references");
         let image = Image::load(&folder.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
         let subject = Subject {
             image: &image,

@@ -1,6 +1,6 @@
 # Sprite sheets: the PNG and its JSON
 
-`art-cli export duck.json` writes `duck.png` and `duck.json` (and the app's **File → Export
+`quill export duck.json` writes `duck.png` and `duck.json` (and the app's **File → Export
 animation** does the same). This page says what's in them, so another program, such as Duck
 Forge, can load them.
 

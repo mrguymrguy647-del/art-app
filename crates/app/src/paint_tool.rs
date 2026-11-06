@@ -18,17 +18,17 @@
 
 use std::time::{Duration, Instant};
 
-use art_engine::brush::{BrushMode, BrushSettings};
-use art_engine::document::Document;
-use art_engine::fill::{self, FloodFill, Gradient, GradientShape, Paint, SampleFrom, flood_fill};
-use art_engine::history::{History, TileCommand};
-use art_engine::layer::LayerId;
-use art_engine::pen::InputKind;
-use art_engine::script::record;
-use art_engine::smoothing::Smoother;
-use art_engine::stroke::{Stroke, StrokePoint};
-use art_engine::view::{Point, View};
 use eframe::egui::{self, PointerButton, Pos2, Rect, pos2};
+use quill_engine::brush::{BrushMode, BrushSettings};
+use quill_engine::document::Document;
+use quill_engine::fill::{self, FloodFill, Gradient, GradientShape, Paint, SampleFrom, flood_fill};
+use quill_engine::history::{History, TileCommand};
+use quill_engine::layer::LayerId;
+use quill_engine::pen::InputKind;
+use quill_engine::script::record;
+use quill_engine::smoothing::Smoother;
+use quill_engine::stroke::{Stroke, StrokePoint};
+use quill_engine::view::{Point, View};
 
 use crate::color_panel::MAX_RECENT_COLORS;
 use crate::pen_input::InkEvent;

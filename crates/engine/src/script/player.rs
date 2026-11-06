@@ -5258,7 +5258,7 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("artapp-open-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let base = play(EVERYTHING);
-        file::save(&base, &folder.join("base.artapp")).unwrap();
+        file::save(&base, &folder.join("base.quill")).unwrap();
 
         let options = PlayOptions {
             folder: Some(folder.clone()),
@@ -5266,7 +5266,7 @@ mod tests {
         };
         let document = play_with(
             r#"{ "commands": [
-                { "cmd": "canvas", "open": "base.artapp" },
+                { "cmd": "canvas", "open": "base.quill" },
                 { "cmd": "layer", "name": "Extra" }
             ] }"#,
             options,
@@ -7114,7 +7114,7 @@ mod tests {
     #[test]
     fn a_tip_from_a_file_is_its_lightness() {
         // A 8 x 8 PNG: white on the left half, black on the right.
-        let folder = std::env::temp_dir().join(format!("art-app-tip-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("quill-tip-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("half.png");
         {
@@ -7403,7 +7403,7 @@ mod tests {
 
     #[test]
     fn textures_tile_a_picture_and_paper_is_built_in() {
-        let folder = std::env::temp_dir().join(format!("art-app-texture-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("quill-texture-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         {
             // 2 x 2: white, black / black, white.
@@ -8025,7 +8025,7 @@ mod tests {
     /// A folder with library files, for include tests.
     fn library() -> std::path::PathBuf {
         let folder = std::env::temp_dir().join(format!(
-            "art-app-include-{}-{}",
+            "quill-include-{}-{}",
             std::process::id(),
             std::thread::current()
                 .name()

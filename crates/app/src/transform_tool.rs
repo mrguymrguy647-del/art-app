@@ -14,21 +14,21 @@
 
 use std::time::{Duration, Instant};
 
-use art_engine::document::{Background, Document};
-use art_engine::history::{History, TileCommand};
-use art_engine::image::Image;
-use art_engine::layer::LayerId;
-use art_engine::layer_transform::transform_layer;
-use art_engine::pen::InputKind;
-use art_engine::script::{TransformLayerCmd, record};
-use art_engine::surface::PixelRect;
-use art_engine::transform::Transform;
-use art_engine::view::{Point, View};
 use eframe::egui::epaint::Vertex;
 use eframe::egui::{
     self, Button, Color32, ColorImage, CursorIcon, Mesh, PointerButton, Pos2, Rect, Shape, Stroke,
     TextureHandle, TextureOptions, pos2, vec2,
 };
+use quill_engine::document::{Background, Document};
+use quill_engine::history::{History, TileCommand};
+use quill_engine::image::Image;
+use quill_engine::layer::LayerId;
+use quill_engine::layer_transform::transform_layer;
+use quill_engine::pen::InputKind;
+use quill_engine::script::{TransformLayerCmd, record};
+use quill_engine::surface::PixelRect;
+use quill_engine::transform::Transform;
+use quill_engine::view::{Point, View};
 
 use crate::pen_input::InkEvent;
 
@@ -600,8 +600,8 @@ fn inside(corners: &[Point; 4], p: Point) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use art_engine::script::{PlayOptions, Player, Script};
-    use art_engine::tile::Rgba8;
+    use quill_engine::script::{PlayOptions, Player, Script};
+    use quill_engine::tile::Rgba8;
 
     const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
 

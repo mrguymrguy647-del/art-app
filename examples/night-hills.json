@@ -1,5 +1,5 @@
 {
-  "format": "artapp-script",
+  "format": "duckquill-script",
   "version": 1,
   "title": "Moonlit hills",
   "notes": "A second demo, showing the techniques in docs/AI_GUIDE.md: stars, a glowing moon, hills that fade with distance, trees with shadows, rim light and grass.",

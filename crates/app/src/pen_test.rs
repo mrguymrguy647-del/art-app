@@ -5,8 +5,8 @@
 
 use std::time::{Duration, Instant};
 
-use art_engine::pen::{InputKind, PenSample};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Sense, Stroke, pos2, vec2};
+use quill_engine::pen::{InputKind, PenSample};
 
 use crate::pen_input::InkEvent;
 

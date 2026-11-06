@@ -1,8 +1,8 @@
 {
-  "format": "artapp-script",
+  "format": "duckquill-script",
   "version": 1,
   "title": "Sunset over the sea",
-  "notes": "A demo for art-cli. Back to front: sky, glow, sun, clouds, headland, sea, reflection, waves, birds.",
+  "notes": "A demo for quill. Back to front: sky, glow, sun, clouds, headland, sea, reflection, waves, birds.",
   "seed": 11,
   "palette": {
     "night":      "#2A1E48",

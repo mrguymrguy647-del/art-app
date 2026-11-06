@@ -1700,3 +1700,35 @@ two false alarms. Every finding, before and after:
   rope feathers) is only half closed: no rope, but the wing still reads
   as a smear. Lessons 8, 9, 11, 16 and 19 carry their before/after
   numbers.
+
+## 79. Art App becomes Duck Quill (phase 5, step 1)
+
+- **New names, old names still work.** The app is Duck Quill
+  (`DuckQuill.exe`), the command line tool `quill`, pictures `.quill`
+  (`"format": "duckquill"` inside), scripts `"format":
+  "duckquill-script"`, the agents' folder `skills/duck-quill/`, the
+  crates `quill_engine`, `quill_app` and `quill_cli` (folders unchanged).
+  `.artapp` pictures open, and Ctrl+S writes them back under their own
+  name; Save As offers `.quill` but keeps a typed `.artapp`. Scripts
+  saying `artapp-script` play with no warning; only `quill check` adds a
+  note. Everything above this entry describes the past and keeps the old
+  names.
+- **`art-cli` is a second program, not a copy.** The CLI's code moved
+  into a library (`lib.rs`) with one `run` function; `quill` and `art-cli`
+  are three-line programs that call it, so they can't drift apart.
+  `art-cli` prints `art-cli is now called quill` on stderr, not stdout,
+  so programs that read its output see what they always saw.
+- **Fixtures made before the rename** (`crates/engine/tests/fixtures`):
+  an `.artapp` picture with a clipped multiply layer, a screen layer and
+  an alpha-locked layer, the PNG it exported, and the `artapp-script`
+  that painted it, all made with the old `art-cli`. Tests open the
+  picture, play the script and compare every pixel with that PNG, and
+  run `art-cli` and `quill` side by side.
+- **The brand, lightly.** The exe's icon (`build.rs`, Windows only) and
+  the window icon come from `brand/`; Help → About shows the logo shrunk
+  to 700 px (about 300 KB each) so the exe stays small; View → Theme
+  offers dark, light or the system's. Only "chosen" things (selected
+  tool, selected layer) use night indigo, and the main button of a
+  dialog duck yellow: the canvas stays the star.
+- **The version** (0.5.0) is written once, in the workspace
+  `Cargo.toml`; About and `quill --version` read it.

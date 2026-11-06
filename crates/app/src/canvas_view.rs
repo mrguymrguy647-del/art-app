@@ -13,21 +13,21 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use art_engine::brush::{MAX_SIZE, MIN_SIZE};
-use art_engine::document::{Background, Document};
-use art_engine::history::{History, TileCommand};
-use art_engine::image::Image;
-use art_engine::layer::{BlendMode, blend_over};
-use art_engine::script::record;
-use art_engine::surface::{PixelRect, TileCoord};
-use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
-use art_engine::tile::{Rgba8, Tile};
-use art_engine::view::{Point, View};
 use eframe::egui::epaint::Vertex;
 use eframe::egui::{
     self, Color32, ColorImage, CursorIcon, Key, Mesh, MouseWheelUnit, PointerButton, Pos2, Rect,
     Sense, Shape, Stroke, TextureFilter, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
+use quill_engine::brush::{MAX_SIZE, MIN_SIZE};
+use quill_engine::document::{Background, Document};
+use quill_engine::history::{History, TileCommand};
+use quill_engine::image::Image;
+use quill_engine::layer::{BlendMode, blend_over};
+use quill_engine::script::record;
+use quill_engine::surface::{PixelRect, TileCoord};
+use quill_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
+use quill_engine::tile::{Rgba8, Tile};
+use quill_engine::view::{Point, View};
 
 use crate::brush_panel::brush_panel;
 use crate::color_panel::ColorPicker;
@@ -723,8 +723,9 @@ impl CanvasView {
             // All visible layers combined into one tile (but not a layer
             // being transformed: a picture of it is drawn instead).
             let left_out = self.transform.as_ref().map(LayerTransform::layer);
-            let shown =
-                |layer: &art_engine::layer::Layer| layer.visible() && Some(layer.id()) != left_out;
+            let shown = |layer: &quill_engine::layer::Layer| {
+                layer.visible() && Some(layer.id()) != left_out
+            };
             let tile = if overlaid {
                 let base = self.paper_with_overlay(document, coord);
                 document.composite_tile_over(coord, base, shown)
@@ -966,6 +967,6 @@ mod tests {
         assert_eq!(preview_level(0.3), 1);
         assert_eq!(preview_level(0.25), 2);
         assert_eq!(preview_level(0.1), 3);
-        assert_eq!(preview_level(0.0001), art_engine::tile::MAX_PREVIEW_LEVEL);
+        assert_eq!(preview_level(0.0001), quill_engine::tile::MAX_PREVIEW_LEVEL);
     }
 }

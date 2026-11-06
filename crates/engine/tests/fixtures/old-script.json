@@ -1,0 +1,115 @@
+{
+  "format": "artapp-script",
+  "title": "Old format",
+  "notes": "Written for Art App before it was renamed Duck Quill. It must keep painting the same picture.",
+  "palette": {
+    "sky": "#8EC5E8",
+    "ink": "#202020",
+    "sun": "#F2C230"
+  },
+  "commands": [
+    {
+      "cmd": "canvas",
+      "width": 300,
+      "height": 200,
+      "paper": "sky"
+    },
+    {
+      "cmd": "layer",
+      "name": "Ground"
+    },
+    {
+      "cmd": "rect",
+      "x": 0,
+      "y": 130,
+      "width": 300,
+      "height": 70,
+      "fill": "#4A7A3A"
+    },
+    {
+      "cmd": "layer",
+      "name": "Shade",
+      "clip": true,
+      "blend": "multiply",
+      "opacity": 0.6
+    },
+    {
+      "cmd": "gradient",
+      "from": [
+        0,
+        130
+      ],
+      "to": [
+        0,
+        200
+      ],
+      "colors": [
+        "transparent",
+        "#30305080"
+      ]
+    },
+    {
+      "cmd": "layer",
+      "name": "Sun",
+      "blend": "screen"
+    },
+    {
+      "cmd": "ellipse",
+      "center": [
+        220,
+        60
+      ],
+      "radius": 30,
+      "fill": "sun"
+    },
+    {
+      "cmd": "layer",
+      "name": "Lines"
+    },
+    {
+      "cmd": "brush",
+      "size": 6,
+      "color": "ink"
+    },
+    {
+      "cmd": "stroke",
+      "points": [
+        [
+          20,
+          120
+        ],
+        [
+          80,
+          90
+        ],
+        [
+          140,
+          115
+        ]
+      ]
+    },
+    {
+      "cmd": "layer",
+      "name": "Lines",
+      "lock": true
+    },
+    {
+      "cmd": "brush",
+      "size": 30,
+      "color": "#C03030"
+    },
+    {
+      "cmd": "stroke",
+      "points": [
+        [
+          70,
+          80
+        ],
+        [
+          90,
+          120
+        ]
+      ]
+    }
+  ]
+}

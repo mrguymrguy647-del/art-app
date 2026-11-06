@@ -1,7 +1,7 @@
 //! Contact sheets: every snapshot of a render side by side in one image,
 //! each with its number and name, so progress can be judged at a glance.
 
-use art_engine::image::{Color, Image};
+use quill_engine::image::{Color, Image};
 
 use crate::font::{draw_text, fit_text, text_height};
 

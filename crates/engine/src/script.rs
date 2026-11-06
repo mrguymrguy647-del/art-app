@@ -36,7 +36,10 @@ pub use player::{
 pub use reuse::{Reuse, Sequence};
 
 /// Written at the top of every script, so it can be recognised.
-pub const FORMAT_NAME: &str = "artapp-script";
+pub const FORMAT_NAME: &str = "duckquill-script";
+/// The name scripts had before the app was renamed Duck Quill. Still
+/// played, with no warning: only `quill check` mentions it.
+pub const OLD_FORMAT_NAME: &str = "artapp-script";
 /// The script format version this app writes, and the newest it plays.
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -517,7 +520,7 @@ impl Command {
 }
 
 /// `canvas`: the first command. Either a new canvas (`width`, `height`,
-/// `paper`) or an existing picture (`open`: an .artapp file, relative to
+/// `paper`) or an existing picture (`open`: a .quill file, relative to
 /// the script's folder).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1401,6 +1404,7 @@ impl Script {
         })?;
         if let Some(format) = &raw.format
             && format != FORMAT_NAME
+            && format != OLD_FORMAT_NAME
         {
             return Err(ScriptError::general(format!(
                 "\"format\" should be \"{FORMAT_NAME}\", not \"{format}\""
@@ -1410,8 +1414,8 @@ impl Script {
             && version > FORMAT_VERSION
         {
             return Err(ScriptError::general(format!(
-                "this script is version {version}, but this Art App only plays up to version \
-                 {FORMAT_VERSION}. Please update Art App."
+                "this script is version {version}, but this Duck Quill only plays up to version \
+                 {FORMAT_VERSION}. Please update Duck Quill."
             )));
         }
         for (name, color) in &raw.palette {
@@ -1722,7 +1726,7 @@ mod tests {
     fn a_small_script_is_read() {
         let script = parse(
             r##"{
-              "format": "artapp-script", "version": 1, "seed": 7,
+              "format": "duckquill-script", "version": 1, "seed": 7,
               "palette": { "sky": "#88BBFF" },
               "commands": [
                 { "cmd": "canvas", "width": 800, "height": 600 },
@@ -1784,7 +1788,7 @@ mod tests {
         let error = parse(r#"{ "version": 2, "commands": [] }"#).unwrap_err();
         assert!(error.to_string().contains("version 2"), "{error}");
         let error = parse(r#"{ "format": "svg", "commands": [] }"#).unwrap_err();
-        assert!(error.to_string().contains("artapp-script"), "{error}");
+        assert!(error.to_string().contains("duckquill-script"), "{error}");
     }
 
     #[test]

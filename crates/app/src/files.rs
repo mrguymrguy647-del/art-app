@@ -14,13 +14,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use art_engine::document::{Document, MAX_CANVAS_SIDE};
-use art_engine::file::{self, Background, FILE_EXTENSION, FileError};
-use art_engine::history::History;
-use art_engine::script::{PlayOptions, Player, Script, record};
 use eframe::egui::{
     self, Button, DragValue, Id, Key, KeyboardShortcut, Modal, Modifiers, ViewportCommand, vec2,
 };
+use quill_engine::document::{Document, MAX_CANVAS_SIDE};
+use quill_engine::file::{self, Background, FILE_EXTENSION, FileError, OLD_FILE_EXTENSION};
+use quill_engine::history::History;
+use quill_engine::script::{PlayOptions, Player, Script, record};
+
+use crate::theme;
 
 /// Keyboard shortcuts. Each one is also shown next to its menu entry.
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
@@ -700,7 +702,10 @@ impl Files {
             ui.add_space(12.0);
             let size = vec2(90.0, 30.0);
             ui.horizontal(|ui| {
-                if ui.add(Button::new("Save").min_size(size)).clicked() {
+                if ui
+                    .add(theme::primary_button("Save").min_size(size))
+                    .clicked()
+                {
                     return Some(Answer::Save);
                 }
                 if ui.add(Button::new("Don't save").min_size(size)).clicked() {
@@ -826,10 +831,10 @@ impl Files {
             .file_window(frame)
             .set_title("Open picture or painting script")
             .add_filter(
-                "Art App picture or painting script",
-                &[FILE_EXTENSION, "json"],
+                "Duck Quill picture or painting script",
+                &[FILE_EXTENSION, OLD_FILE_EXTENSION, "json"],
             )
-            .add_filter("Art App picture", &[FILE_EXTENSION])
+            .add_filter("Duck Quill picture", &[FILE_EXTENSION, OLD_FILE_EXTENSION])
             .add_filter("Painting script", &["json"])
             .pick_file()?;
         if path
@@ -894,12 +899,12 @@ impl Files {
                     .file_window(frame)
                     .set_title("Save picture as")
                     .set_file_name(format!("{}.{FILE_EXTENSION}", self.stem()))
-                    .add_filter("Art App picture", &[FILE_EXTENSION])
+                    .add_filter("Duck Quill picture", &[FILE_EXTENSION])
                     .save_file()
                 else {
                     return false; // cancelled
                 };
-                with_extension(chosen, FILE_EXTENSION)
+                picture_path(chosen)
             }
         };
 
@@ -963,7 +968,7 @@ impl Files {
         self.notice = Some((text, Instant::now()));
     }
 
-    /// The picture's file name, e.g. "cat.artapp", or "Untitled".
+    /// The picture's file name, e.g. "cat.quill", or "Untitled".
     fn name(&self) -> String {
         self.path
             .as_deref()
@@ -978,10 +983,10 @@ impl Files {
         )
     }
 
-    /// "cat.artapp* - Art App": the `*` means unsaved changes.
+    /// "cat.quill* - Duck Quill": the `*` means unsaved changes.
     fn update_title(&mut self, ctx: &egui::Context, modified: bool) {
         let star = if modified { "*" } else { "" };
-        let title = format!("{}{star} - Art App", self.name());
+        let title = format!("{}{star} - Duck Quill", self.name());
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
@@ -1004,9 +1009,21 @@ fn file_name(path: &Path) -> String {
     )
 }
 
+/// A picture's file name from Save As: `.quill` is added unless it ends
+/// in `.quill` already, or in `.artapp` (the old ending, kept if typed).
+fn picture_path(path: PathBuf) -> PathBuf {
+    let old = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(OLD_FILE_EXTENSION));
+    if old {
+        return path;
+    }
+    with_extension(path, FILE_EXTENSION)
+}
+
 /// Adds `.extension` to the file name unless it already ends with it
-/// (in any mix of capitals). "cat" becomes "cat.artapp", and
-/// "my.cat" becomes "my.cat.artapp" rather than losing its ".cat".
+/// (in any mix of capitals). "cat" becomes "cat.quill", and
+/// "my.cat" becomes "my.cat.quill" rather than losing its ".cat".
 fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     let has_it = path
         .extension()
@@ -1027,15 +1044,15 @@ mod tests {
     #[test]
     fn the_file_ending_is_added_only_when_missing() {
         let check = |given: &str, expected: &str| {
-            assert_eq!(
-                with_extension(PathBuf::from(given), "artapp"),
-                PathBuf::from(expected)
-            );
+            assert_eq!(picture_path(PathBuf::from(given)), PathBuf::from(expected));
         };
-        check("cat", "cat.artapp");
+        check("cat", "cat.quill");
+        check("cat.quill", "cat.quill");
+        check("cat.QUILL", "cat.QUILL");
+        check("my.cat", "my.cat.quill");
+        // An old picture's ending is kept when it's typed.
         check("cat.artapp", "cat.artapp");
         check("cat.ARTAPP", "cat.ARTAPP");
-        check("my.cat", "my.cat.artapp");
     }
 
     #[test]
@@ -1043,15 +1060,15 @@ mod tests {
         let mut files = Files::default();
         assert_eq!(files.name(), "Untitled");
         assert_eq!(files.stem(), "Untitled");
-        files.path = Some(PathBuf::from("pictures").join("cat.artapp"));
-        assert_eq!(files.name(), "cat.artapp");
+        files.path = Some(PathBuf::from("pictures").join("cat.quill"));
+        assert_eq!(files.name(), "cat.quill");
         assert_eq!(files.stem(), "cat");
     }
 
     #[test]
     fn exported_strokes_say_where_they_were_painted() {
-        use art_engine::history::TileCommand;
-        use art_engine::stroke::TilesBefore;
+        use quill_engine::history::TileCommand;
+        use quill_engine::stroke::TilesBefore;
 
         let mut files = Files::default();
         let document = Document::new(300, 200);
@@ -1066,12 +1083,12 @@ mod tests {
             Box::new(TileCommand::new("Clear layer", layer, TilesBefore::new())),
             record::clear_layer("Layer 1"),
         );
-        files.path = Some(PathBuf::from("cat.artapp"));
-        files.opened_from = Some("cat.artapp".into());
+        files.path = Some(PathBuf::from("cat.quill"));
+        files.opened_from = Some("cat.quill".into());
         let script = files.strokes_script(&document, &history).unwrap();
-        assert_eq!(script.title.as_deref(), Some("Strokes from cat.artapp"));
+        assert_eq!(script.title.as_deref(), Some("Strokes from cat.quill"));
         let text = script.to_json();
-        assert!(text.contains("Painted on top of cat.artapp"), "{text}");
+        assert!(text.contains("Painted on top of cat.quill"), "{text}");
         assert!(
             text.contains("{\"cmd\":\"canvas\",\"width\":300,\"height\":200"),
             "{text}"

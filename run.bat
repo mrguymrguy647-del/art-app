@@ -1,6 +1,6 @@
 @echo off
 rem ================================================================
-rem  Double-click this file to build and start Art App.
+rem  Double-click this file to build and start Duck Quill.
 rem  The first time takes a few minutes: Rust downloads and builds
 rem  the libraries we use. After that it starts in seconds.
 rem ================================================================
@@ -16,16 +16,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Windows can't replace ArtApp.exe while it is open.
-tasklist /fi "imagename eq ArtApp.exe" | find /i "ArtApp.exe" >nul
+rem Windows can't replace DuckQuill.exe while it is open.
+tasklist /fi "imagename eq DuckQuill.exe" | find /i "DuckQuill.exe" >nul
 if not errorlevel 1 (
-    echo Art App is already open. Close it first, then double-click run.bat again.
+    echo Duck Quill is already open. Close it first, then double-click run.bat again.
     echo.
     pause
     exit /b 1
 )
 
-echo Building Art App... (the first build takes a few minutes)
+echo Building Duck Quill... (the first build takes a few minutes)
 echo.
 cargo build --release
 if errorlevel 1 (
@@ -37,4 +37,4 @@ if errorlevel 1 (
     exit /b 1
 )
 
-start "" "target\release\ArtApp.exe"
+start "" "target\release\DuckQuill.exe"

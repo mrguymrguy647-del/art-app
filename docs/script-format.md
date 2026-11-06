@@ -1,4 +1,4 @@
-# Art App painting scripts
+# Duck Quill painting scripts
 
 A painting script describes a picture as a list of steps, in a JSON text file. Playing the script
 paints the picture. Scripts are made to be written by hand (or by an AI assistant), rendered,
@@ -11,14 +11,14 @@ checked, and improved.
 - **Big shapes are one command**: rectangles, ellipses, polygons, smooth paths, tapered lines,
   hatching and scattering.
 
-Render scripts with `art-cli` (see the README), or watch them being painted in the app with
+Render scripts with `quill` (see the README), or watch them being painted in the app with
 **File → Play strokes…**.
 
 ## A first script
 
 ```json
 {
-  "format": "artapp-script",
+  "format": "duckquill-script",
   "version": 1,
   "title": "Sun over the sea",
   "seed": 1,
@@ -45,7 +45,7 @@ Render scripts with `art-cli` (see the README), or watch them being painted in t
 | Field | Needed? | What it is |
 |---|---|---|
 | `commands` | yes | The steps, in order. The first one must be `canvas`. |
-| `format` | no | `"artapp-script"`. Recommended, so the file is recognisable. |
+| `format` | no | `"duckquill-script"`. Recommended, so the file is recognisable. |
 | `version` | no | `1`. A newer version is refused with a clear message. |
 | `title` | no | A title for people. |
 | `notes` | no | Anything for people (text, a list, …). Ignored. |
@@ -113,7 +113,7 @@ brush for themselves only (`color`, `size`, `opacity`, `hardness`, `flow`).
 
 ```json
 { "cmd": "canvas", "width": 1600, "height": 1000, "paper": "#FDF8F0" }
-{ "cmd": "canvas", "open": "my-drawing.artapp" }
+{ "cmd": "canvas", "open": "my-drawing.quill" }
 ```
 
 | Field | |
@@ -356,7 +356,7 @@ Sizes, opacities, lengths and angles can be one number or `[min, max]` (picked a
 { "cmd": "text", "text": "First line\nsecond line", "at": [20, 500], "size": 24, "color": "ink", "rotate": -5 }
 ```
 
-Writes `text` in Art App's own font, [Inter](https://rsms.me/inter/), which is built into the
+Writes `text` in Duck Quill's own font, [Inter](https://rsms.me/inter/), which is built into the
 program, so it looks the same on every computer. `"\n"` starts a new line. The letters are
 filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-and-mirror) or a
 [symbol](#symbols-define-once-use-many-times) they move, turn, resize and mirror like everything else.
@@ -372,7 +372,7 @@ filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-an
 | `outline_size` | How wide that border is, in pixels (default 2). |
 | `rotate` | Degrees clockwise, around `at`. |
 | `opacity` | Default 1. |
-| `fit` | A width in pixels: the text is shrunk (never enlarged) so its widest line fits. `art-cli measure "the text" --size 32 --fit 180` says the size beforehand. |
+| `fit` | A width in pixels: the text is shrunk (never enlarged) so its widest line fits. `quill measure "the text" --size 32 --fit 180` says the size beforehand. |
 
 Inside a [`repeat`](#repeat--copies-with-a-step), `{i}` in the text becomes the copy number (1, 2,
 3...) and `{i0}` the same counted from 0.
@@ -388,7 +388,7 @@ next line's top at 121. Letters with a tail (g, p, y) go down to about 1.2 × `s
 { "cmd": "snapshot", "name": "blocked in" }
 ```
 
-A named checkpoint. `art-cli render --snapshots` saves a picture here, so you can check the
+A named checkpoint. `quill render --snapshots` saves a picture here, so you can check the
 picture at each stage. It doesn't change the picture.
 
 ## Groups: move, turn, resize and mirror
@@ -473,7 +473,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 ## `include` — symbols from another file
 
 ```json
-{ "cmd": "include", "file": "../skills/art-app/library/cloud.json" }
+{ "cmd": "include", "file": "../skills/duck-quill/library/cloud.json" }
 { "cmd": "use", "name": "cloud", "translate": [200, 80], "with": { "puff": 1.3 } }
 ```
 
@@ -485,7 +485,7 @@ symbol name it (`command 9 (use "cloud" (from cloud.json, command 2)) > 3 (ellip
 Included symbols and colours aren't "never used" warnings: a library holds more than one picture
 needs.
 
-**The library** in `skills/art-app/library/` holds ready parts, each with parameters, an example
+**The library** in `skills/duck-quill/library/` holds ready parts, each with parameters, an example
 script and a preview: cloud, water, grass, reed, tree, lily pad and the duck. Its `README.md`
 lists them.
 
@@ -835,7 +835,7 @@ mirrors and resizes with the groups around it.
 
 ### Seeing an animation without watching it
 
-`art-cli render` paints frame 0 of the first animation written unless told otherwise:
+`quill render` paints frame 0 of the first animation written unless told otherwise:
 `--frame 3`, `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation.
 Frames are saved as `name-walk-003.png`. A thing that is off the canvas in some frames but on
 it in others (an entrance, an exit) isn't warned about; one that never is, is. Then:
@@ -847,12 +847,12 @@ it in others (an entrance, an exit) isn't warned about; one that never is, is. T
 - `--gif`: the animation as `name-walk.gif`, at its fps, looping if it loops, for showing a
   person. `--bg` puts a colour behind see-through frames; `--zoom 4` enlarges with sharp pixels.
 
-`art-cli export script.json` writes the animations for a game or a video: a sprite sheet with
+`quill export script.json` writes the animations for a game or a video: a sprite sheet with
 its JSON (`--sheet`, the default: see [sprite-sheet-format.md](sprite-sheet-format.md)), every
 frame as a PNG (`--frames`), a GIF (`--gif`) and an MP4 (`--mp4`, through ffmpeg), with `--scale 8`
 for sharp enlargement and `--bg` behind see-through parts.
 
-`art-cli check` plays every frame of every animation, so a mistake in any of them is found
+`quill check` plays every frame of every animation, so a mistake in any of them is found
 (`animation "walk" > command 2 (use "duck"): ...`), and prints a **motion summary**: for each
 named group and `use`, where its middle is in the first and last frame and its biggest step
 between two frames. Warnings follow: a part that jumps more than a quarter of the canvas between
@@ -947,7 +947,7 @@ the script's 12th.
 
 ## Scripts from the app
 
-**File → Export strokes…** in Art App writes everything painted since the picture was started or
+**File → Export strokes…** in Duck Quill writes everything painted since the picture was started or
 opened as a script. It uses only `canvas`, `layer`, `brush`, `stroke`, `erase`, `fill`, `gradient`,
 `clear_layer`, `delete_layer`, `move_layer` and `rename_layer` (plus the commands of any script that
 was played), with every stroke point exactly where the pen went: `[x, y, pressure]`. It's an easy

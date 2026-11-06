@@ -1,4 +1,4 @@
-//! `art-cli views`: the artist's tricks as pictures. Paints the script
+//! `quill views`: the artist's tricks as pictures. Paints the script
 //! and saves a sheet of seven views (the picture, grey, squint, thumb,
 //! flip, silhouettes, heat), or one of them alone. Looking never changes
 //! the picture: the views are made from the painted pixels.
@@ -6,13 +6,13 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use art_engine::critique::Part as CritiquePart;
-use art_engine::document::{Background, Document};
-use art_engine::fill::Mask;
-use art_engine::image::Image;
-use art_engine::script::{PlayOptions, Report, focal_point};
-use art_engine::senses::{self, GRID, Grey, Heat, SILHOUETTE_COLORS};
-use art_engine::surface::PixelRect;
+use quill_engine::critique::Part as CritiquePart;
+use quill_engine::document::{Background, Document};
+use quill_engine::fill::Mask;
+use quill_engine::image::Image;
+use quill_engine::script::{PlayOptions, Report, focal_point};
+use quill_engine::senses::{self, GRID, Grey, Heat, SILHOUETTE_COLORS};
+use quill_engine::surface::PixelRect;
 
 use crate::sheet::{Entry, THUMB_HEIGHT, THUMB_WIDTH, contact_sheet};
 use crate::{Problem, failed, load, paint_frame, shown_animation};

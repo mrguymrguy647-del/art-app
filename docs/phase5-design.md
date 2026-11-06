@@ -23,13 +23,13 @@ download), and after Step 6 (the new tools).
 | Agents' folder | `skills/art-app/` | `skills/duck-quill/` (skill name `duck-quill`) |
 | Desktop shortcut | Art App | Duck Quill |
 | Settings folder | none | `%APPDATA%\Duck Quill\` on Windows, `~/.config/duck-quill/` on Linux |
-| Crates (question 1) | `art_engine`, `art_app`, `art_cli` | `quill_engine`, `duck_quill`, `quill_cli` |
+| Crates | `art_engine`, `art_app`, `art_cli` | `quill_engine`, `quill_app`, `quill_cli` |
 
 The crate folders stay `crates/engine`, `crates/app` and `crates/cli`: short, and every path in
 the docs stays right.
 
 **Old names keep working.** `.artapp` files open, and Save writes them back where they came
-from (question 3). Scripts with `"artapp-script"` run with no warning in the app; `quill check`
+from (Ctrl+S saves in place; Save As offers `.quill`). Scripts with `"artapp-script"` run with no warning in the app; `quill check`
 prints one note line ("old format name; it still works"). `art-cli` is a second tiny binary in
 the CLI crate: it prints `art-cli is now called quill` to stderr (so anything reading its
 output sees exactly what it saw before) and runs the same code.
@@ -50,8 +50,8 @@ output sees exactly what it saw before) and runs the same code.
   `brand/duck-quill-icon-256.png`. `create-shortcut.bat` sets `IconLocation` to `DuckQuill.exe`
   (which now carries the icon) and names the shortcut Duck Quill.
 - **Help → About Duck Quill.** The light or dark logo to match the theme, the version, a line
-  of credits. The two logos are embedded in the exe (about 2 MB), so the downloaded zip needs
-  no extra files.
+  of credits. The two logos are embedded shrunk to about 700 px, so the exe stays small and
+  the downloaded zip needs no extra files. View → Theme: Dark, Light, or follow Windows.
 - **The brand, lightly.** A small `theme.rs` sets egui's selection colour to night indigo
   `#5546D0` with white text (selected tool, selected layer) and gives one helper for primary
   buttons in duck yellow `#FFCC2E` with navy `#1B1446` text (OK in dialogs, Save). Nothing
@@ -260,25 +260,37 @@ take a noticeable fraction of a second. If the timing test shows that, tiles bec
   `script-format.md`, with one-line pointers in the skill; I'll trim to make room.
 - **Unsigned download:** the SmartScreen warning, until you decide on signing.
 
-## Questions for you
+## Step 7b: fixes from the game tests
 
-1. **Rename the crates too?** I recommend yes (`quill_engine`, `duck_quill`, `quill_cli`): the
-   names show up in error messages and in the code you're learning from, and the change is
-   mechanical. The folders stay `crates/engine`, `crates/app`, `crates/cli`.
-2. **The `art-cli` line on stderr** rather than in the normal output, so programs that read
-   `art-cli`'s output see exactly what they did before. OK?
-3. **Saving an old `.artapp` picture:** I recommend that Ctrl+S saves it in the new format under
-   its old name (it stays `.artapp`, opens fine in Duck Quill), and Save As offers `.quill`. The
-   other choice is to ask once "Save as .quill?" the first time.
-4. **Light theme?** The app is dark only. "The logo to match the theme" suggests a choice:
-   should I add View → Theme (Dark, Light, follow Windows)? I recommend yes, small.
-5. **Undoable selections?** I recommend yes: Ctrl+Z after a wrong lasso brings the old
-   selection back, as in Photoshop.
-6. **Built-in presets read-only** (you duplicate one to change it)? I recommend yes, so a
-   script's "Pencil (graphite)" always means the same pencil.
-7. **GitHub Actions from others:** `actions/checkout` (GitHub's own) and `Swatinem/rust-cache`
-   (widely used, makes CI minutes faster). OK, or GitHub's own only?
-8. **Code signing:** none for now (the SmartScreen warning), or do you want to look into a
-   certificate later?
-9. **Your annoyances list for Step 7:** start writing down what bothers you when drawing, so
-   it's ready when I ask.
+Added by the owner after the design review, done after Step 7: each with a test.
+
+- `quill <command> --help` prints that command's help.
+- `--zoom` no longer changes the saved PNG: the zoomed copy is written beside it as
+  `name-zoomN.png`; old scripts and commands keep working.
+- A darkening layer (`multiply` and the like) over transparent pixels leaves them transparent
+  in a transparent export.
+- A group scaled differently in x and y keeps line widths and brush sizes unstretched by
+  default (an option keeps the old stretch), and `check` warns about uneven scales.
+- Scale 0 shrinks a part to nothing without an error.
+- Parameters work in points and radii, or the error says what to do instead.
+- Single shapes can have a `name`.
+- `check` no longer calls an outline colour "never used".
+- `quill render --tile` shows the picture repeated 2 × 2 and warns where opposite edges don't
+  match, for repeating game backgrounds.
+- A tileset (atlas) export: several tiles or sprites packed into one PNG plus a JSON of their
+  places, like the sprite sheet format.
+- Masks and clipping get one short example each in `AI_GUIDE.md` and `SKILL.md`.
+- Pixel mode: 1 px lines and tiny shapes rasterise by a documented rule, so crossing lines
+  don't break into specks and small shapes on 8 × 8 tiles don't round unpredictably.
+
+## The owner's answers (design review)
+
+1. Rename the crates: yes, `quill_engine`, `quill_app`, `quill_cli`; folders stay.
+2. `art-cli`'s line goes to stderr.
+3. Ctrl+S on an old `.artapp` saves in place; Save As offers `.quill`.
+4. View → Theme (Dark, Light, follow Windows), small.
+5. Selections are undoable.
+6. Built-in presets are read-only; duplicate to change.
+7. `actions/checkout` and `Swatinem/rust-cache` are OK.
+8. No code signing for now; the READ ME explains "Run anyway".
+9. The owner keeps an annoyances list for Step 7.

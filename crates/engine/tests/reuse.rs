@@ -5,15 +5,15 @@
 
 use std::path::{Path, PathBuf};
 
-use art_engine::document::Background;
-use art_engine::image::Image;
-use art_engine::script::{PlayOptions, Player, Script, Sequence};
+use quill_engine::document::Background;
+use quill_engine::image::Image;
+use quill_engine::script::{PlayOptions, Player, Script, Sequence};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn png(document: &art_engine::document::Document) -> Vec<u8> {
+fn png(document: &quill_engine::document::Document) -> Vec<u8> {
     let mut bytes = Vec::new();
     Image::of_document(document, Background::Transparent)
         .write_png(&mut bytes, true)
@@ -100,7 +100,7 @@ fn every_example_animation_is_the_same_with_reuse() {
 
 #[test]
 fn the_gallery_loop_is_the_same_with_reuse_and_reuses_most_of_it() {
-    let path = root().join("skills/art-app/gallery/sunset-pond/script.json");
+    let path = root().join("skills/duck-quill/gallery/sunset-pond/script.json");
     let skipped = check(&path, 0.25, &[0, 7, 23]);
     // The hills, bank, pads and finishing layers don't move: most of
     // the script's commands are painted once.

@@ -1,4 +1,4 @@
-//! `art-cli critique`: the artist's eye in numbers. Paints the script,
+//! `quill critique`: the artist's eye in numbers. Paints the script,
 //! then reports about fifteen findings: values, the focal point, colour
 //! and key, texture, readability at thumbnail size and composition.
 //! Every finding has a place, the number behind it and a hint; the
@@ -7,11 +7,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use art_engine::critique::{Critique, Subject};
-use art_engine::document::Background;
-use art_engine::image::Image;
-use art_engine::script::{Focal, PlayOptions, Report, Script, focal_point, parse_hex};
-use art_engine::surface::PixelRect;
+use quill_engine::critique::{Critique, Subject};
+use quill_engine::document::Background;
+use quill_engine::image::Image;
+use quill_engine::script::{Focal, PlayOptions, Report, Script, focal_point, parse_hex};
+use quill_engine::surface::PixelRect;
 
 use crate::views::{layer_parts, named_parts, part_name};
 use crate::{Problem, load, paint_frame, shown_animation};
@@ -97,9 +97,9 @@ pub struct Painted {
     pub focal: Option<(f32, f32)>,
     pub focal_part: Option<(String, PixelRect)>,
     pub key_colors: Vec<(String, [u8; 4])>,
-    pub parts: Vec<art_engine::critique::Part>,
+    pub parts: Vec<quill_engine::critique::Part>,
     /// The visible layers, each with its own paint.
-    pub layers: Vec<art_engine::critique::Part>,
+    pub layers: Vec<quill_engine::critique::Part>,
     /// Problems with the intent (a focal part that isn't there).
     pub notes: Vec<String>,
 }
@@ -239,7 +239,7 @@ pub fn critique(options: &CritiqueOptions) -> Result<(), Problem> {
             }
             if options.score {
                 say!(
-                    "  benchmark scores from the numbers (skills/art-app/exercises/benchmark.md; \
+                    "  benchmark scores from the numbers (skills/duck-quill/exercises/benchmark.md; \
                      overall appeal is not a number's to give): {}",
                     critique.scores().line()
                 );

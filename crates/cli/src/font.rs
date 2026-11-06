@@ -4,7 +4,7 @@
 //!
 //! Each letter is drawn below as 7 rows of 5 characters: '#' is ink.
 
-use art_engine::image::{Color, Image};
+use quill_engine::image::{Color, Image};
 
 /// Width and height of one letter, in font pixels.
 const GLYPH_WIDTH: u32 = 5;

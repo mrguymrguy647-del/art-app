@@ -1,4 +1,4 @@
-//! The Art App painting engine.
+//! The Duck Quill painting engine.
 //!
 //! Everything about pictures lives here: pixels, brushes, layers, undo.
 //! It has no window or UI code, so it can be tested on its own with

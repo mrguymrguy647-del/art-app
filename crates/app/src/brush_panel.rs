@@ -1,10 +1,10 @@
 //! The tool panel: pick a tool (brush, eraser, eyedropper, paint bucket,
 //! gradient, text), choose a colour, and adjust the tool's settings.
 
-use art_engine::brush::{BrushSettings, Dynamics, MAX_SIZE, MIN_SIZE, Tip};
-use art_engine::fill::GradientShape;
-use art_engine::text::Align;
 use eframe::egui::{self, Slider};
+use quill_engine::brush::{BrushSettings, Dynamics, MAX_SIZE, MIN_SIZE, Tip};
+use quill_engine::fill::GradientShape;
+use quill_engine::text::Align;
 
 use crate::color_panel::ColorPicker;
 use crate::paint_tool::{GradientEnd, PaintTool, Tool};
