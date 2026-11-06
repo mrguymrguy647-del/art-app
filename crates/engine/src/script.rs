@@ -1212,6 +1212,11 @@ pub struct GroupCmd {
     pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
+    /// With a scale different across and down: `true` resizes brush and
+    /// outline sizes by the average of the two (lines look stretched);
+    /// normally they follow the smaller one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch_brush: Option<bool>,
     /// `true`: not turned by the groups around it (a foot stays flat
     /// while the leg turns). It still moves and mirrors with them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1271,6 +1276,11 @@ pub struct UseCmd {
     pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
+    /// With a scale different across and down: `true` resizes brush and
+    /// outline sizes by the average of the two (lines look stretched);
+    /// normally they follow the smaller one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch_brush: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
     /// As on a group: paint only inside this.

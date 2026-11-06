@@ -500,11 +500,19 @@ struct Saved {
     brush_alpha: u8,
 }
 
+/// `check` mentions a group scaled this much more one way than the other.
+const UNEVEN_WARNING: f32 = 1.5;
+
 /// A group's transform and settings, checked.
 struct Placement {
     transform: Transform,
     opacity: f32,
     scale_brush: bool,
+    /// Brush sizes follow the average of an uneven scale (the old way),
+    /// not the smaller of the two.
+    stretch_brush: bool,
+    /// The scale across and down, as written.
+    scale: (f32, f32),
     /// The point it turns and resizes around (drawing units).
     origin: (f32, f32),
 }
@@ -1096,18 +1104,48 @@ impl Player {
             None => parent.mask.clone(),
         };
         let symbol_starts = new.symbol.is_some();
+        // Scaled to 0 (across, down or both): it shrinks to nothing. Its
+        // commands still run (a layer it makes, a symbol it defines), but
+        // paint nothing.
+        let (sx, sy) = new.placement.scale;
+        let vanishes = sx == 0.0 || sy == 0.0;
+        // Lines keep their width along the less stretched direction (or
+        // the average, the old way, with `stretch_brush`).
+        let brush_factor = if new.placement.stretch_brush {
+            own.size_factor()
+        } else {
+            own.line_factor()
+        };
+        // (Only worth a warning when the widths visibly differ.)
+        let uneven = sx.min(sy) > 0.0 && sx.max(sy) / sx.min(sy) >= UNEVEN_WARNING;
+        let uneven_warning = (uneven && new.placement.scale_brush && !self.options.dry_run).then(|| {
+            format!(
+                "{path}: scaled unevenly ({sx} across, {sy} down), so line widths and brush sizes \
+                 follow the smaller scale ({:.2}); add \"stretch_brush\": true for the average ({:.2})",
+                own.line_factor(),
+                own.size_factor()
+            )
+        });
         let frame = Frame {
             commands: new.commands,
             next: 0,
             label: Some((self.current + 1, new.label)),
             place,
-            detail: parent.detail * own.size_factor(),
-            brush_scale: if new.placement.scale_brush {
-                parent.brush_scale * own.size_factor()
+            detail: if vanishes {
+                parent.detail
+            } else {
+                parent.detail * own.size_factor()
+            },
+            brush_scale: if new.placement.scale_brush && !vanishes {
+                parent.brush_scale * brush_factor
             } else {
                 parent.brush_scale
             },
-            opacity: parent.opacity * new.placement.opacity,
+            opacity: if vanishes {
+                0.0
+            } else {
+                parent.opacity * new.placement.opacity
+            },
             seed_base: Some(new.seed_base),
             restore: Some(Saved {
                 layer: document.active_id(),
@@ -1128,6 +1166,15 @@ impl Player {
             capture: new.capture,
             effect: None,
         };
+        // Once per group (an animation's frames scale it differently).
+        if let Some(warning) = uneven_warning
+            && !self.warnings.iter().any(|w| {
+                w.split_once(": scaled unevenly").map(|(p, _)| p)
+                    == warning.split_once(": scaled unevenly").map(|(p, _)| p)
+            })
+        {
+            self.warnings.push(warning);
+        }
         self.frames.push(frame);
         // A symbol looks the same wherever it's used: it starts from the
         // plain brush (the brush from before comes back after it).
@@ -1416,8 +1463,8 @@ impl Player {
         };
         frame.next = 0;
         frame.place = copies.so_far.then(copies.base_place);
-        frame.detail = copies.base_detail * copies.so_far.size_factor();
-        frame.brush_scale = copies.base_brush_scale * copies.so_far.size_factor();
+        frame.detail = copies.base_detail * copies.so_far.size_factor().max(1e-3);
+        frame.brush_scale = copies.base_brush_scale * copies.so_far.line_factor();
         frame.seed_base = Some(Random::mix(copies.seed, copies.current as u64 + 1));
         if !copies.each.is_empty() {
             frame.params = Some(Arc::new(each_params(&copies.each, copies.current)));
@@ -1651,6 +1698,9 @@ impl Player {
     fn note_drawn(&mut self, document: &Document, index: usize, command: &Command, queued: usize) {
         if self.capturing() {
             return; // a silhouette for a mask isn't drawing
+        }
+        if self.frame().opacity <= 0.0 {
+            return; // shrunk to nothing (scale 0) or fully faded: nothing shows
         }
         let mut drawn = None;
         // The number of the script's own command this is part of.
@@ -2182,6 +2232,10 @@ impl Player {
             command.opacity.as_ref(),
             command.scale_brush,
         )?;
+        let placement = Placement {
+            stretch_brush: command.stretch_brush.unwrap_or(false),
+            ..placement
+        };
         let label = match &command.name {
             Some(name) => format!("group \"{name}\""),
             None => "group".to_owned(),
@@ -2257,6 +2311,10 @@ impl Player {
             command.opacity.as_ref(),
             command.scale_brush,
         )?;
+        let placement = Placement {
+            stretch_brush: command.stretch_brush.unwrap_or(false),
+            ..placement
+        };
         let mut swaps = Vec::new();
         for (from, to) in command.colors.iter().flatten() {
             let error = |problem: String| format!("`colors`: {problem}");
@@ -2339,6 +2397,8 @@ impl Player {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
                 scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
                 origin: (0.0, 0.0),
             },
             seed_base: Random::mix(self.current_seed, 1),
@@ -2593,6 +2653,8 @@ impl Player {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
                 scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
                 origin: (0.0, 0.0),
             },
             seed_base: Random::mix(self.current_seed, 1),
@@ -2621,8 +2683,8 @@ impl Player {
         }
         let first = placements[0];
         frame.place = first.then(base_place);
-        frame.detail = base_detail * first.size_factor();
-        frame.brush_scale = base_brush_scale * first.size_factor();
+        frame.detail = base_detail * first.size_factor().max(1e-3);
+        frame.brush_scale = base_brush_scale * first.line_factor();
         frame.copies = Some(Copies {
             count: placements.len() as u32,
             current: 0,
@@ -4648,6 +4710,19 @@ impl TransformLayerCmd {
     /// What it does to the layer's pixels, in canvas pixels. The app uses
     /// this too, so what it does and what its script replays are the same.
     pub fn transform(&self) -> Result<Transform, String> {
+        // Squashing a whole layer flat can't be undone, and is almost
+        // certainly a mistake (unlike a part that grows from nothing).
+        let flat = match &self.scale {
+            Some(Value::Number(n)) => n.as_f64() == Some(0.0),
+            Some(Value::Array(pair)) => pair.iter().any(|v| v.as_f64() == Some(0.0)),
+            _ => false,
+        };
+        if flat {
+            return Err(
+                "`scale` is a number above 0 for transform_layer (to empty a layer, use clear_layer)"
+                    .into(),
+            );
+        }
         Ok(placement(
             self.translate,
             self.scale.as_ref(),
@@ -4672,7 +4747,7 @@ fn placement(
 ) -> Result<Placement, String> {
     let translate = pt(translate.unwrap_or([0.0, 0.0]))?;
     let origin = pt(origin.unwrap_or([0.0, 0.0]))?;
-    let scale_help = "`scale` is a number above 0 (like 1.5), or [across, down] like [2, 1]";
+    let scale_help = "`scale` is a number from 0 (like 1.5; 0 shrinks it to nothing), or [across, down] like [2, 1]";
     let scale = match scale {
         None => (1.0, 1.0),
         Some(Value::Number(n)) => {
@@ -4685,7 +4760,7 @@ fn placement(
         ),
         Some(_) => return Err(scale_help.into()),
     };
-    if !(scale.0 > 0.0 && scale.1 > 0.0 && scale.0.is_finite() && scale.1.is_finite()) {
+    if !(scale.0 >= 0.0 && scale.1 >= 0.0 && scale.0.is_finite() && scale.1.is_finite()) {
         return Err(format!(
             "{scale_help} (to flip a drawing, use \"mirror\": \"x\" or \"y\")"
         ));
@@ -4710,6 +4785,8 @@ fn placement(
         transform: Transform::about(origin, translate, scale, rotate, mirror_x, mirror_y),
         opacity: unit("opacity", opacity.unwrap_or(1.0))?,
         scale_brush: scale_brush.unwrap_or(true),
+        stretch_brush: false,
+        scale,
         origin,
     })
 }
@@ -5822,7 +5899,7 @@ mod tests {
             message.starts_with("command 3 (group \"duck\") > 2 (rect): unknown colour \"blu\""),
             "{message}"
         );
-        let message = error(&small(r#"{ "cmd": "group", "scale": 0, "commands": [] }"#));
+        let message = error(&small(r#"{ "cmd": "group", "scale": -1, "commands": [] }"#));
         assert!(message.contains("use \"mirror\""), "{message}");
         let message = error(&small(r#"{ "cmd": "group", "mirror": "left" }"#));
         assert!(message.contains("`commands` is missing"), "{message}");
@@ -9124,5 +9201,95 @@ mod tests {
         // On paper, the shadow darkens the paper as it always did.
         let paper = |x, y| document.composite_pixel(x, y, Background::Paper);
         assert!(paper(40, 20).r < 255);
+    }
+
+    #[test]
+    fn uneven_scales_keep_lines_unstretched_unless_asked_and_check_warns() {
+        let line_width = |extra: &str| {
+            let script = format!(
+                r##"{{ "commands": [
+                    {{ "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" }},
+                    {{ "cmd": "group", "name": "wide", "scale": [3, 1], {extra} "commands": [
+                        {{ "cmd": "stroke", "points": [[10, 20], [50, 20]], "size": 6, "hardness": 1, "color": "#000000" }}
+                    ] }}
+                  ] }}"##
+            );
+            let script = Script::parse(&script).unwrap();
+            let mut player = Player::new(script, PlayOptions::default()).unwrap();
+            let mut document = player.create_document().unwrap();
+            player.run(&mut document, |_, _| {}).unwrap();
+            let layer = &document.layers()[0].surface;
+            let width = (0..100).filter(|&y| layer.pixel(90, y).a > 128).count();
+            (width, player.report().warnings)
+        };
+        let (plain, warnings) = line_width("");
+        assert!(
+            (5..=7).contains(&plain),
+            "the line stays about 6 wide ({plain})"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("scaled unevenly") && w.contains("stretch_brush")),
+            "{warnings:?}"
+        );
+        let (stretched, _) = line_width(r#""stretch_brush": true,"#);
+        assert!(
+            (9..=12).contains(&stretched),
+            "the old way: about 6 x 1.73 ({stretched})"
+        );
+        // An even scale still scales lines, and doesn't warn.
+        let even = play(
+            r##"{ "commands": [
+                { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+                { "cmd": "group", "scale": 2, "commands": [
+                    { "cmd": "stroke", "points": [[10, 20], [50, 20]], "size": 6, "hardness": 1, "color": "#000000" }
+                ] }
+              ] }"##,
+        );
+        let width = (0..100)
+            .filter(|&y| even.layers()[0].surface.pixel(60, y).a > 128)
+            .count();
+        assert!((11..=13).contains(&width), "{width}");
+    }
+
+    #[test]
+    fn scale_zero_shrinks_a_part_to_nothing_without_an_error() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "group", "name": "gone", "scale": 0, "origin": [50, 30], "commands": [
+                { "cmd": "layer", "name": "Made inside" },
+                { "cmd": "ellipse", "center": [50, 30], "radius": 20, "fill": "#F0C040", "outline": "#202020" },
+                { "cmd": "stroke", "points": [[30, 30], [70, 30]], "size": 8 }
+            ] },
+            { "cmd": "group", "name": "flat", "scale": [1, 0], "origin": [50, 30], "commands": [
+                { "cmd": "rect", "x": 10, "y": 10, "width": 30, "height": 30, "fill": "#F0C040" }
+            ] },
+            { "cmd": "layer", "name": "Made inside" }
+          ] }"##;
+        let parsed = Script::parse(script).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        for layer in document.layers() {
+            assert_eq!(
+                layer.surface.tile_count(),
+                0,
+                "{} has nothing on it",
+                layer.name()
+            );
+        }
+        assert!(
+            document.layers().iter().any(|l| l.name() == "Made inside"),
+            "its layer was made"
+        );
+        let report = player.report();
+        assert!(
+            report.parts.iter().all(|p| p.area.is_none()),
+            "it drew nothing"
+        );
+        // Negative scales still say to use mirror.
+        let problem = error(&script.replace(r#""scale": 0,"#, r#""scale": -1,"#));
+        assert!(problem.contains("mirror"), "{problem}");
     }
 }

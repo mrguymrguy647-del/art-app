@@ -436,12 +436,13 @@ of `hatch` and `scatter`.
 | `commands` | The commands to draw inside the group (needed). Groups can hold groups. |
 | `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. |
 | `translate` | Move by `[x, y]`. |
-| `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. Above 0. |
+| `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. `0` shrinks the part to nothing (it paints nothing, with no error: handy for something that grows in, in an animation); below 0 is an error (use `mirror`). |
 | `rotate` | Turn by this many degrees, clockwise. |
 | `mirror` | `"x"` swaps left and right, `"y"` swaps up and down, `"xy"` both. |
 | `origin` | The point the group mirrors, resizes and turns around, in the group's own coordinates. Default `[0, 0]`. |
 | `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
+| `stretch_brush` | With a scale different across and down, brush and outline sizes follow the *smaller* of the two, so lines don't look fattened (`[3, 1]` keeps a 2-wide line 2 wide). `true`: they follow the average instead, as before phase 5. `check` warns when the two differ by 1.5 times or more. |
 | `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
 | `filter` | Filters on what the group draws, on its own, before it lands on the layers: `{ "glow": {...} }`, `{ "shadow": {...} }`... See [Filters](#filters). |
 | `outline` | A line around the silhouette of everything the group draws, behind it, with optional rim light: `{ "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } }`. See [Outlines for whole shapes](#outlines-for-whole-shapes). |

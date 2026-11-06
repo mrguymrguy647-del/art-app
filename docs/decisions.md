@@ -1960,3 +1960,19 @@ two false alarms. Every finding, before and after:
   rendered on paper is unchanged; only the transparent reference of the
   all-commands script changed, where a multiply texture used to show
   over empty sky.
+- **Uneven scales keep lines unstretched.** Brush and outline sizes in
+  a group used to grow by the average of the two scales (the square
+  root of their product), so a part stretched [3, 1] got lines 1.73
+  times fatter all round. They now follow the smaller scale (the
+  transform's smaller singular value, so turning doesn't change it):
+  [3, 1] keeps lines as drawn, and an even scale is exactly as before.
+  `"stretch_brush": true` on a group or `use` brings back the average.
+  `check` warns once per group when its scales differ by 1.5 times or
+  more. Squash-and-stretch frames have slightly thinner outlines on the
+  squashed frames: the duck-walk, duck-sheet and title references were
+  updated for it.
+- **Scale 0** shrinks a part to nothing instead of being an error: its
+  commands still run (a layer it makes, a symbol it defines) but paint
+  at no opacity, and `check` reports no area for it. For
+  `transform_layer` it stays an error (squashing a whole layer can't be
+  undone; `clear_layer` empties one).

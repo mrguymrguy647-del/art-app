@@ -134,6 +134,18 @@ impl Transform {
         (self.a * self.d - self.b * self.c).abs().sqrt()
     }
 
+    /// How much this transform resizes a line's width: its smallest
+    /// stretch in any direction. The same as `size_factor` for an even
+    /// scale; for [3, 1] it's 1, so a line drawn 2 wide stays 2 wide
+    /// instead of fattening to 3.5. 0 when it squashes things flat.
+    pub fn line_factor(&self) -> f32 {
+        // The smaller singular value of the 2 x 2 part.
+        let sum = self.a * self.a + self.b * self.b + self.c * self.c + self.d * self.d;
+        let det = self.a * self.d - self.b * self.c;
+        let root = (sum * sum - 4.0 * det * det).max(0.0).sqrt();
+        ((sum - root) / 2.0).max(0.0).sqrt()
+    }
+
     /// True if it mirrors (left and right swap places).
     pub fn mirrors(&self) -> bool {
         self.a * self.d - self.b * self.c < 0.0
@@ -229,5 +241,17 @@ mod tests {
         let step = Transform::translate(10.0, 0.0);
         close(step.repeated(3).apply((0.0, 0.0)), (30.0, 0.0));
         assert!(step.repeated(0).is_identity());
+    }
+
+    #[test]
+    fn a_line_widens_by_the_smallest_stretch() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(close(Transform::scale(2.0, 2.0).line_factor(), 2.0));
+        assert!(close(Transform::scale(3.0, 1.0).line_factor(), 1.0));
+        assert!(close(Transform::scale(0.5, 4.0).line_factor(), 0.5));
+        // Turning doesn't change it.
+        let turned = Transform::scale(3.0, 1.0).then(Transform::rotate(33.0));
+        assert!(close(turned.line_factor(), 1.0));
+        assert!(close(Transform::scale(1.0, 0.0).line_factor(), 0.0));
     }
 }
