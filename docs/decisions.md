@@ -1814,3 +1814,46 @@ two false alarms. Every finding, before and after:
 - **Drawn icons.** The eye and the padlock are drawn with lines, not
   emoji or font symbols, so they look the same on every machine. The
   Layers panel is 50 points wider for them.
+
+## 83. Brush presets and the pencil (phase 5, step 5)
+
+- **A preset is a `brush` command with a name.** The file holds a name,
+  a description, whether it's an eraser, the smoothing and a `brush`
+  block written exactly as in a script, so there's one way to read and
+  check settings (`apply_brush_fields`, shared with the player). A preset
+  has no colour: choosing one keeps the colour you had.
+- **Built-in presets live inside the program** (`crates/engine/presets`,
+  read with `include_str!`), so `{"cmd": "brush", "preset": "..."}` paints
+  the same on every machine. Your own presets are not available to
+  scripts for the same reason; Export strokes writes their settings out.
+- **Your presets are files** in `%APPDATA%\Duck Quill\presets` (on Linux
+  `~/.config/duck-quill/presets`), one `.json` each, named after the
+  preset with characters Windows forbids replaced; `order.json` keeps the
+  grid's order. A file that can't be read is reported and skipped.
+  Built-in ones can't be renamed or deleted; Duplicate makes a copy you
+  can change.
+- **What makes the pencil a pencil.** Four new brush settings, all off
+  by default so older brushes paint exactly as before:
+  - `pressure_size_min` / `pressure_opacity_min`: what the lightest
+    touch keeps. The pencil keeps 85% of its width but only 15% of its
+    darkness, so pressure is shading, not thickness.
+  - `pressure_curve`: 1.4 for the pencil, so you press harder for dark.
+  - `grain`: a tileable 256-pixel height map fixed to the canvas (not
+    the stroke). A light touch only marks the high points; pressing
+    harder reaches further down. Fixed to the canvas means every stroke
+    meets the same bumps, which is what real paper does and what makes
+    shading over shading look like graphite. The bumps are 1 to 4 pixels
+    across: bigger ones made the line look dashed.
+  - `build_up`: the most the layer darkens when you go over it again
+    (0.8 for the pencil: shiny grey, never black).
+- **Recorded brushes always carry the new settings** (and `tidy` drops
+  them while they stay plain): writing them only when used meant a plain
+  brush after the pencil played back still grainy.
+- **Previews** are real strokes painted with the engine on a 144 x 64
+  surface (shown at half size), light-hard-light, sizes squeezed to fit;
+  each is drawn once and again only when its settings change.
+- **Cost.** On the 4000 x 3000, 20-layer test (`tests/big_canvas.rs`), a
+  3600-pixel stroke at size 60 takes 219 ms with the pencil against
+  100 ms with the plain brush: a grain lookup per pixel and dabs 20%
+  closer. That stroke takes seconds to draw by hand, so the pen never
+  waits; at the pencil's own size (5) it is a small fraction of that.

@@ -8,6 +8,7 @@ use quill_engine::text::Align;
 
 use crate::color_panel::ColorPicker;
 use crate::paint_tool::{GradientEnd, PaintTool, Tool};
+use crate::presets_panel::PresetsPanel;
 use crate::select_tool::SelectShape;
 
 /// The paint bucket can grow its fill by at most this many pixels.
@@ -24,6 +25,7 @@ pub fn brush_panel(
     ui: &mut egui::Ui,
     tools: &mut PaintTool,
     colors: &mut ColorPicker,
+    presets: &mut PresetsPanel,
 ) -> PanelActions {
     let mut actions = PanelActions::default();
 
@@ -57,6 +59,10 @@ pub fn brush_panel(
 
     // Scrolls if the window is too short to show everything.
     egui::ScrollArea::vertical().show(ui, |ui| {
+        if matches!(tools.tool, Tool::Brush | Tool::Eraser) {
+            presets.ui(ui, tools);
+            ui.separator();
+        }
         if tools.tool != Tool::Eraser {
             let recent = tools.recent_colors.clone();
             colors.ui(ui, &mut tools.brush.color, &recent);

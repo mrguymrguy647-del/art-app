@@ -53,8 +53,7 @@ the intent, the picture doesn't read yet. Numbers are warnings, never goals; the
     { "cmd": "layer", "name": "Characters" },
     { "cmd": "group", "name": "duck", "commands": [
       { "cmd": "ellipse", "center": [256, 150], "radius": [40, 28], "fill": "body", "outline": "ink", "outline_size": 3 } ] }
-  ]
-}
+] }
 ```
 
 ## Rules that prevent most mistakes
@@ -182,6 +181,7 @@ Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k"
 - Texture: `brush` with a `tip` (`chalk`, `bristle`, `leaf`, `grass`, `sparkle`, `square`) and `dynamics`
   (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); `stroke`, `path`, `hatch` and `scatter` use it.
   `stamp` puts a symbol or tip along a path every `spacing`. Marks have a direction; a noise fill doesn't.
+- Pencil or ink: `{"cmd": "brush", "preset": "Pencil (graphite)"}` (`quill presets` lists them; lessons 35-39).
 - A `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}` is a base for clouds, water, rock, skin,
   never the shading itself (it reads as marble); paper grain: `{"texture": "paper"}` on `multiply` at 0.3.
 - Depth and light: `filter` with `blur` + `adjust` on far layers (blur the fill, not the silhouette);

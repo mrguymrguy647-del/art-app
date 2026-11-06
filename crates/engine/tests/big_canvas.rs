@@ -60,6 +60,14 @@ fn long_stroke(document: &mut Document, clip: Option<std::sync::Arc<quill_engine
         size: 60.0,
         ..BrushSettings::default()
     };
+    stroke_with(document, clip, brush);
+}
+
+fn stroke_with(
+    document: &mut Document,
+    clip: Option<std::sync::Arc<quill_engine::fill::Mask>>,
+    brush: BrushSettings,
+) {
     let mut stroke = Stroke::new(brush, document.bounds());
     if let Some(clip) = clip {
         stroke = stroke.clipped(clip);
@@ -80,6 +88,15 @@ fn timings_on_a_4000_by_3000_picture_with_20_layers() {
     let limits = document.bounds();
     time("long stroke, size 60, no selection", || {
         long_stroke(&mut document, None)
+    });
+    // The pencil: grain and build-up cost a little per pixel.
+    let mut pencil = quill_engine::presets::find("Pencil (graphite)")
+        .unwrap()
+        .settings()
+        .unwrap();
+    pencil.size = 60.0;
+    time("long stroke, size 60, pencil (grain)", || {
+        stroke_with(&mut document, None, pencil)
     });
     // The same blur without a selection, on a copy, to compare.
     let mut plain = document.clone();

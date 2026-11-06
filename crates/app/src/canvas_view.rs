@@ -35,6 +35,7 @@ use crate::edit::{self, Clipboard, EditAction, FeatherWindow};
 use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
+use crate::presets_panel::PresetsPanel;
 use crate::select_tool::{self, Ants, SelectShape};
 use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
@@ -113,6 +114,7 @@ pub struct CanvasView {
     clipboard: Clipboard,
     /// Select → Feather… while its window is open.
     feather: Option<FeatherWindow>,
+    presets: PresetsPanel,
 }
 
 impl Default for CanvasView {
@@ -136,6 +138,7 @@ impl Default for CanvasView {
             ants: Ants::default(),
             clipboard: Clipboard::default(),
             feather: None,
+            presets: PresetsPanel::default(),
         }
     }
 }
@@ -182,7 +185,7 @@ impl CanvasView {
             .show(ui, |ui| {
                 let actions = ui
                     .add_enabled_ui(panels_enabled, |ui| {
-                        brush_panel(ui, &mut self.tools, &mut self.colors)
+                        brush_panel(ui, &mut self.tools, &mut self.colors, &mut self.presets)
                     })
                     .inner;
                 if actions.clear_layer && document.selection().is_some() {
@@ -212,6 +215,7 @@ impl CanvasView {
             });
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
+        self.presets.windows(ui.ctx(), &mut self.tools);
         if let Some(window) = &mut self.feather {
             let mut close = false;
             if let Some(pixels) = window.ui(ui.ctx(), &mut close) {
@@ -225,7 +229,7 @@ impl CanvasView {
 
     /// True while one of the canvas's small windows (Feather) is open.
     pub fn dialog_open(&self) -> bool {
-        self.feather.is_some()
+        self.feather.is_some() || self.presets.dialog_open()
     }
 
     /// Forgets the previous picture's textures and view, for when a new

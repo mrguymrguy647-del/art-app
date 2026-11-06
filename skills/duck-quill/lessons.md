@@ -101,3 +101,35 @@ A lesson is retired the same way. The first lessons below come from phase 3's no
     white against a reference with real mids has lost the drawing before any detail.
     (The face-door copy.)
 
+## Pencil and ink
+
+The person asked for these with the brush presets (phase 5); they come from their sketchbook,
+`references/sketchbook/`. Try both presets with `quill presets`.
+
+35. Choose the tool by the job the mark does: **Ink pen** for contours and solid blacks that must
+    read at a glance, **Pencil (graphite)** for tone, hatching and anything that stays soft.
+    (`pen-hero-head`: an ink contour and black hair in front, light pencil hatching behind; two
+    tools give two depths.)
+36. Ink never goes grey, so its only weight is its width. Press harder (wider) on the shadow
+    side and where lines meet, lighter at the light side and at tips. Blacks are filled solid
+    or left white; ink is not for tone. (`pen-hero-head`: the hair spikes taper to points.)
+37. Pencil tone is pressure and passes. Shade with many light strokes (pressure 0.3 to 0.5) in
+    one direction along the form, and press hard (0.8 to 1) only in the core shadow and the
+    accents. Going over again darkens only to a shiny grey (`build_up`), never ink black.
+    (`prince-profile`: hair shaded along each spike, the arm as one block on the shadow side.)
+38. Light pencil shows the paper grain; that is what makes it read as pencil. Flat, even grey
+    reads as a marker. If a pencil area looks flat, press lighter and add a second pass in
+    another direction; don't raise the opacity. (The Pencil preview in the app's Presets panel:
+    the light ends show the paper, the middle is filled; `face-door`'s stucco is the grain.)
+39. Pencil first, ink last: sketch the construction lightly in pencil on its own layer, ink the
+    final contour on a layer above, then fade or hide the pencil layer, or keep it as shading
+    on purpose. (`pen-hero-head`: the pencil sky hatching stays.)
+
+```json
+{ "cmd": "layer", "name": "Sketch" },
+{ "cmd": "brush", "preset": "Pencil (graphite)", "color": "#3A3A44" },
+{ "cmd": "stroke", "points": [[100, 200, 0.3], [180, 150, 0.4], [260, 160, 0.3]] },
+{ "cmd": "layer", "name": "Ink" },
+{ "cmd": "brush", "preset": "Ink pen", "color": "#141418" },
+{ "cmd": "stroke", "points": [[100, 205, 0.4], [180, 152, 1], [262, 162, 0.3]] }
+```
