@@ -117,7 +117,9 @@ RENDER OPTIONS
   --scale <s>        paint at this size, e.g. 0.5 for half (instead of --preview)
   --crop x,y,w,h     save only this part, at full size, to check details
                      (it may go past the edges: outside shows as grey squares)
-  --zoom <n>         enlarge the saved picture n times (pixels become squares)
+  --zoom <n>         also save <name>-zoom<n>.png, n times bigger (pixels
+                     become squares); <name>.png stays its own size. Crops,
+                     previews and sheets are shown enlarged
   --transparent      leave the paper out of the PNG (see-through background)
   --layers \"A,B\"     show only these layers (the .quill keeps them all)
   --hide \"A,B\"       show all layers but these
@@ -949,13 +951,19 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 ..whole
             };
             if scale == 1.0 {
-                let image = zoomed(image);
+                // <name>.png is always the picture at its own size (a game
+                // loads it as it is); --zoom adds an enlarged copy beside it.
                 save(
                     &image,
                     options.out.join(format!("{name}.png")),
                     options.transparent,
                     &mut saved,
                 )?;
+                let image = zoomed(image);
+                if options.zoom > 1 {
+                    let path = options.out.join(format!("{name}-zoom{}.png", options.zoom));
+                    save(&image, path, options.transparent, &mut saved)?;
+                }
                 // The layers, for the app (one picture only: frames are flat).
                 if frame.is_none() {
                     let path = options.out.join(format!("{name}.{FILE_EXTENSION}"));

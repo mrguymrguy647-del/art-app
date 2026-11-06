@@ -1428,3 +1428,31 @@ fn every_command_has_its_own_help() {
     let nothing = quill().args(["help", "paint"]).output().unwrap();
     assert_eq!(nothing.status.code(), Some(2));
 }
+
+#[test]
+fn zoom_adds_an_enlarged_copy_and_leaves_the_picture_its_own_size() {
+    let out = folder("zoom");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("tile.json");
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "red": "#C04040" }, "commands": [
+            { "cmd": "canvas", "width": 16, "height": 8, "pixel": true },
+            { "cmd": "rect", "x": 2, "y": 2, "width": 4, "height": 4, "fill": "red" }
+        ] }"##,
+    )
+    .unwrap();
+    let status = quill()
+        .args(["render", script.to_str().unwrap(), "--zoom", "4", "--out"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let size = |file: &str| {
+        let image = quill_engine::image::Image::load(&out.join(file)).unwrap();
+        (image.width(), image.height())
+    };
+    assert_eq!(size("tile.png"), (16, 8), "the picture keeps its size");
+    assert_eq!(size("tile-zoom4.png"), (64, 32));
+    std::fs::remove_dir_all(out).ok();
+}

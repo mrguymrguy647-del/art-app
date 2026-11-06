@@ -610,7 +610,8 @@ animation is then one `use` with keyframes in `with`:
 **Pixel art:** `"pixel": {"supersample": 8, "outline": "ink"}` on the canvas, a palette of 4 to 8
 colours (it's locked), shapes with decimals (`"radius": 5.5` is fine), and `pixels` rows for
 tiny things like an eye: `"rows": ["kw"]`. Keep every part at least 2 pixels wide, or the vote
-loses it. Check at `--zoom 8`; export with `--scale 8` for people and `--scale 1` for the game.
+loses it. Check at `--zoom 8` (saved as `<name>-zoom8.png`; `<name>.png` stays the game's size);
+export with `--scale 8` for people and `--scale 1` for the game.
 The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as the painted one.
 
 ## 11. Speed
