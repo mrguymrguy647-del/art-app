@@ -25,6 +25,7 @@ mod export;
 mod font;
 mod grid;
 mod sheet;
+mod views;
 
 use std::fmt;
 use std::io::{self, Write};
@@ -63,6 +64,12 @@ USAGE
                                            painted on each layer
   art-cli measure \"some text\" [--size n]  how wide and high a text would be
                                            (and the size that fits --fit width)
+  art-cli views <script.json> [options]    the picture seven ways on one sheet
+                                           (<name>-views.png): as painted, gray,
+                                           squinted, a thumbnail, flipped, the
+                                           named parts' silhouettes, and a heat
+                                           map of where the eye goes, with the
+                                           intent's focal point ringed
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -100,6 +107,14 @@ RENDER OPTIONS
   --grid; <name>.png and <name>.artapp never do. At full size, the picture
   with them is saved as <name>-view.png.
 
+VIEWS OPTIONS
+  --out <folder>     where to save (default: out)
+  --gray, --squint, --thumb, --flip, --silhouette, --heat
+                     save that one view alone, as <name>-gray.png and so on
+                     (any number of them; without any, the sheet is saved)
+  --frame <n>        for a script with animations: frame n (from 0)
+  --animation <name> which animation, if the script has more than one
+
 EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
   --out <folder>     where to save (default: out)
   --sheet            <name>.png (one row per animation) and <name>.json: the
@@ -119,6 +134,7 @@ EXAMPLES
   art-cli render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
   art-cli render examples/sunset.json --preview --layers \"Sky,Sun\"
   art-cli export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
+  art-cli views examples/sunset.json
 
 The script format is described in docs/script-format.md.";
 
@@ -140,6 +156,7 @@ fn main() -> ExitCode {
             )),
         },
         Some("measure") => measure(&args[1..]),
+        Some("views") => views::parse_views(&args[1..]).and_then(|options| views::views(&options)),
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
             Ok(())
@@ -1355,26 +1372,7 @@ fn paint_all(
     let folder = path.parent().map(Path::to_path_buf);
     let mut motions = Vec::new();
     let mut first = None;
-    let shown = match shown {
-        Some(name) => Some(name.to_owned()),
-        None => script.animations.keys().next().cloned(),
-    };
-    if let Some(name) = &shown {
-        let Some(animation) = script.animations.get(name) else {
-            let names: Vec<&str> = script.animations.keys().map(String::as_str).collect();
-            return Err(failed(format!(
-                "there's no animation called \"{name}\" (animations: {})",
-                names.join(", ")
-            )));
-        };
-        if shown_frame >= animation.frames {
-            return Err(failed(format!(
-                "animation \"{name}\" has {} frames (0 to {}), so there's no frame {shown_frame}",
-                animation.frames,
-                animation.frames - 1
-            )));
-        }
-    }
+    let shown = shown_animation(&script, shown, shown_frame)?;
     for (name, animation) in &script.animations {
         let mut reports = Vec::with_capacity(animation.frames as usize);
         for frame in 0..animation.frames {
@@ -1567,6 +1565,48 @@ fn paint_frame(
     Ok((document, player.report(), snapshots))
 }
 
+/// The animation a frame is shown from: `shown`, or the first (if the
+/// script has any), checked to exist and to have the frame.
+fn shown_animation(
+    script: &Script,
+    shown: Option<&str>,
+    frame: u32,
+) -> Result<Option<String>, Problem> {
+    if script.animations.is_empty() {
+        if shown.is_some() || frame > 0 {
+            return Err(failed(
+                "this script has no animations (--animation and --frame are for scripts with an \
+                 \"animations\" section)",
+            ));
+        }
+        return Ok(None);
+    }
+    let shown = match shown {
+        Some(name) => name.to_owned(),
+        None => script
+            .animations
+            .keys()
+            .next()
+            .cloned()
+            .expect("there are animations"),
+    };
+    let Some(animation) = script.animations.get(&shown) else {
+        let names: Vec<&str> = script.animations.keys().map(String::as_str).collect();
+        return Err(failed(format!(
+            "there's no animation called \"{shown}\" (animations: {})",
+            names.join(", ")
+        )));
+    };
+    if frame >= animation.frames {
+        return Err(failed(format!(
+            "animation \"{shown}\" has {} frames (0 to {}), so there's no frame {frame}",
+            animation.frames,
+            animation.frames - 1
+        )));
+    }
+    Ok(Some(shown))
+}
+
 /// What `check` was asked for.
 struct CheckOptions {
     script: PathBuf,
@@ -1627,12 +1667,6 @@ fn check(options: &CheckOptions) -> Result<(), Problem> {
     // It really paints (at full size), so what it reports is exactly
     // what `render` would make.
     let script = load(path)?;
-    if script.animations.is_empty() && (options.animation.is_some() || options.frame > 0) {
-        return Err(failed(
-            "this script has no animations (--animation and --frame are for scripts with an \
-             \"animations\" section)",
-        ));
-    }
     let (document, report, snapshots, motions) =
         paint_all(path, options.animation.as_deref(), options.frame)?;
     let layers = layer_boxes(&document, 1.0, Layer::visible, Some(&report));

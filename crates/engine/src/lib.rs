@@ -22,6 +22,7 @@ pub mod pen;
 pub mod pixels;
 pub mod random;
 pub mod script;
+pub mod senses;
 pub mod smoothing;
 pub mod sprites;
 pub mod stroke;

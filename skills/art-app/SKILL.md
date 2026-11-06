@@ -150,8 +150,8 @@ keyframes; a symbol's `params` are set by a `use`'s `with` (keyframes allowed).
 - Check without watching: `art-cli check walk.json` (motion summary, jump and loop-pop
   warnings), `art-cli render walk.json --frame-sheet --transparent`, `--frame 3 --onion`.
 - Export: `art-cli export walk.json --sheet --gif --mp4 --scale 4` writes the sprite sheet with
-  its JSON (`docs/sprite-sheet-format.md`), a GIF and an MP4. `examples/duck-animated.json` is
-  a full idle and walk; `examples/duck-sheet.json` a character sheet (swap, mirror, labels).
+  its JSON (`docs/sprite-sheet-format.md`), a GIF and an MP4. `examples/duck-animated.json` is a
+  full idle and walk; `examples/duck-sheet.json` a character sheet (swap, mirror, labels).
 
 ## Pixel art
 
@@ -159,19 +159,20 @@ keyframes; a symbol's `params` are set by a `use`'s `with` (keyframes allowed).
 every command is painted 8 times bigger and shrunk to crisp whole pixels in the palette's colours
 (the palette is locked: no hex colours; 4 to 8 colours is right). Decimals are fine in positions.
 Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k": "ink", "w": "body" }, "rows": ["kw"] }`.
-Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for the game and
-`--scale 8` for people. `examples/duck-pixel.json` is a 32-pixel duck with idle and walk.
+Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for the game, `--scale 8` for people. `examples/duck-pixel.json` is a 32-pixel duck with idle and walk.
 
 ## Seeing and checking
 
-- `art-cli check picture.json --detail`: also the groups and uses inside others.
-- `art-cli info picture.json`: each layer's box and which commands painted it.
-- `--layers "Characters"` shows only some layers; `--hide "Background"` all but some.
-- `--snapshots --sheet` saves a picture at every `snapshot` command and layer change, and one
-  sheet with all of them. Add `{ "cmd": "snapshot", "name": "blocked in" }` after big stages.
-- `--crop` may go past the canvas edges (outside shows as grey squares); `--scale 0.5` saves
-  `name-50pct.png`; `--pixels` prints a pixel canvas as rows of palette letters.
-- Previews make lines thinner than a pixel faint; check fine lines with `--crop`.
+- `art-cli views picture.json` saves `out/picture-views.png`: the picture, gray, squint (big shapes),
+  thumb, flip, the named parts' silhouettes, and a heat map of where the eye goes with the `focal`
+  point ringed; `--heat` (`--gray`, `--squint`, `--thumb`, `--flip`, `--silhouette`) saves one alone.
+- `art-cli check picture.json --detail` also lists the groups and uses inside others;
+  `art-cli info picture.json` gives each layer's box and which commands painted it.
+- `--layers "Characters"` shows only some layers; `--hide "Background"` all but some. `--snapshots --sheet`
+  saves a picture at every `snapshot` command and layer change, and one sheet of them all. Add
+  `{ "cmd": "snapshot", "name": "blocked in" }` after big stages.
+- `--crop` may go past the canvas edges (grey squares outside); `--scale 0.5` saves `name-50pct.png`;
+  `--pixels` prints a pixel canvas as rows of palette letters. Previews make thin lines faint: use `--crop`.
 
 ## Making it beautiful (in this order, checking between moves)
 
@@ -190,8 +191,8 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - Shading inside a shape: a `"clip": true` layer above it; `"lock": true` recolours a layer
   without changing its edges; a group's `mask` (an area, a symbol, a layer) limits its paint.
 - `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it.
-- Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not
-  detail. The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
+- Judge the squint and thumb (`views`) before any detail: if it doesn't read small, fix values and shapes.
+  The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 

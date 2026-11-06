@@ -1860,6 +1860,16 @@ mod tests {
                     checked += 1;
                     continue;
                 }
+                if block.starts_with("\"intent\"") {
+                    // A top-level block: check it in a script.
+                    let script = format!(
+                        r##"{{ "palette": {{ "sky_low": "#F08040", "sun": "#FFF0C0", "water_dark": "#204060" }},
+                            {block}, "commands": [ {{ "cmd": "canvas", "width": 10, "height": 10 }} ] }}"##
+                    );
+                    parse(&script).unwrap_or_else(|e| panic!("{e}\nin:\n{block}"));
+                    checked += 1;
+                    continue;
+                }
                 if block.starts_with('"') {
                     // One field, like "fill": {...}: check it inside a rectangle.
                     let script = format!(

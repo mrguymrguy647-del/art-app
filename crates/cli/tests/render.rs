@@ -891,3 +891,93 @@ fn check_prints_the_intent_and_warns_about_a_focal_part_that_is_not_there() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() {
+    let out = folder("views");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("pond.json");
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "sky": "#8EC1E6", "sun": "#FFF1C0", "ink": "#202020" },
+          "intent": { "subject": "a duck at sunset", "focal": "duck" },
+          "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "sky" },
+            { "cmd": "group", "name": "sun", "commands": [
+              { "cmd": "ellipse", "center": [160, 30], "radius": 15, "fill": "sun" } ] },
+            { "cmd": "group", "name": "duck", "commands": [
+              { "cmd": "ellipse", "center": [60, 60], "radius": [20, 12], "fill": "ink" } ] } ] }"##,
+    )
+    .unwrap();
+    let output = art_cli()
+        .args(["views", script.to_str().unwrap(), "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("saved ") && text.contains("pond-views.png"),
+        "{text}"
+    );
+    assert!(
+        text.contains("the intent's focal point is (60, 60)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("silhouettes (outermost parts, in their colours): sun, duck"),
+        "{text}"
+    );
+    assert!(text.contains("the eye goes to cell ("), "{text}");
+    let sheet = std::fs::read(out.join("pond-views.png")).unwrap();
+    assert!(!sheet.is_empty());
+    assert!(
+        !out.join("pond-gray.png").exists(),
+        "no single views without a flag"
+    );
+
+    // One view alone, and the same every time.
+    let single = || {
+        let output = art_cli()
+            .args([
+                "views",
+                script.to_str().unwrap(),
+                "--gray",
+                "--silhouette",
+                "--out",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        (
+            std::fs::read(out.join("pond-gray.png")).unwrap(),
+            std::fs::read(out.join("pond-silhouette.png")).unwrap(),
+        )
+    };
+    let first = single();
+    assert_eq!(first, single(), "the same picture gives the same views");
+    assert!(!out.join("pond-heat.png").exists());
+    let second_sheet = art_cli()
+        .args(["views", script.to_str().unwrap(), "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(second_sheet.status.success());
+    assert_eq!(sheet, std::fs::read(out.join("pond-views.png")).unwrap());
+
+    // Mistakes are explained.
+    let output = art_cli()
+        .args(["views", script.to_str().unwrap(), "--frame", "2"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("this script has no animations"), "{err}");
+    let output = art_cli()
+        .args(["views", script.to_str().unwrap(), "--sheet"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    std::fs::remove_dir_all(out).ok();
+}

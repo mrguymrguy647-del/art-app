@@ -77,6 +77,11 @@ pub struct PlayOptions {
     pub animation: Option<String>,
     /// Which frame of it, counting from 0.
     pub frame: u32,
+    /// Also keep every named part's silhouette (where it painted), for
+    /// [`Report::silhouettes`]. Each named part is then painted on a
+    /// scratch picture first and laid on the layers after, like a group
+    /// with filters, so this is for looking, not for the final picture.
+    pub silhouettes: bool,
 }
 
 impl Default for PlayOptions {
@@ -88,6 +93,7 @@ impl Default for PlayOptions {
             dry_run: false,
             animation: None,
             frame: 0,
+            silhouettes: false,
         }
     }
 }
@@ -120,6 +126,10 @@ pub struct Report {
     pub used_symbols: BTreeSet<String>,
     pub used_colors: BTreeSet<String>,
     pub palette: BTreeSet<String>,
+    /// With [`PlayOptions::silhouettes`]: where each named part that drew
+    /// something has paint, in the pixels being painted, with its place
+    /// in `parts`; in the order the parts finished.
+    pub silhouettes: Vec<(usize, Mask)>,
 }
 
 /// Warnings about symbols defined but never used and palette colours
@@ -512,6 +522,7 @@ pub struct Player {
     /// symbols defined (with their command numbers) and used, and the
     /// palette colours used.
     parts: Vec<Part>,
+    silhouettes: Vec<(usize, Mask)>,
     warnings: Vec<String>,
     defined: Vec<(String, usize)>,
     used_symbols: HashSet<String>,
@@ -642,6 +653,7 @@ impl Player {
             events: VecDeque::new(),
             finished: false,
             parts: Vec::new(),
+            silhouettes: Vec::new(),
             warnings: Vec::new(),
             defined: Vec::new(),
             used_symbols: HashSet::new(),
@@ -1046,7 +1058,10 @@ impl Player {
                 .map_err(|problem| format!("`outline`: {problem}"))?;
             filters.extend(more);
         }
-        if !filters.is_empty() {
+        // A named part whose silhouette is wanted is painted on a scratch
+        // picture too (with no filters), so its paint can be recorded.
+        let wanted = self.options.silhouettes && part.is_some() && new.capture.is_none();
+        if !filters.is_empty() || wanted {
             self.frames.last_mut().expect("just pushed").effect = Some(filters);
             self.capture.push(Scratch::new(document, false));
         }
@@ -1133,7 +1148,13 @@ impl Player {
     /// drawing, makes one shadow from the combined silhouette (laid on
     /// the lowest of those layers, under everything), and lays the parts
     /// on their layers (or on the scratch picture of the group around).
-    fn lay_effect(&mut self, document: &mut Document, mut scratch: Scratch, filters: &[Filter]) {
+    fn lay_effect(
+        &mut self,
+        document: &mut Document,
+        mut scratch: Scratch,
+        filters: &[Filter],
+        part: Option<usize>,
+    ) {
         let limits = document.bounds();
         let per_part: Vec<Filter> = filters
             .iter()
@@ -1158,6 +1179,13 @@ impl Player {
         }
         if parts.is_empty() {
             return;
+        }
+        if self.options.silhouettes
+            && let Some(index) = part
+        {
+            let surfaces: Vec<&Surface> = parts.iter().map(|(_, s)| s).collect();
+            let mask = Mask::from_alpha(&filters::silhouette(&surfaces), limits);
+            self.silhouettes.push((index, mask));
         }
         // Shadows and outlines go under the lowest layer's part (shadows
         // furthest back); rim light goes over the highest layer's.
@@ -1311,7 +1339,7 @@ impl Player {
                 .capture
                 .pop()
                 .expect("a filtered frame has a scratch picture");
-            self.lay_effect(document, scratch, filters);
+            self.lay_effect(document, scratch, filters, frame.part);
         }
         // For the report: hand what it drew to the frame around it.
         if let Some(index) = frame.part {
@@ -1426,6 +1454,7 @@ impl Player {
     pub fn report(&self) -> Report {
         Report {
             parts: self.parts.clone(),
+            silhouettes: self.silhouettes.clone(),
             warnings: self.warnings.clone(),
             defined: self.defined.clone(),
             used_symbols: self.used_symbols.iter().cloned().collect(),
@@ -8066,6 +8095,49 @@ mod tests {
             { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000", "seed": 2 } ] }"##,
         );
         assert_eq!(frames[4], png(&by_hand));
+    }
+
+    #[test]
+    fn silhouettes_record_where_each_named_part_painted() {
+        let text = r##"{ "palette": { "ink": "#202020", "red": "#E02020" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "dot", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "red" } ] },
+            { "cmd": "group", "name": "duck", "translate": [100, 50], "commands": [
+              { "cmd": "rect", "x": -20, "y": -10, "width": 40, "height": 20, "fill": "ink" },
+              { "cmd": "use", "name": "dot", "translate": [40, 0] } ] },
+            { "cmd": "group", "name": "nothing", "commands": [] } ] }"##;
+        let script = Script::parse(text).unwrap();
+        let options = PlayOptions {
+            silhouettes: true,
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script.clone(), options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let names: Vec<&str> = report.parts.iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "command 3 (group \"duck\")",
+                "command 3 (group \"duck\") > 2 (use \"dot\")",
+                "command 4 (group \"nothing\")"
+            ]
+        );
+        // The inner part finishes first; the empty group has no silhouette.
+        let order: Vec<usize> = report.silhouettes.iter().map(|(i, _)| *i).collect();
+        assert_eq!(order, [1, 0]);
+        let dot = &report.silhouettes[0].1;
+        let duck = &report.silhouettes[1].1;
+        assert_eq!(dot.get(140, 50), 255, "inside the dot");
+        assert_eq!(dot.get(100, 50), 0, "the rect isn't the dot's");
+        assert_eq!(duck.get(100, 50), 255, "the rect");
+        assert_eq!(duck.get(140, 50), 255, "the dot is part of the duck");
+        assert_eq!(duck.get(10, 10), 0, "paper");
+        // Looking doesn't change the picture.
+        let plain = play(text);
+        assert_eq!(png(&plain), png(&document));
     }
 
     #[test]

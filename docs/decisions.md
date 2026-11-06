@@ -1259,3 +1259,32 @@ the painted picture, a process sheet and honest notes, listed in
   warns (not fails) when the focal part doesn't exist: the picture
   still paints, the painter just learns the name is wrong.
 
+## 70. The views sheet (phase 4, step 2)
+
+- **Senses live in the engine, apart from painting.** `senses.rs` only
+  reads pixels (`Grey`, `Heat`, the view pictures) and never touches a
+  document or a player. Every number is deterministic: the same picture
+  gives the same views, byte for byte (tested).
+- **A fixed 32 x 32 grid.** The heat map (and everything step 3 measures)
+  uses cells that are the same fraction of the picture whatever its size,
+  so numbers compare between pictures. The weights (contrast 0.35, edges
+  0.3, saturation 0.15, detail 0.2) are a model of attention, not the
+  truth; every report says so.
+- **Silhouettes from a second painting, never the first.** A part's
+  silhouette is recorded by painting it on a scratch picture and laying
+  it on the layers after, the way a filtered group is painted. That can
+  change pixels in rare cases (a blend-mode brush or an eraser inside
+  the part sees the scratch, not the layers below), so `views` paints the
+  picture once plainly for every panel and once more with
+  `PlayOptions::silhouettes` for the silhouettes alone. Looking never
+  changes the picture; the price is one extra paint when the silhouette
+  panel is wanted.
+- **Outermost parts only, in script order.** Nested parts would be
+  covered by the part around them, so the silhouette panel shows the
+  parts `check` lists without `--detail`; their colours follow the order
+  they start in the script, and runs of the same name are counted
+  ("reed (x9)"). Eight colours, then they repeat (the label says so).
+- **Thumb at 96 px, shown enlarged.** The file `name-thumb.png` is the
+  real 96-pixel thumbnail (what reads at a glance); on the sheet it's
+  magnified with sharp pixels so a person can see it.
+

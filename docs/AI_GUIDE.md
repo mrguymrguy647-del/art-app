@@ -411,9 +411,27 @@ All five on one small scene (26 commands):
 
 ## 7. Checking your own work
 
-When you look at a render, ask:
+Start with the views sheet: `art-cli views picture.json` paints the picture and saves
+`out/picture-views.png`, seven panels in one look. Each one is an artist's trick:
 
-1. Can you tell what it is at thumbnail size (the contact sheet)? Is there one clear focal point?
+| Panel | What to ask |
+|---|---|
+| picture | the reference for the rest |
+| gray | are the darks and lights where you meant them, without colour to flatter them? |
+| squint (the gray picture blurred) | do three to five big value shapes remain? If it goes to one grey mush, fix values, not detail |
+| thumb (96 px wide) | can you tell what it is at a glance? |
+| flip (mirrored) | composition mistakes the eye has stopped seeing: leaning, lopsided, a heavy side |
+| silhouettes (each outermost named group or `use` filled flat, in its own colour) | does every shape read on its own? Blobs with no clear outline won't read in the picture either |
+| heat (where the eye goes) | the hottest cell is where contrast, edges, colour and detail pile up; the ring is the intent's `focal` point. If they disagree, the picture argues with the intent |
+
+`--gray`, `--squint`, `--thumb`, `--flip`, `--silhouette` or `--heat` save one view alone
+(`out/picture-heat.png`); `--frame 3` picks a frame of an animated script. The heat map is a
+fixed model of attention (a 32 x 32 grid; contrast 0.35, edges 0.3, saturation 0.15, detail
+0.2), not the truth: use it to notice, then look.
+
+Then, looking at the render, ask:
+
+1. Can you tell what it is at thumbnail size (the views sheet's thumb)? Is there one clear focal point?
 2. Are the darks and lights where you meant them? Is anything muddy (everything mid-grey)?
 3. Is the light consistent?
 4. Edges: any hard, computer-straight edges that should be organic (`jitter`, `path` instead of
