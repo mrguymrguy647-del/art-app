@@ -681,6 +681,15 @@ impl Player {
             _ => None,
         };
         let paint_scale = options.scale * pixel.as_ref().map_or(1.0, |p| p.supersample as f32);
+        // The pixel canvas's outline colour counts as used (it outlines
+        // every shape, though no command names it).
+        let mut used_colors = HashSet::new();
+        if let Some(Command::Canvas(canvas)) = script.commands.first()
+            && let Some(Value::Object(fields)) = &canvas.pixel
+            && let Some(Value::String(name)) = fields.get("outline")
+        {
+            used_colors.insert(name.clone());
+        }
         Ok(Self {
             commands: Arc::new(script.commands),
             palette,
@@ -708,7 +717,7 @@ impl Player {
             defined: Vec::new(),
             used_symbols: HashSet::new(),
             symbol_versions: HashMap::new(),
-            used_colors: RefCell::new(HashSet::new()),
+            used_colors: RefCell::new(used_colors),
             painted_by: HashMap::new(),
             read_by: HashMap::new(),
             frame: options.frame,
@@ -9453,5 +9462,27 @@ mod tests {
         // Mistakes say its name.
         let problem = error(&named.replace(r##""fill": "#80C0FF""##, r#""fill": "nope""#));
         assert!(problem.contains("(ellipse \"window\")"), "{problem}");
+    }
+
+    #[test]
+    fn outline_colours_count_as_used() {
+        let script = r##"{ "palette": { "ink": "#202020", "body": "#F0C040", "rim": "#FFFFFF", "edge": "#101010", "spare": "#00FF00" },
+          "commands": [
+            { "cmd": "canvas", "width": 32, "height": 32, "pixel": { "outline": "ink" } },
+            { "cmd": "group", "name": "duck", "outline": { "color": "rim", "size": 1 }, "commands": [
+                { "cmd": "ellipse", "center": [16, 16], "radius": 8, "fill": "body", "outline": "edge" }
+            ] }
+          ] }"##;
+        let parsed = Script::parse(script).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let warnings = unused_warnings(&[&report]);
+        assert_eq!(
+            warnings,
+            ["palette colour \"spare\" is never used"],
+            "only the spare one"
+        );
     }
 }

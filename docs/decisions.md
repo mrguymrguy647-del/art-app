@@ -1992,3 +1992,8 @@ two false alarms. Every finding, before and after:
   silhouettes treat it like a named group. That frame hands its command
   the very seed it would have had without the name (`keep_seed`), so
   naming a jittered shape doesn't change a pixel.
+- **Outline colours count as used.** A pixel canvas's `"outline": "ink"`
+  outlines every shape, but no command names it, so `check` called it
+  "never used". It's now counted from the canvas command. (Shape,
+  group and text outlines were already counted; the test covers them
+  all.)
