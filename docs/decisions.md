@@ -1997,3 +1997,9 @@ two false alarms. Every finding, before and after:
   "never used". It's now counted from the canvas command. (Shape,
   group and text outlines were already counted; the test covers them
   all.)
+- **`render --tile`** saves the picture 2 x 2 and compares opposite
+  edges. A row (or column) jumps when the difference across the seam is
+  more than three times the picture's usual step between neighbouring
+  pixels (its median), and at least 24 of 255: a noisy texture isn't a
+  seam for being noisy. Edges where more than 5% jump are reported,
+  with the longest stretch, in canvas pixels.

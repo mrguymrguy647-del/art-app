@@ -29,6 +29,7 @@ mod gallery;
 mod grid;
 mod sheet;
 mod study;
+mod tile;
 mod views;
 
 use std::fmt;
@@ -140,6 +141,9 @@ RENDER OPTIONS
   --pixels           for a pixel canvas: print the picture as rows of
                      letters, one per palette colour (. = see-through)
   --gif              every frame as <name>-<animation>.gif, for a quick look
+  --tile             for a picture that repeats (a game background, a floor
+                     tile): also <name>-tile.png, the picture 2 x 2, and a
+                     warning where opposite edges don't meet
 
   Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
   --grid; <name>.png and <name>.quill never do. At full size, the picture
@@ -447,6 +451,8 @@ struct RenderOptions {
     pixels: bool,
     /// `--gif`: all the frames as an animated GIF.
     gif: bool,
+    /// `--tile`: the picture 2 x 2, and where its edges don't meet.
+    tile: bool,
 }
 
 /// Which frames of an animation `render` paints.
@@ -482,6 +488,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         onion: false,
         pixels: false,
         gif: false,
+        tile: false,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -501,6 +508,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--all-frames" => options.frames = Frames::All,
             "--onion" => options.onion = true,
             "--pixels" => options.pixels = true,
+            "--tile" => options.tile = true,
             "--gif" => options.gif = true,
             "--frame-sheet" => {
                 // The number is optional: `--frame-sheet` alone is every frame.
@@ -712,6 +720,8 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     };
     // Which frames to paint: one picture, or frames of an animation.
     let (frames, mut notes) = frames_to_paint(&script, options)?;
+    // What --tile found about the (last) picture's edges.
+    let mut tile_findings: Vec<String> = Vec::new();
 
     let snapshot_folder = options.out.join("snapshots");
     std::fs::create_dir_all(if options.snapshots {
@@ -986,6 +996,17 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 save(&image, path, keeps_alpha, &mut saved)?;
             }
         }
+        if options.tile && options.crop.is_none() {
+            let image = picture(&document, document.bounds());
+            tile_findings = tile::edge_mismatches(&image, scale);
+            let path = options.out.join(format!("{name}-tile.png"));
+            save(
+                &tile::repeated(&image, 2, 2),
+                path,
+                options.transparent,
+                &mut saved,
+            )?;
+        }
         if options.pixels {
             if player.is_pixel() {
                 say!("  pixels of {name} (. = see-through):");
@@ -1123,6 +1144,16 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         ));
     }
     say!("  saved: {}", files.join(", "));
+    if options.tile {
+        if options.crop.is_some() {
+            say!("  tile: --tile looks at the whole picture, not a --crop");
+        } else if tile_findings.is_empty() {
+            say!("  tile: opposite edges meet, so it repeats without a seam");
+        }
+        for finding in &tile_findings {
+            say!("  tile: {finding}");
+        }
+    }
     for note in notes {
         say!("  ({note})");
     }

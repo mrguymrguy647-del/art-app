@@ -614,6 +614,11 @@ loses it. Check at `--zoom 8` (saved as `<name>-zoom8.png`; `<name>.png` stays t
 export with `--scale 8` for people and `--scale 1` for the game.
 The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as the painted one.
 
+**Repeating backgrounds and tiles:** `render --tile` also saves `<name>-tile.png`, the picture
+2 x 2, and says where opposite edges don't meet (and where along them). Fix the seam (match the
+colours at both edges, or let a gradient run the same at top and bottom) until it says the edges
+meet.
+
 ## 11. Speed
 
 - A 1600×1000 render takes well under a second; `--preview` about a third of that. `check`

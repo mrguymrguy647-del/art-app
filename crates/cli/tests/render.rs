@@ -1456,3 +1456,48 @@ fn zoom_adds_an_enlarged_copy_and_leaves_the_picture_its_own_size() {
     assert_eq!(size("tile-zoom4.png"), (64, 32));
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn tile_shows_the_picture_two_by_two_and_where_edges_do_not_meet() {
+    let out = folder("tile");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sky.json");
+    // A sky darkening downwards: as a repeating background its bottom
+    // meets its top with a hard line.
+    std::fs::write(
+        &script,
+        r##"{ "commands": [
+            { "cmd": "canvas", "width": 60, "height": 40 },
+            { "cmd": "gradient", "from": [0, 0], "to": [0, 40], "colors": ["#A0D0FF", "#203060"] }
+        ] }"##,
+    )
+    .unwrap();
+    let run = quill()
+        .args(["render", script.to_str().unwrap(), "--tile", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success(), "{text}");
+    assert!(
+        text.contains("tile: top and bottom edges don't meet"),
+        "{text}"
+    );
+    assert!(!text.contains("left and right edges don't meet"), "{text}");
+    let image = quill_engine::image::Image::load(&out.join("sky-tile.png")).unwrap();
+    assert_eq!((image.width(), image.height()), (120, 80));
+    // A flat colour repeats cleanly.
+    std::fs::write(
+        &script,
+        r##"{ "commands": [ { "cmd": "canvas", "width": 60, "height": 40, "paper": "#336633" } ] }"##,
+    )
+    .unwrap();
+    let run = quill()
+        .args(["render", script.to_str().unwrap(), "--tile", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&run.stdout);
+    assert!(text.contains("tile: opposite edges meet"), "{text}");
+    std::fs::remove_dir_all(out).ok();
+}
