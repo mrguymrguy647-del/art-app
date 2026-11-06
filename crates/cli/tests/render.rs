@@ -1375,3 +1375,56 @@ fn presets_lists_every_built_in_preset_and_a_script_can_use_them() {
     let extra = quill().args(["presets", "pencil"]).output().unwrap();
     assert_eq!(extra.status.code(), Some(2));
 }
+
+#[test]
+fn every_command_has_its_own_help() {
+    for command in [
+        "render",
+        "check",
+        "export",
+        "info",
+        "measure",
+        "presets",
+        "views",
+        "critique",
+        "palette",
+        "values",
+        "compare",
+        "gallery",
+        "blind-read",
+    ] {
+        for asked in [
+            vec![command, "--help"],
+            vec![command, "-h"],
+            vec!["help", command],
+        ] {
+            let out = quill().args(&asked).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "{asked:?}: {text}");
+            assert!(
+                text.starts_with(&format!("quill {command}\n")),
+                "{asked:?}: {text}"
+            );
+            assert!(
+                text.contains(&format!("  quill {command}")),
+                "{asked:?}: its usage"
+            );
+        }
+    }
+    // Only that command's options.
+    let render = quill()
+        .args(["render", "examples/sunset.json", "--help"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&render.stdout);
+    assert!(
+        text.contains("--zoom") && text.contains("RENDER OPTIONS"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("GALLERY OPTIONS") && !text.contains("quill views"),
+        "{text}"
+    );
+    let nothing = quill().args(["help", "paint"]).output().unwrap();
+    assert_eq!(nothing.status.code(), Some(2));
+}

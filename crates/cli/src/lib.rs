@@ -106,6 +106,7 @@ USAGE
                                            writes blind-read.md next to the script
   quill --version                          the version number
   quill help                               show this
+  quill <command> --help                   just that command's part of it
 
 RENDER OPTIONS
   --out <folder>     where to save (default: out)
@@ -206,7 +207,96 @@ const PREVIEW_SIZE: f32 = 800.0;
 /// Runs one `quill` command: `args` are the words after the program's
 /// name. Both programs, `quill` and the old `art-cli`, call this, so they
 /// can never behave differently.
+/// The commands, and which OPTIONS section of the help each one uses.
+const COMMANDS: &[(&str, Option<&str>)] = &[
+    ("render", Some("RENDER OPTIONS")),
+    ("check", Some("RENDER OPTIONS")),
+    ("export", Some("EXPORT OPTIONS")),
+    ("info", None),
+    ("measure", None),
+    ("presets", None),
+    ("views", Some("VIEWS OPTIONS")),
+    ("critique", Some("CRITIQUE OPTIONS")),
+    ("palette", Some("PALETTE, VALUES AND COMPARE OPTIONS")),
+    ("values", Some("PALETTE, VALUES AND COMPARE OPTIONS")),
+    ("compare", Some("PALETTE, VALUES AND COMPARE OPTIONS")),
+    ("gallery", Some("GALLERY OPTIONS")),
+    ("blind-read", Some("BLIND-READ OPTIONS")),
+];
+
+/// `quill <command> --help`: that command's lines from the full help
+/// (its usage, its options and its examples), so the two never disagree.
+pub fn command_help(command: &str) -> Option<String> {
+    let (_, options) = COMMANDS.iter().find(|(name, _)| *name == command)?;
+    let lines: Vec<&str> = HELP.lines().collect();
+    let starts = |line: &str| {
+        line.strip_prefix("  quill ")
+            .is_some_and(|rest| rest == command || rest.starts_with(&format!("{command} ")))
+    };
+    let mut out = vec![
+        format!("quill {command}"),
+        String::new(),
+        "USAGE".to_owned(),
+    ];
+    // Usage: its lines, each with the lines indented under it.
+    let usage_end = lines
+        .iter()
+        .position(|l| l.ends_with("OPTIONS"))
+        .unwrap_or(lines.len());
+    let mut taking = false;
+    for line in &lines[..usage_end] {
+        if line.starts_with("  quill ") {
+            taking = starts(line);
+        } else if !line.starts_with("    ") {
+            taking = false;
+        }
+        if taking {
+            out.push((*line).to_owned());
+        }
+    }
+    // Its options section, up to the next heading.
+    if let Some(heading) = options
+        && let Some(start) = lines.iter().position(|l| l.starts_with(heading))
+    {
+        out.push(String::new());
+        for line in &lines[start..] {
+            let next_heading = line.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && !line.starts_with(heading);
+            if next_heading {
+                break;
+            }
+            out.push((*line).to_owned());
+        }
+        while out.last().is_some_and(|l| l.is_empty()) {
+            out.pop();
+        }
+    }
+    // Its examples.
+    let examples: Vec<&str> = lines
+        .iter()
+        .skip_while(|l| !l.starts_with("EXAMPLES"))
+        .filter(|l| starts(l))
+        .copied()
+        .collect();
+    if !examples.is_empty() {
+        out.push(String::new());
+        out.push("EXAMPLES".to_owned());
+        out.extend(examples.into_iter().map(str::to_owned));
+    }
+    out.push(String::new());
+    out.push("Run `quill help` for every command.".to_owned());
+    Some(out.join("\n"))
+}
+
 pub fn run(args: &[String]) -> ExitCode {
+    // `quill <command> --help` (or -h) anywhere after the command.
+    if let Some(command) = args.first()
+        && args[1..].iter().any(|a| a == "--help" || a == "-h")
+        && let Some(help) = command_help(command)
+    {
+        say!("{help}");
+        return ExitCode::SUCCESS;
+    }
     let result = match args.first().map(String::as_str) {
         Some("render") => parse_render(&args[1..]).and_then(|options| render(&options)),
         Some("check") => parse_check(&args[1..]).and_then(|options| check(&options)),
@@ -234,6 +324,13 @@ pub fn run(args: &[String]) -> ExitCode {
             say!("quill {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        Some("help") if args.len() > 1 => match command_help(&args[1]) {
+            Some(help) => {
+                say!("{help}");
+                Ok(())
+            }
+            None => Err(Problem::Usage(format!("no command called \"{}\"", args[1]))),
+        },
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
             Ok(())
