@@ -49,9 +49,9 @@ pub struct Script {
     /// Colour names defined once and used by name in commands.
     pub palette: BTreeMap<String, String>,
     pub commands: Vec<Command>,
-    /// Animations, by name (in alphabetical order). Each plays `commands`
+    /// Animations, by name, in the order written. Each plays `commands`
     /// and then its own, once per frame. Empty for a single picture.
-    pub animations: BTreeMap<String, Animation>,
+    pub animations: Animations,
     /// The character's anchor point in canvas pixels, for sprite sheets.
     /// Default: the bottom centre of the canvas.
     pub pivot: Option<[f32; 2]>,
@@ -65,8 +65,124 @@ pub struct Animation {
     pub fps: f32,
     #[serde(rename = "loop", default)]
     pub looping: bool,
+    /// `true` (`"time": "seconds"`): plain numbers in its keyframes are
+    /// seconds, not frames.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub seconds: bool,
     #[serde(default)]
     pub commands: Vec<Command>,
+}
+
+/// The animations of a script, by name, in the order they were written
+/// (so the first one is the one `render` shows by default).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Animations(Vec<(String, Animation)>);
+
+impl Animations {
+    pub fn get(&self, name: &str) -> Option<&Animation> {
+        self.0.iter().find(|(n, _)| n == name).map(|(_, a)| a)
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Animation)> {
+        self.0.iter().map(|(n, a)| (n, a))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(n, _)| n)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Animation> {
+        self.0.iter().map(|(_, a)| a)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Adds one at the end. Returns false (and changes nothing) if the
+    /// name is taken.
+    pub fn insert(&mut self, name: String, animation: Animation) -> bool {
+        if self.contains_key(&name) {
+            return false;
+        }
+        self.0.push((name, animation));
+        true
+    }
+}
+
+impl<'a> IntoIterator for &'a Animations {
+    type Item = (&'a String, &'a Animation);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, Animation)>,
+        fn(&'a (String, Animation)) -> (&'a String, &'a Animation),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|(n, a)| (n, a))
+    }
+}
+
+impl std::ops::Index<&str> for Animations {
+    type Output = Animation;
+
+    fn index(&self, name: &str) -> &Animation {
+        self.get(name)
+            .unwrap_or_else(|| panic!("no animation called \"{name}\""))
+    }
+}
+
+impl Serialize for Animations {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, animation) in &self.0 {
+            map.serialize_entry(name, animation)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Animations {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let pairs: Vec<(String, Animation)> = ordered_pairs(deserializer)?;
+        Ok(Animations(pairs))
+    }
+}
+
+/// Reads a JSON object as (name, value) pairs in the order written.
+fn ordered_pairs<'de, D, T>(deserializer: D) -> Result<Vec<(String, T)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Pairs<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Pairs<T> {
+        type Value = Vec<(String, T)>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an object of animations by name")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut pairs = Vec::new();
+            while let Some((name, value)) = map.next_entry::<String, T>()? {
+                pairs.push((name, value));
+            }
+            Ok(pairs)
+        }
+    }
+    deserializer.deserialize_map(Pairs(std::marker::PhantomData))
 }
 
 /// The most frames one animation may have.
@@ -145,6 +261,9 @@ pub enum Command {
     Text(TextCmd),
     Pixels(PixelsCmd),
     Snapshot(SnapshotCmd),
+    Stamp(StampCmd),
+    Filter(FilterCmd),
+    Include(IncludeCmd),
     Group(GroupCmd),
     Define(DefineCmd),
     Use(UseCmd),
@@ -178,6 +297,9 @@ impl Command {
             Command::Text(_) => "text",
             Command::Pixels(_) => "pixels",
             Command::Snapshot(_) => "snapshot",
+            Command::Stamp(_) => "stamp",
+            Command::Filter(_) => "filter",
+            Command::Include(_) => "include",
             Command::Group(_) => "group",
             Command::Define(_) => "define",
             Command::Use(_) => "use",
@@ -239,6 +361,16 @@ pub struct LayerCmd {
     pub blend: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible: Option<bool>,
+    /// `true`: shown only where the nearest unclipped layer below has paint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<bool>,
+    /// `true`: the alpha lock, so painting only recolours what's there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<bool>,
+    /// `"below"`: fill the layer with everything below it, flattened
+    /// (for a filter over the whole picture).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub above: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -308,8 +440,13 @@ pub struct TransformLayerCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrushCmd {
+    /// `true`: back to the plain brush first (then any settings given).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
+    pub reset: Option<bool>,
+    /// A colour, or a pattern to paint with: `{"noise": {...}}` or
+    /// `{"texture": ...}` (see `fill`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -326,6 +463,150 @@ pub struct BrushCmd {
     pub pressure_opacity: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pressure_flow: Option<bool>,
+    /// The dab's shape: `"round"`, `"square"`, `"bristle"`, `"chalk"`,
+    /// `"leaf"`, `"grass"`, `"sparkle"`, or `{"file": "tips/splat.png"}`
+    /// (a greyscale picture, relative to the script).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<Value>,
+    /// How far the tip is turned, degrees clockwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f32>,
+    /// How dabs vary along a stroke; replaces the dynamics as a whole
+    /// (`{}` turns them all off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamics: Option<DynamicsCmd>,
+}
+
+/// A brush's dynamics, as written: see `brush::Dynamics`. Anything left
+/// out is off.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DynamicsCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hue: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saturation: Option<f32>,
+}
+
+/// `stamp`: puts copies of a symbol, or single dabs of a tip, along a
+/// smooth path through `points`, one every `spacing` units, each turned
+/// to follow the path (unless `follow` is false) and varied at random
+/// (from `seed`) within `size`, `angle` and `colors`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StampCmd {
+    /// The symbol to copy (placed like a `use` at each spot)...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// ...or the tip to stamp (as on `brush`; default: the brush's own).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<Value>,
+    /// `[[x, y], ...]`; may be keyframes.
+    pub points: Value,
+    /// Distance between copies, in drawing units; may be keyframes.
+    pub spacing: Value,
+    /// For a symbol, a scale (default 1); for a tip, pixels across
+    /// (default: the brush size). A number, or `[min, max]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Value>,
+    /// Degrees added to each copy's turn: a number, or `[min, max]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<Value>,
+    /// Turn each copy along the path (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<bool>,
+    /// Copies land up to this far off the path (drawing units).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scatter: Option<f32>,
+    /// One colour, or colours to pick from per copy. For a symbol, the
+    /// colour goes to its `color` parameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<Vec<String>>,
+    /// For tip dabs: their opacity (default: the brush's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    /// Values for the symbol's other parameters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<BTreeMap<String, Value>>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<Value>,
+}
+
+/// `filter`: changes everything on a layer (`layer`, or the selected
+/// one) in place: `adjust`, then `gradient_map`, `blur`, `glow` and
+/// `shadow`, whichever are given. Every number may be keyframes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Pixels of softening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blur: Option<Value>,
+    /// `{"radius": 24, "threshold": 0.75, "strength": 0.8}`: light
+    /// pixels spread and added on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<Value>,
+    /// `{"offset": [6, 8], "blur": 6, "color": "#00000070"}`: a soft
+    /// copy of the silhouette behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<Value>,
+    /// `{"hue": 0, "saturation": 0, "brightness": 0, "contrast": 0}`:
+    /// degrees, then -1 to 1 each.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust: Option<Value>,
+    /// `{"stops": [[0, "dark"], [1, "light"]]}` or `{"colors": [...]}`:
+    /// every pixel recoloured by its lightness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_map: Option<Value>,
+    /// `{"color": "ink", "size": 3, "rim": {...}}`: a line around
+    /// everything on the layer, behind it (and rim light on top).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
+}
+
+impl FilterCmd {
+    /// The filter fields as one object (as a group's `filter` is written).
+    pub fn fields(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        for (name, value) in [
+            ("blur", &self.blur),
+            ("glow", &self.glow),
+            ("shadow", &self.shadow),
+            ("adjust", &self.adjust),
+            ("gradient_map", &self.gradient_map),
+            ("outline", &self.outline),
+        ] {
+            if let Some(value) = value {
+                object.insert(name.to_owned(), value.clone());
+            }
+        }
+        Value::Object(object)
+    }
+}
+
+/// `include`: reads another script's `define`s and palette (not its
+/// commands or animations), relative to this script. Only at the top
+/// level. An included file may include others.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IncludeCmd {
+    pub file: String,
 }
 
 /// `stroke` / `erase`: paints (or erases) through the points with the
@@ -348,8 +629,9 @@ pub struct StrokeCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `line`: a straight line from `from` to `to`, thinning towards its ends
@@ -373,8 +655,9 @@ pub struct LineCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `path`: a smooth curve through the points, drawn with the brush
@@ -403,8 +686,9 @@ pub struct PathCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `rect`: a rectangle, `fill`ed and/or `outline`d. `radius` rounds the
@@ -432,8 +716,9 @@ pub struct RectCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `ellipse`: an ellipse (or circle) around `center`, `fill`ed and/or
@@ -457,8 +742,9 @@ pub struct EllipseCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `polygon`: straight edges through the points (at least 3), `fill`ed
@@ -479,8 +765,9 @@ pub struct PolygonCmd {
     pub erase: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `fill`: the paint bucket, starting `at` a point.
@@ -510,8 +797,15 @@ pub struct GradientCmd {
     /// "linear" (the default) or "radial".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    pub from: [f32; 2],
-    pub to: [f32; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<[f32; 2]>,
+    /// Instead of `from`/`to`/`colors`: any fill (a colour, a gradient
+    /// object, `{"noise": ...}` or `{"texture": ...}`) over the area or
+    /// the whole layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -550,8 +844,9 @@ pub struct HatchCmd {
     pub flow: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f32>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `scatter`: `count` dabs (or short strokes) at random places in an
@@ -578,8 +873,9 @@ pub struct ScatterCmd {
     pub length: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub angle: Option<Value>,
+    /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<u64>,
+    pub seed: Option<Value>,
 }
 
 /// `text`: letters in the built-in font (see `text.rs`). `at` is the
@@ -648,6 +944,20 @@ pub struct GroupCmd {
     /// while the leg turns). It still moves and mirrors with them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
+    /// Paint only inside this: an area, `{"symbol": ..}` (a symbol's
+    /// silhouette, placed like a use), `{"layer": ..}` (where a layer has
+    /// paint) or `{"not": ..}` (everything but one of those).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Value>,
+    /// Filters applied to what the group draws, on its own, before it's
+    /// laid on the layers: the fields of `filter` (see `FilterCmd`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
+    /// `{"color": "ink", "size": 3, "rim": {"color": "cream", "size": 2,
+    /// "angle": -45}}`: a line around the silhouette of everything the
+    /// group draws, behind it, and rim light along the inside edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
     #[serde(default)]
     pub commands: Vec<Command>,
 }
@@ -691,6 +1001,15 @@ pub struct UseCmd {
     pub scale_brush: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
+    /// As on a group: paint only inside this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Value>,
+    /// As on a group: filters on what it draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<Value>,
+    /// As on a group: an outline around everything it draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Value>,
     /// Colours to paint instead of the symbol's: `{"yellow": "#C04040"}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colors: Option<BTreeMap<String, Value>>,
@@ -842,8 +1161,8 @@ struct RawScript {
     #[serde(default)]
     palette: BTreeMap<String, String>,
     commands: Vec<Value>,
-    #[serde(default)]
-    animations: BTreeMap<String, RawAnimation>,
+    #[serde(default, deserialize_with = "ordered_pairs")]
+    animations: Vec<(String, RawAnimation)>,
     #[serde(default)]
     pivot: Option<[f32; 2]>,
 }
@@ -857,6 +1176,10 @@ struct RawAnimation {
     fps: f32,
     #[serde(rename = "loop", default)]
     looping: bool,
+    /// `"seconds"`: plain numbers in keyframes are seconds; `"frames"`
+    /// (the default) frames.
+    #[serde(default)]
+    time: Option<String>,
     #[serde(default)]
     commands: Vec<Value>,
 }
@@ -936,12 +1259,26 @@ impl Script {
             return Err(ScriptError::general("the script has no commands"));
         }
 
-        let mut animations = BTreeMap::new();
+        let mut animations = Animations::default();
         for (name, raw) in raw.animations {
             let problem = |message: String| ScriptError::general(message).in_animation(&name);
             if name.trim().is_empty() {
                 return Err(ScriptError::general("an animation needs a name"));
             }
+            if animations.contains_key(&name) {
+                return Err(ScriptError::general(format!(
+                    "the animation \"{name}\" is written twice"
+                )));
+            }
+            let seconds = match raw.time.as_deref() {
+                None | Some("frames") => false,
+                Some("seconds") => true,
+                Some(other) => {
+                    return Err(problem(format!(
+                        "`time` is \"frames\" (the default) or \"seconds\", not \"{other}\""
+                    )));
+                }
+            };
             if !(1..=MAX_FRAMES).contains(&raw.frames) {
                 return Err(problem(format!(
                     "`frames` must be from 1 to {MAX_FRAMES}, not {}",
@@ -973,6 +1310,7 @@ impl Script {
                     frames: raw.frames,
                     fps: raw.fps,
                     looping: raw.looping,
+                    seconds,
                     commands: inner,
                 },
             );
@@ -1074,11 +1412,11 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
         .get("cmd")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if kind == "define" && nested {
-        return Err(Problem::here(
-            "`define` only works at the top level of a script, not inside a group, symbol, \
-             repeat or animation",
-        ));
+    if matches!(kind, "define" | "include") && nested {
+        return Err(Problem::here(format!(
+            "`{kind}` only works at the top level of a script, not inside a group, symbol, \
+             repeat or animation"
+        )));
     }
     let mut inner = Vec::new();
     if matches!(kind, "group" | "define" | "repeat") {

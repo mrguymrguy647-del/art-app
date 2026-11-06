@@ -30,27 +30,30 @@ use serde_json::Value;
 use super::animate::{self, Clock};
 use super::geometry::{self, Pt};
 use super::{
-    BrushCmd, Command, EllipseCmd, FillCmd, GradientCmd, GroupCmd, HatchCmd, LayerCmd, LineCmd,
-    MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd, RectCmd, RepeatCmd, ScatterCmd, Script,
-    ScriptError, StrokeCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
+    BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
+    HatchCmd, IncludeCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd,
+    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd,
+    TransformLayerCmd, UseCmd, parse_hex,
 };
-use crate::brush::{BrushMode, BrushSettings, MAX_SIZE};
-use crate::document::{Document, MAX_CANVAS_SIDE};
+use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
+use crate::document::{Background, Document, MAX_CANVAS_SIDE};
 use crate::file;
 use crate::fill::{
-    self, FloodFill, Gradient, GradientShape, GradientStop, Paint, Rgba, SampleFrom, paint_mask,
-    paint_rect,
+    self, FloodFill, Gradient, GradientShape, GradientStop, Mask, Paint, Rgba, SampleFrom,
+    paint_mask_within, paint_rect_within,
 };
+use crate::filters::{self, Filter};
 use crate::history::{Command as UndoStep, TileCommand};
-use crate::layer::{BlendMode, LayerId, LayerProps};
+use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
 use crate::layer_commands::{
     LayerPresenceCommand, LayerPropsCommand, MoveLayerCommand, PaperCommand,
 };
 use crate::layer_transform::transform_layer;
+use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
-use crate::surface::PixelRect;
+use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
 use crate::tile::Rgba8;
 use crate::transform::Transform;
@@ -194,12 +197,14 @@ enum Job {
         layer: LayerId,
         brush: BrushSettings,
         points: Vec<StrokePoint>,
+        /// Where the brush's dynamics get their randomness.
+        seed: u64,
     },
     /// Fills a shape (or the whole layer, if `shape` is `None`). A shape
     /// is one or more outlines filled together (a letter "o" has two).
     Area {
         layer: LayerId,
-        shape: Option<Vec<Vec<Pt>>>,
+        shape: Option<Shape>,
         paint: Paint,
         opacity: f32,
         mode: BrushMode,
@@ -212,12 +217,41 @@ enum Job {
     },
 }
 
+/// What an area job fills.
+enum Shape {
+    /// Outlines, in canvas pixels.
+    Rings(Vec<Vec<Pt>>),
+    /// Pixels already worked out (a bucket's region).
+    Mask(Mask),
+}
+
+impl Job {
+    fn layer(&self) -> LayerId {
+        match self {
+            Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. } => {
+                *layer
+            }
+        }
+    }
+
+    fn on_layer(mut self, to: LayerId) -> Job {
+        match &mut self {
+            Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. } => {
+                *layer = to;
+            }
+        }
+        self
+    }
+}
+
 /// A stroke being painted, a few points at a time.
 struct RunningStroke {
     layer: LayerId,
     stroke: Stroke,
     points: Vec<StrokePoint>,
     next: usize,
+    /// Painting a symbol's silhouette for a mask, not the picture.
+    capture: bool,
 }
 
 /// Commands being played: the script itself, or the inside of a group,
@@ -253,6 +287,10 @@ struct Frame {
     path: Option<String>,
     /// The box around everything drawn in this frame so far.
     drawn: Option<Extent>,
+    /// The same, counting only shapes and strokes (not fills or
+    /// gradients over the whole layer): for the "painted most of the
+    /// canvas" warning.
+    shaped: Option<Extent>,
     /// Warnings about drawing outside the canvas from inside this frame,
     /// kept until it ends: if all of it was outside, one warning about
     /// the whole frame replaces them.
@@ -264,6 +302,57 @@ struct Frame {
     /// For a `use`: the symbol's parameters, with the values this use
     /// gave (defaults for the rest). `"$name"` inside looks them up.
     params: Option<Arc<BTreeMap<String, Value>>>,
+    /// Where this frame's commands may paint (a group's mask, combined
+    /// with the masks around it), in painted pixels. `None`: anywhere.
+    mask: Option<Arc<Mask>>,
+    /// This frame paints a symbol's silhouette to make a mask (on a
+    /// scratch picture, see `Player::capture`), not the picture itself.
+    /// `Some(true)`: the mask is everything but the silhouette.
+    capture: Option<bool>,
+    /// Filters applied to what this frame draws (on a scratch picture)
+    /// before it's laid on the layers.
+    effect: Option<Vec<Filter>>,
+}
+
+/// A scratch picture a frame paints on instead of the real one: for a
+/// symbol's silhouette (a mask), or a group with filters.
+struct Scratch {
+    document: Document,
+    /// Everything goes on one layer (a silhouette).
+    single: bool,
+    /// For a filtered group: the real layer each scratch layer stands for.
+    layers: Vec<(LayerId, LayerId)>,
+}
+
+impl Scratch {
+    fn new(like: &Document, single: bool) -> Self {
+        Self {
+            document: Document::new(like.width(), like.height()),
+            single,
+            layers: Vec::new(),
+        }
+    }
+
+    /// The scratch layer for the real layer `real` (made if needed).
+    fn layer_for(&mut self, real: LayerId) -> LayerId {
+        if self.single {
+            return self.document.active_id();
+        }
+        if let Some(&(_, scratch)) = self.layers.iter().find(|(r, _)| *r == real) {
+            return scratch;
+        }
+        let scratch = if self.layers.is_empty() {
+            self.document.active_id() // the first layer a new picture has
+        } else {
+            let layer = self.document.new_layer();
+            let id = layer.id();
+            let count = self.document.layers().len();
+            self.document.insert_layer(count, layer);
+            id
+        };
+        self.layers.push((real, scratch));
+        scratch
+    }
 }
 
 /// A symbol: what `define` stored.
@@ -271,6 +360,9 @@ struct Symbol {
     commands: Arc<Vec<Command>>,
     /// Its parameters and their defaults.
     params: Arc<BTreeMap<String, Value>>,
+    /// Where it was defined, if in an included file: the file (as
+    /// written in the include) and the define's command number there.
+    source: Option<(String, usize)>,
 }
 
 /// A `repeat` plays its commands once per copy, each with the step
@@ -290,6 +382,8 @@ struct Copies {
     seed: u64,
     /// Values that differ per copy (`each`), as `$name` parameters.
     each: BTreeMap<String, Vec<Value>>,
+    /// For a `stamp`: where each copy goes, instead of a step.
+    placements: Vec<Transform>,
 }
 
 /// The parameters a `repeat`'s copy number `copy` gets from `each`.
@@ -316,6 +410,14 @@ struct NewFrame {
     params: Option<Arc<BTreeMap<String, Value>>>,
     /// Not turned by the frames around it.
     upright: bool,
+    /// The group's `mask`, worked out once the frame has started.
+    mask: Option<Value>,
+    /// See `Frame::capture`.
+    capture: Option<bool>,
+    /// The group's `filter`, worked out once the frame has started.
+    filter: Option<Value>,
+    /// The group's `outline`, likewise.
+    outline: Option<Value>,
 }
 
 /// The brush and selected layer from before a group, put back after it.
@@ -389,6 +491,20 @@ pub struct Player {
     /// How many painted pixels one canvas pixel is: the preview scale
     /// times the pixel canvas's supersample.
     paint_scale: f32,
+    /// Scratch pictures: one per frame being played that paints a
+    /// silhouette (for a mask) or a filtered group, innermost last.
+    capture: Vec<Scratch>,
+    /// Brush tips loaded from files, by the number in `Tip::File`, and
+    /// which file each came from (so a file is loaded once).
+    tips: Vec<Arc<TipShape>>,
+    tip_files: HashMap<String, u32>,
+    /// Textures loaded from files, by file name.
+    textures: HashMap<String, Arc<TextureImage>>,
+    /// Patterns a brush paints with, by the number in `BrushSettings::source`.
+    sources: Vec<Arc<Paint>>,
+    /// Palette colours that came from included files (not the script's
+    /// own, so not "never used" warnings), and which file each came from.
+    included_colors: HashMap<String, String>,
 }
 
 impl Player {
@@ -445,6 +561,8 @@ impl Player {
         let clock = Clock {
             frame: options.frame,
             length: animation.as_ref().map(|(_, a)| (a.frames, a.looping)),
+            fps: animation.as_ref().map_or(12.0, |(_, a)| a.fps),
+            seconds: animation.as_ref().is_some_and(|(_, a)| a.seconds),
         };
         let animation = animation.map(|(name, a)| (name, Arc::new(a.commands.clone())));
         let palette: HashMap<String, Rgba> = script
@@ -497,6 +615,12 @@ impl Player {
             animation,
             pending_animation: None,
             options,
+            capture: Vec::new(),
+            tips: Vec::new(),
+            tip_files: HashMap::new(),
+            textures: HashMap::new(),
+            sources: Vec::new(),
+            included_colors: HashMap::new(),
         })
     }
 
@@ -619,10 +743,14 @@ impl Player {
             copies: None,
             path: None,
             drawn: None,
+            shaped: None,
             outside: Vec::new(),
             part: None,
             animation: None,
             params: None,
+            mask: None,
+            capture: None,
+            effect: None,
         }];
         self.pending_animation = self.animation.as_ref().map(|(_, c)| Arc::clone(c));
     }
@@ -682,10 +810,14 @@ impl Player {
                     copies: None,
                     path: None,
                     drawn: None,
+                    shaped: None,
                     outside: Vec::new(),
                     part: None,
                     animation: name,
                     params: None,
+                    mask: None,
+                    capture: None,
+                    effect: None,
                 });
             } else {
                 self.flush_tiles();
@@ -815,6 +947,13 @@ impl Player {
                 .then(Transform::rotate(-turned))
                 .then(Transform::translate(x, y));
         }
+        // A silhouette is painted on its own, so the masks around it
+        // don't apply while it's captured: they're applied to the mask.
+        let mask = match new.capture {
+            Some(_) => None,
+            None => parent.mask.clone(),
+        };
+        let symbol_starts = new.symbol.is_some();
         let frame = Frame {
             commands: new.commands,
             next: 0,
@@ -838,13 +977,233 @@ impl Player {
             copies: None,
             path: Some(path),
             drawn: None,
+            shaped: None,
             outside: Vec::new(),
             part,
             animation: None,
             params: new.params,
+            mask,
+            capture: new.capture,
+            effect: None,
         };
         self.frames.push(frame);
+        // A symbol looks the same wherever it's used: it starts from the
+        // plain brush (the brush from before comes back after it).
+        if symbol_starts {
+            self.brush = BrushSettings::default();
+            self.brush_alpha = 255;
+        }
+        let mut filters = match &new.filter {
+            Some(filter) => self
+                .read_filters(filter)
+                .map_err(|problem| format!("`filter`: {problem}"))?,
+            None => Vec::new(),
+        };
+        if let Some(outline) = &new.outline {
+            let spec: OutlineSpec = serde_json::from_value(self.value(outline)?)
+                .map_err(|problem| format!("`outline`: {problem}"))?;
+            let more = self
+                .read_outline(spec)
+                .map_err(|problem| format!("`outline`: {problem}"))?;
+            filters.extend(more);
+        }
+        if !filters.is_empty() {
+            self.frames.last_mut().expect("just pushed").effect = Some(filters);
+            self.capture.push(Scratch::new(document, false));
+        }
+        if new.capture.is_some() {
+            self.capture.push(Scratch::new(document, true));
+        }
+        if let Some(mask) = new.mask {
+            self.start_mask(document, &mask)
+                .map_err(|problem| format!("`mask`: {problem}"))?;
+        }
         Ok(())
+    }
+
+    /// Works out a group's mask, now that the group's frame has started
+    /// (so it's placed by the group's transform): an area, a layer's
+    /// paint, or `not` one of those, straight away; a symbol's
+    /// silhouette by playing the symbol onto a scratch picture first.
+    fn start_mask(&mut self, document: &Document, written: &Value) -> Result<(), String> {
+        let help = "a mask is an area ({\"ellipse\": [...]}, {\"polygon\": [...]}, ...), \
+                    {\"symbol\": \"name\", ...placed like a use}, {\"layer\": \"name\"} \
+                    or {\"not\": any of those}";
+        let value = self.value(written)?;
+        let mut object = value.as_object().ok_or(help)?.clone();
+        let mut invert = false;
+        if object.len() == 1
+            && let Some(inner) = object.get("not")
+        {
+            invert = true;
+            object = inner.as_object().ok_or(help)?.clone();
+            if object.contains_key("not") {
+                return Err("`not` inside `not`: just leave both out".into());
+            }
+        }
+        let limits = document.bounds();
+        let mask = if let Some(symbol) = object.remove("symbol") {
+            // Played like a use, named by `symbol` instead of `name`.
+            object.insert("name".to_owned(), symbol);
+            let using: UseCmd =
+                serde_json::from_value(Value::Object(object)).map_err(|problem| {
+                    format!("{problem} (a symbol mask takes the fields of a use)")
+                })?;
+            return self.use_symbol(document, &using, Some(invert));
+        } else if let Some(name) = object.get("layer").filter(|_| object.len() == 1) {
+            let name = name
+                .as_str()
+                .ok_or("`layer` must be a layer's name in quotes")?;
+            let id = find_layer(document, name)?;
+            let layer = document.layer(id).ok_or("no such layer")?;
+            Mask::from_alpha(&layer.surface, limits)
+        } else {
+            let polygon = self.area(&Value::Object(object)).map_err(|_| help)?;
+            let placed = self.place_polygon(polygon);
+            geometry::polygons_mask(&[placed], limits)
+        };
+        self.finish_mask(limits, mask, invert);
+        Ok(())
+    }
+
+    /// Makes `mask` the innermost frame's: hard-edged on a pixel canvas,
+    /// turned inside out if `invert`, and combined with the masks around.
+    fn finish_mask(&mut self, limits: PixelRect, mut mask: Mask, invert: bool) {
+        if invert {
+            mask = mask.inverted(limits);
+        }
+        if self.pixel.is_some() {
+            mask.threshold();
+        }
+        let frame = self.frames.last_mut().expect("a mask belongs to a frame");
+        if let Some(outer) = &frame.mask {
+            mask = mask.intersect(outer);
+        }
+        if mask.is_empty()
+            && !self.options.dry_run
+            && let Some(path) = &frame.path
+        {
+            self.warnings.push(format!(
+                "{path}: its mask covers nothing, so it paints nothing"
+            ));
+        }
+        frame.mask = Some(Arc::new(mask));
+    }
+
+    /// A filtered group has finished: filters each layer's part of its
+    /// drawing, makes one shadow from the combined silhouette (laid on
+    /// the lowest of those layers, under everything), and lays the parts
+    /// on their layers (or on the scratch picture of the group around).
+    fn lay_effect(&mut self, document: &mut Document, mut scratch: Scratch, filters: &[Filter]) {
+        let limits = document.bounds();
+        let per_part: Vec<Filter> = filters
+            .iter()
+            .filter(|f| !f.from_silhouette())
+            .cloned()
+            .collect();
+        let shadows: Vec<Filter> = filters
+            .iter()
+            .filter(|f| f.from_silhouette())
+            .cloned()
+            .collect();
+        let mut parts: Vec<(LayerId, Surface)> = Vec::new();
+        for &(real, id) in &scratch.layers {
+            let Some(layer) = scratch.document.layer_mut(id) else {
+                continue;
+            };
+            if layer.surface.tile_count() == 0 {
+                continue;
+            }
+            filters::apply(&mut layer.surface, &per_part, limits);
+            parts.push((real, std::mem::take(&mut layer.surface)));
+        }
+        if parts.is_empty() {
+            return;
+        }
+        // Shadows and outlines go under the lowest layer's part (shadows
+        // furthest back); rim light goes over the highest layer's.
+        let mut rim = Surface::new();
+        if !shadows.is_empty() {
+            let surfaces: Vec<&Surface> = parts.iter().map(|(_, s)| s).collect();
+            let silhouette = filters::silhouette(&surfaces);
+            let mut under = Surface::new();
+            for filter in &shadows {
+                if let Filter::Shadow {
+                    offset,
+                    blur,
+                    color,
+                } = filter
+                {
+                    let one = filters::shadow_of(&silhouette, *offset, *blur, *color, limits);
+                    filters::lay_over(&mut under, &one, limits);
+                }
+            }
+            for filter in &shadows {
+                match filter {
+                    Filter::Outline { .. } => {
+                        let one = filters::line_of(&silhouette, filter, limits);
+                        filters::lay_over(&mut under, &one, limits);
+                    }
+                    Filter::Rim { .. } => {
+                        let one = filters::line_of(&silhouette, filter, limits);
+                        filters::lay_over(&mut rim, &one, limits);
+                    }
+                    _ => {}
+                }
+            }
+            let lowest = parts
+                .iter()
+                .map(|(real, _)| *real)
+                .min_by_key(|real| document.layer_index(*real).unwrap_or(0))
+                .expect("there are parts");
+            self.lay_part(document, lowest, &under);
+        }
+        let highest = parts
+            .iter()
+            .map(|(real, _)| *real)
+            .max_by_key(|real| document.layer_index(*real).unwrap_or(0))
+            .expect("there are parts");
+        for (real, part) in parts {
+            self.lay_part(document, real, &part);
+        }
+        if rim.tile_count() > 0 {
+            self.lay_part(document, highest, &rim);
+        }
+    }
+
+    /// Lays `part` on the real layer `real`: on the picture, or on the
+    /// scratch picture of the frame around (when filtered groups nest).
+    fn lay_part(&mut self, document: &mut Document, real: LayerId, part: &Surface) {
+        let limits = document.bounds();
+        if let Some(outer) = self.capture.last_mut() {
+            let id = outer.layer_for(real);
+            if let Some(layer) = outer.document.layer_mut(id) {
+                filters::lay_over(&mut layer.surface, part, limits);
+            }
+            return;
+        }
+        let Some(layer) = document.layer_mut(real) else {
+            return;
+        };
+        let before = filters::lay_over(&mut layer.surface, part, limits);
+        if before.is_empty() {
+            return;
+        }
+        self.remember_tiles(real, before);
+        self.mark_painted(document, real);
+        let top = self.position().0;
+        self.painted_by.entry(real).or_default().insert(top);
+    }
+
+    /// True while a symbol's silhouette is being painted for a mask.
+    fn capturing(&self) -> bool {
+        self.capture.last().is_some_and(|scratch| scratch.single)
+    }
+
+    /// True while painting goes on a scratch picture (a silhouette, or a
+    /// filtered group's drawing).
+    fn on_scratch(&self) -> bool {
+        !self.capture.is_empty()
     }
 
     /// The innermost frame has played all its commands: start its next
@@ -869,7 +1228,10 @@ impl Player {
         let frame = self.frames.last_mut().expect("checked above");
         let copies = frame.copies.as_mut().expect("checked above");
         copies.current += 1;
-        copies.so_far = copies.so_far.then(copies.step);
+        copies.so_far = match copies.placements.get(copies.current as usize) {
+            Some(place) => *place,
+            None => copies.so_far.then(copies.step),
+        };
         frame.next = 0;
         frame.place = copies.so_far.then(copies.base_place);
         frame.detail = copies.base_detail * copies.so_far.size_factor();
@@ -879,7 +1241,12 @@ impl Player {
             frame.params = Some(Arc::new(each_params(&copies.each, copies.current)));
         }
         if let Some((_, label)) = &mut frame.label {
-            *label = format!("repeat, copy {}", copies.current + 1);
+            let word = if label.starts_with("stamp") {
+                "stamp"
+            } else {
+                "repeat"
+            };
+            *label = format!("{word}, copy {}", copies.current + 1);
         }
     }
 
@@ -888,6 +1255,24 @@ impl Player {
     fn end_frame(&mut self, document: &mut Document, frame: Frame) {
         if let Some(saved) = frame.restore {
             self.restore(document, saved.layer, saved.brush, saved.brush_alpha);
+        }
+        if let Some(invert) = frame.capture {
+            // The silhouette is complete: it's the mask of the group below.
+            let scratch = self
+                .capture
+                .pop()
+                .expect("a capture frame has a scratch picture");
+            let limits = scratch.document.bounds();
+            let mask = Mask::from_alpha(&scratch.document.active_layer().surface, limits);
+            self.finish_mask(limits, mask, invert);
+            return;
+        }
+        if let Some(filters) = &frame.effect {
+            let scratch = self
+                .capture
+                .pop()
+                .expect("a filtered frame has a scratch picture");
+            self.lay_effect(document, scratch, filters);
         }
         // For the report: hand what it drew to the frame around it.
         if let Some(index) = frame.part {
@@ -900,10 +1285,29 @@ impl Player {
         {
             outside = vec![self.outside_warning(path, drawn)];
         }
+        // A named part whose shapes are small but which painted most of
+        // the canvas: a fill or gradient without an area, probably.
+        if let (Some(_), Some(drawn), Some(shaped), Some(path)) =
+            (frame.part, frame.drawn, frame.shaped, &frame.path)
+        {
+            let canvas = document.bounds();
+            let (painted, shapes) = (covered(drawn, canvas), covered(shaped, canvas));
+            if painted >= 0.5 && shapes <= 0.1 {
+                outside.push(format!(
+                    "{path} painted {:.0}% of the canvas, but its shapes cover {:.0}%: a gradient \
+                     or fill without an area, inside a mask with \"not\"?",
+                    painted * 100.0,
+                    shapes * 100.0
+                ));
+            }
+        }
         match self.frames.last_mut() {
             Some(parent) => {
                 if let Some(drawn) = frame.drawn {
                     parent.drawn = Some(union(parent.drawn, drawn));
+                }
+                if let Some(shaped) = frame.shaped {
+                    parent.shaped = Some(union(parent.shaped, shaped));
                 }
                 parent.outside.append(&mut outside);
             }
@@ -987,7 +1391,12 @@ impl Player {
             defined: self.defined.clone(),
             used_symbols: self.used_symbols.iter().cloned().collect(),
             used_colors: self.used_colors.borrow().iter().cloned().collect(),
-            palette: self.palette.keys().cloned().collect(),
+            palette: self
+                .palette
+                .keys()
+                .filter(|name| !self.included_colors.contains_key(*name))
+                .cloned()
+                .collect(),
             painted_by: self
                 .painted_by
                 .iter()
@@ -999,18 +1408,31 @@ impl Player {
     /// After a command has started: adds the box around what it queued to
     /// its frame's, and warns if all of it is outside the canvas.
     fn note_drawn(&mut self, document: &Document, index: usize, command: &Command, queued: usize) {
+        if self.capturing() {
+            return; // a silhouette for a mask isn't drawing
+        }
         let mut drawn = None;
         // The number of the script's own command this is part of.
-        let top = self.frames.first().map_or(0, |script| script.next);
+        let top = self.position().0;
+        let on_scratch = self.on_scratch();
+        let mut shaped = None;
         for job in self.jobs.iter().skip(queued) {
-            drawn = Some(union(drawn, job_extent(job, document)));
-            let (Job::Stroke { layer, .. } | Job::Area { layer, .. } | Job::Bucket { layer, .. }) =
-                job;
-            self.painted_by.entry(*layer).or_default().insert(top);
+            let extent = job_extent(job, document);
+            drawn = Some(union(drawn, extent));
+            if !matches!(job, Job::Area { shape: None, .. } | Job::Bucket { .. }) {
+                shaped = Some(union(shaped, extent));
+            }
+            if !on_scratch {
+                self.painted_by.entry(job.layer()).or_default().insert(top);
+            }
         }
         let Some(drawn) = drawn else {
             return;
         };
+        if let Some(shaped) = shaped {
+            let frame = self.frames.last_mut().expect("a command runs in a frame");
+            frame.shaped = Some(union(frame.shaped, shaped));
+        }
         let warning = (!overlaps(drawn, document.bounds()))
             .then(|| self.outside_warning(&self.path_to(index, &command.label()), drawn));
         let frame = self.frames.last_mut().expect("a command runs in a frame");
@@ -1072,10 +1494,29 @@ impl Player {
 
     /// Feeds the running stroke points until the budget is used up.
     /// Returns what's left of the budget.
-    fn continue_stroke(&mut self, document: &mut Document, mut budget: f32) -> f32 {
-        let Some(mut running) = self.running.take() else {
+    fn continue_stroke(&mut self, document: &mut Document, budget: f32) -> f32 {
+        let Some(running) = self.running.take() else {
             return budget;
         };
+        if running.capture {
+            // The stroke is part of a silhouette: it goes on the scratch picture.
+            let mut scratch = self
+                .capture
+                .pop()
+                .expect("a stroke is captured on a scratch");
+            let left = self.feed_stroke(&mut scratch.document, running, budget);
+            self.capture.push(scratch);
+            return left;
+        }
+        self.feed_stroke(document, running, budget)
+    }
+
+    fn feed_stroke(
+        &mut self,
+        document: &mut Document,
+        mut running: RunningStroke,
+        mut budget: f32,
+    ) -> f32 {
         let Some(layer) = document.layer_mut(running.layer) else {
             return budget;
         };
@@ -1097,12 +1538,21 @@ impl Player {
     }
 
     fn finish_stroke(&mut self, running: RunningStroke, document: &mut Document) {
-        let RunningStroke { layer, stroke, .. } = running;
+        let RunningStroke {
+            layer,
+            stroke,
+            capture,
+            ..
+        } = running;
         if let Some(target) = document.layer_mut(layer) {
             let before = stroke.finish(&mut target.surface);
-            self.remember_tiles(layer, before);
+            if !capture {
+                self.remember_tiles(layer, before);
+            }
         }
-        self.mark_painted(document, layer);
+        if !capture {
+            self.mark_painted(document, layer);
+        }
     }
 
     /// Starts or does one job. Returns how much of the budget it used.
@@ -1110,17 +1560,73 @@ impl Player {
         if self.options.dry_run {
             return 0.0;
         }
+        if self.on_scratch() {
+            // A silhouette for a mask, or a filtered group's drawing:
+            // painted on the scratch picture (a silhouette all on one
+            // layer; a group on a scratch layer per real layer).
+            let mut scratch = self.capture.pop().expect("on a scratch");
+            let job = match job {
+                // The bucket spreads over the real picture, not the scratch.
+                Job::Bucket {
+                    layer,
+                    fill,
+                    paint,
+                    opacity,
+                } => match fill::flood_region(document, layer, &fill) {
+                    Some(mask) => Job::Area {
+                        layer,
+                        shape: Some(Shape::Mask(mask)),
+                        paint,
+                        opacity,
+                        mode: BrushMode::Paint,
+                    },
+                    None => {
+                        self.capture.push(scratch);
+                        return AREA_COST;
+                    }
+                },
+                other => other,
+            };
+            let target = scratch.layer_for(job.layer());
+            let job = job.on_layer(target);
+            let cost = self.do_job(&mut scratch.document, job, true);
+            self.capture.push(scratch);
+            return cost;
+        }
+        self.do_job(document, job, false)
+    }
+
+    /// Does `job` on `document`: the picture, or a scratch picture if
+    /// `capture` (then nothing is remembered for undo or the report).
+    fn do_job(&mut self, document: &mut Document, job: Job, capture: bool) -> f32 {
+        let clip = self.frame().mask.clone();
         match job {
             Job::Stroke {
                 layer,
                 brush,
                 points,
+                seed,
             } => {
+                let mut stroke = Stroke::new(brush, document.bounds()).seeded(seed);
+                if let Some(clip) = clip {
+                    stroke = stroke.clipped(clip);
+                }
+                if let Tip::File(id) = brush.tip
+                    && let Some(shape) = self.tips.get(id as usize)
+                {
+                    stroke = stroke.with_tip(Arc::clone(shape));
+                }
+                if let Some(id) = brush.source
+                    && let Some(paint) = self.sources.get(id as usize)
+                {
+                    stroke = stroke.with_source(paint);
+                }
                 self.running = Some(RunningStroke {
                     layer,
-                    stroke: Stroke::new(brush, document.bounds()),
+                    stroke,
                     points,
                     next: 0,
+                    capture,
                 });
                 0.0
             }
@@ -1135,15 +1641,37 @@ impl Player {
                 let Some(target) = document.layer_mut(layer) else {
                     return 0.0;
                 };
+                let clip = clip.as_deref();
                 let before = match shape {
-                    Some(rings) => {
+                    Some(Shape::Mask(mask)) => paint_mask_within(
+                        &mut target.surface,
+                        &mask,
+                        &paint,
+                        opacity,
+                        mode,
+                        limits,
+                        clip,
+                    ),
+                    Some(Shape::Rings(rings)) => {
                         let mask = geometry::polygons_mask(&rings, limits);
-                        paint_mask(&mut target.surface, &mask, &paint, opacity, mode, limits)
+                        paint_mask_within(
+                            &mut target.surface,
+                            &mask,
+                            &paint,
+                            opacity,
+                            mode,
+                            limits,
+                            clip,
+                        )
                     }
-                    None => paint_rect(&mut target.surface, limits, &paint, opacity, mode),
+                    None => {
+                        paint_rect_within(&mut target.surface, limits, &paint, opacity, mode, clip)
+                    }
                 };
-                self.remember_tiles(layer, before);
-                self.mark_painted(document, layer);
+                if !capture {
+                    self.remember_tiles(layer, before);
+                    self.mark_painted(document, layer);
+                }
                 AREA_COST
             }
             Job::Bucket {
@@ -1152,12 +1680,42 @@ impl Player {
                 paint,
                 opacity,
             } => {
-                let before = fill::flood_fill(document, layer, &fill, &paint, opacity);
-                self.remember_tiles(layer, before);
-                self.mark_painted(document, layer);
+                let before = fill::flood_fill_within(
+                    document,
+                    layer,
+                    &fill,
+                    &paint,
+                    opacity,
+                    clip.as_deref(),
+                );
+                if !capture {
+                    self.remember_tiles(layer, before);
+                    self.mark_painted(document, layer);
+                }
                 AREA_COST
             }
         }
+    }
+
+    /// Queues a stroke. `seed` is the command's own seed, if it has one:
+    /// each stroke of a command gets its own random numbers from it.
+    fn push_stroke(
+        &mut self,
+        layer: LayerId,
+        brush: BrushSettings,
+        points: Vec<StrokePoint>,
+        seed: Option<u64>,
+    ) {
+        let seed = Random::mix(
+            Random::mix(self.seed, seed.unwrap_or(self.current_seed)),
+            self.jobs.len() as u64 + 1,
+        );
+        self.jobs.push_back(Job::Stroke {
+            layer,
+            brush,
+            points,
+            seed,
+        });
     }
 
     fn mark_painted(&mut self, document: &Document, layer: LayerId) {
@@ -1210,6 +1768,11 @@ impl Player {
     // ---- Commands -------------------------------------------------------------------
 
     fn start_command(&mut self, document: &mut Document, command: &Command) -> Result<(), String> {
+        if self.capturing() && !paints_or_structures(command) {
+            // While a symbol is painted for a mask, its layer commands
+            // (and the like) are skipped: only its silhouette matters.
+            return Ok(());
+        }
         match command {
             Command::Canvas(_) => Err("only the first command can be `canvas`".into()),
             Command::Paper(paper) => {
@@ -1283,7 +1846,7 @@ impl Player {
                         self.record(TileCommand::new("Transform layer", id, before));
                     }
                 }
-                let top = self.frames.first().map_or(0, |script| script.next);
+                let top = self.position().0;
                 self.painted_by.entry(id).or_default().insert(top);
                 Ok(())
             }
@@ -1307,21 +1870,35 @@ impl Player {
                     .push_back(Event::Snapshot(snapshot.name.clone()));
                 Ok(())
             }
+            Command::Stamp(stamp) => self.stamp(document, stamp),
+            Command::Filter(filter) => self.filter(document, filter),
             Command::Group(group) => self.group(document, group),
             Command::Define(define) => {
                 // Duplicate names and `define` inside other commands are
                 // refused when the script is read.
+                if let Some(Symbol {
+                    source: Some((file, number)),
+                    ..
+                }) = self.symbols.get(&define.name)
+                {
+                    return Err(format!(
+                        "a symbol called \"{}\" was already defined by {file} (command {number})",
+                        define.name
+                    ));
+                }
                 self.symbols.insert(
                     define.name.clone(),
                     Symbol {
                         commands: Arc::new(define.commands.clone()),
                         params: Arc::new(define.params.clone().unwrap_or_default()),
+                        source: None,
                     },
                 );
                 self.defined.push((define.name.clone(), self.current + 1));
                 Ok(())
             }
-            Command::Use(using) => self.use_symbol(document, using),
+            Command::Include(include) => self.include(include),
+            Command::Use(using) => self.use_symbol(document, using, None),
             Command::Repeat(repeat) => self.repeat(document, repeat),
         }
     }
@@ -1350,13 +1927,24 @@ impl Player {
             part: command.name.is_some(),
             params: None,
             upright: command.upright.unwrap_or(false),
+            mask: command.mask.clone(),
+            capture: None,
+            filter: command.filter.clone(),
+            outline: command.outline.clone(),
         };
         self.push_frame(document, new)
     }
 
     /// `use`: plays a symbol's commands, placed like a group, with some
     /// colours swapped.
-    fn use_symbol(&mut self, document: &Document, command: &UseCmd) -> Result<(), String> {
+    /// With `capture`, the symbol is painted on a scratch picture to become
+    /// the mask of the frame being played (`Some(true)`: its opposite).
+    fn use_symbol(
+        &mut self,
+        document: &Document,
+        command: &UseCmd,
+        capture: Option<bool>,
+    ) -> Result<(), String> {
         let name = &self.string(&Value::String(command.name.clone()), "name")?;
         let Some(symbol) = self.symbols.get(name) else {
             let mut names: Vec<&str> = self.symbols.keys().map(String::as_str).collect();
@@ -1387,6 +1975,10 @@ impl Player {
         }
         let commands = Arc::clone(&symbol.commands);
         let defaults = Arc::clone(&symbol.params);
+        let label = match &symbol.source {
+            Some((file, number)) => format!("use \"{name}\" (from {file}, command {number})"),
+            None => format!("use \"{name}\""),
+        };
         let placement = self.placement_of(
             command.translate.as_ref(),
             command.scale.as_ref(),
@@ -1432,15 +2024,19 @@ impl Player {
         }
         let new = NewFrame {
             commands,
-            label: format!("use \"{name}\""),
+            label,
             placement,
             // Every use of a symbol has the same random patterns.
             seed_base: name_seed(name),
             symbol: Some(name.clone()),
             swaps,
-            part: true,
+            part: capture.is_none(),
             params: Some(Arc::new(params)),
             upright: command.upright.unwrap_or(false),
+            mask: command.mask.clone(),
+            capture,
+            filter: command.filter.clone(),
+            outline: command.outline.clone(),
         };
         self.used_symbols.insert(name.clone());
         self.push_frame(document, new)
@@ -1482,6 +2078,10 @@ impl Player {
             part: false,
             params: None,
             upright: false,
+            mask: None,
+            capture: None,
+            filter: None,
+            outline: None,
         };
         let each = command.each.clone().unwrap_or_default();
         for (name, values) in &each {
@@ -1510,7 +2110,361 @@ impl Player {
             base_brush_scale: frame.brush_scale,
             seed: self.current_seed,
             each,
+            placements: Vec::new(),
         });
+        Ok(())
+    }
+
+    /// `stamp`: copies of a symbol, or dabs of a tip, along a smooth path.
+    fn stamp(&mut self, document: &Document, command: &StampCmd) -> Result<(), String> {
+        // The path, in drawing units.
+        let points: Vec<[f32; 2]> = serde_json::from_value(self.value(&command.points)?)
+            .map_err(|_| "`points` is a list of [x, y] points, like [[20, 300], [300, 290]]")?;
+        if points.is_empty() {
+            return Err("`points` needs at least one point".into());
+        }
+        let given: Vec<StrokePoint> = points
+            .iter()
+            .map(|&p| pt(p).map(|(x, y)| StrokePoint::new(x, y, 1.0)))
+            .collect::<Result<_, _>>()?;
+        let path = if given.len() == 1 {
+            given.clone()
+        } else {
+            geometry::smooth_path(&given, false, self.detail())
+        };
+        let spacing = match self.value(&command.spacing)? {
+            Value::Number(n) => n.as_f64().unwrap_or(0.0) as f32,
+            other => return Err(format!("`spacing` must be a number, not {other}")),
+        };
+        if spacing <= 0.0 || !spacing.is_finite() {
+            return Err("`spacing` must be more than 0".into());
+        }
+        let follow = command.follow.unwrap_or(true);
+        let scatter = not_negative("scatter", command.scatter.unwrap_or(0.0))?;
+        let size_value = command.size.as_ref().map(|v| self.value(v)).transpose()?;
+        let angle_value = command.angle.as_ref().map(|v| self.value(v)).transpose()?;
+        let angle = range(angle_value.as_ref(), (0.0, 0.0), "angle")?;
+        let colors: Vec<Rgba> = match (&command.colors, &command.color) {
+            (Some(_), Some(_)) => return Err("give `color` or `colors`, not both".into()),
+            (Some(list), None) if list.is_empty() => return Err("`colors` is empty".into()),
+            (Some(list), None) => list
+                .iter()
+                .map(|c| self.color(c))
+                .collect::<Result<_, _>>()?,
+            (None, Some(color)) => vec![self.color(color)?],
+            (None, None) => Vec::new(),
+        };
+
+        // Where each copy goes: every `spacing` along the path, with the
+        // direction of the path there.
+        let total: f32 = path.windows(2).map(|w| w[0].distance_to(&w[1])).sum();
+        let count = (total / spacing).floor() as u32 + 1;
+        if count > MAX_REPEAT {
+            return Err(format!(
+                "that would be {count} copies; at most {MAX_REPEAT} (make `spacing` bigger)"
+            ));
+        }
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
+        let mut spots: Vec<(f32, f32, f32)> = Vec::with_capacity(count as usize);
+        let (mut segment, mut along) = (0, 0.0);
+        for i in 0..count {
+            let wanted = i as f32 * spacing;
+            while segment + 2 < path.len() {
+                let length = path[segment].distance_to(&path[segment + 1]);
+                if along + length >= wanted {
+                    break;
+                }
+                along += length;
+                segment += 1;
+            }
+            let (x, y, heading) = if path.len() == 1 {
+                (path[0].x, path[0].y, 0.0)
+            } else {
+                let (a, b) = (path[segment], path[segment + 1]);
+                let length = a.distance_to(&b).max(1e-6);
+                let t = ((wanted - along) / length).clamp(0.0, 1.0);
+                let heading = (b.y - a.y).atan2(b.x - a.x).to_degrees();
+                (a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, heading)
+            };
+            let turn = if follow { heading } else { 0.0 }
+                + random.range(angle.0, angle.1.max(angle.0 + f32::EPSILON));
+            let (mut x, mut y) = (x, y);
+            if scatter > 0.0 {
+                let distance = random.range(0.0, scatter);
+                let (sin, cos) = random.range(0.0, std::f32::consts::TAU).sin_cos();
+                x += cos * distance;
+                y += sin * distance;
+            }
+            spots.push((x, y, turn));
+        }
+
+        match (&command.symbol, &command.tip) {
+            (Some(_), Some(_)) => Err("give `symbol` or `tip`, not both".into()),
+            (Some(symbol), None) => {
+                self.stamp_symbol(document, command, symbol, spots, size_value, colors, random)
+            }
+            (None, tip) => {
+                let tip = match tip {
+                    Some(tip) => Some(self.tip(tip)?),
+                    None => None,
+                };
+                self.stamp_tip(document, command, tip, spots, size_value, colors, random)
+            }
+        }
+    }
+
+    /// `stamp` with a tip: one dab per spot, with the brush's settings.
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_tip(
+        &mut self,
+        document: &Document,
+        command: &StampCmd,
+        tip: Option<Tip>,
+        spots: Vec<(f32, f32, f32)>,
+        size: Option<Value>,
+        colors: Vec<Rgba>,
+        mut random: Random,
+    ) -> Result<(), String> {
+        let mut base = self.stroke_brush(
+            BrushChanges {
+                opacity: command.opacity,
+                ..BrushChanges::default()
+            },
+            BrushMode::Paint,
+        )?;
+        // The stamp varies the dabs itself.
+        base.dynamics = Dynamics::default();
+        base.pressure_size = true;
+        if let Some(tip) = tip {
+            base.tip = tip;
+        }
+        let size = range(size.as_ref(), (self.brush.size, self.brush.size), "size")?;
+        brush_size(size.0)?;
+        brush_size(size.1)?;
+        let brush_scale = self.frame().brush_scale;
+        let layer = document.active_id();
+        for (x, y, turn) in spots {
+            let (dab_size, fade) = self.sized(
+                random.range(size.0, size.1.max(size.0 + f32::EPSILON)),
+                brush_scale,
+            );
+            let mut brush = BrushSettings {
+                size: dab_size,
+                angle: base.angle + turn,
+                ..base
+            };
+            brush.opacity *= fade;
+            if !colors.is_empty() {
+                let [r, g, b, a] = colors[random.index(colors.len())];
+                brush.color = [r, g, b];
+                brush.opacity *= f32::from(a) / 255.0;
+            }
+            let mut points = vec![StrokePoint::new(x, y, 1.0)];
+            self.place_all(&mut points);
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
+        }
+        Ok(())
+    }
+
+    /// `stamp` with a symbol: a frame like a `repeat`'s, one copy per
+    /// spot, each placed (scaled, turned, moved) in its own way, the
+    /// colour picked for it as its `color` parameter.
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_symbol(
+        &mut self,
+        document: &Document,
+        command: &StampCmd,
+        symbol: &str,
+        spots: Vec<(f32, f32, f32)>,
+        size: Option<Value>,
+        colors: Vec<Rgba>,
+        mut random: Random,
+    ) -> Result<(), String> {
+        let Some(defined) = self.symbols.get(symbol) else {
+            return Err(format!("there's no symbol called \"{symbol}\""));
+        };
+        let mut with = command.with.clone().unwrap_or_default();
+        let mut each = BTreeMap::new();
+        if !colors.is_empty() {
+            if !defined.params.contains_key("color") {
+                return Err(format!(
+                    "`colors` go to the symbol's `color` parameter, but \"{symbol}\" has none: \
+                     give it \"params\": {{\"color\": \"...\"}} in its define"
+                ));
+            }
+            let picked: Vec<Value> = spots
+                .iter()
+                .map(|_| Value::String(super::record::hex(colors[random.index(colors.len())])))
+                .collect();
+            each.insert("color".to_owned(), picked);
+            with.insert("color".to_owned(), Value::String("$color".to_owned()));
+        }
+        let size = range(size.as_ref(), (1.0, 1.0), "size")?;
+        if size.0 <= 0.0 || !size.0.is_finite() {
+            return Err("`size` must be more than 0".into());
+        }
+        let placements: Vec<Transform> = spots
+            .iter()
+            .map(|&(x, y, turn)| {
+                let scale = random.range(size.0, size.1.max(size.0 + f32::EPSILON));
+                Transform::scale(scale, scale)
+                    .then(Transform::rotate(turn))
+                    .then(Transform::translate(x, y))
+            })
+            .collect();
+        let using = Command::Use(UseCmd {
+            name: symbol.to_owned(),
+            with: (!with.is_empty()).then_some(with),
+            ..UseCmd::default()
+        });
+        let new = NewFrame {
+            commands: Arc::new(vec![using]),
+            label: "stamp".to_owned(),
+            placement: Placement {
+                transform: Transform::IDENTITY,
+                opacity: 1.0,
+                scale_brush: true,
+                origin: (0.0, 0.0),
+            },
+            seed_base: Random::mix(self.current_seed, 1),
+            symbol: None,
+            swaps: Vec::new(),
+            part: false,
+            params: None,
+            upright: false,
+            mask: None,
+            capture: None,
+            filter: None,
+            outline: None,
+        };
+        self.push_frame(document, new)?;
+        let outer = self.frames.len() - 2;
+        let (base_place, base_detail, base_brush_scale) = {
+            let parent = &self.frames[outer];
+            (parent.place, parent.detail, parent.brush_scale)
+        };
+        let frame = self.frames.last_mut().expect("just pushed");
+        if let Some((_, label)) = &mut frame.label {
+            *label = "stamp, copy 1".to_owned();
+        }
+        if !each.is_empty() {
+            frame.params = Some(Arc::new(each_params(&each, 0)));
+        }
+        let first = placements[0];
+        frame.place = first.then(base_place);
+        frame.detail = base_detail * first.size_factor();
+        frame.brush_scale = base_brush_scale * first.size_factor();
+        frame.copies = Some(Copies {
+            count: placements.len() as u32,
+            current: 0,
+            step: Transform::IDENTITY,
+            so_far: first,
+            base_place,
+            base_detail,
+            base_brush_scale,
+            seed: self.current_seed,
+            each,
+            placements,
+        });
+        Ok(())
+    }
+
+    /// `include`: reads a file's `define`s and palette, relative to the
+    /// script (an included file may include others, relative to itself).
+    fn include(&mut self, command: &IncludeCmd) -> Result<(), String> {
+        let base = self.options.folder.clone();
+        let mut chain = Vec::new();
+        self.include_file(base.as_deref(), &command.file, &command.file, &mut chain)
+    }
+
+    /// Reads `file` (relative to `base`) into the symbols and palette.
+    /// `written` is how the file is named in messages; `chain` holds the
+    /// files being included, outermost first, to catch a loop.
+    fn include_file(
+        &mut self,
+        base: Option<&std::path::Path>,
+        file: &str,
+        written: &str,
+        chain: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let path = match base {
+            Some(folder) => folder.join(file),
+            None => PathBuf::from(file),
+        };
+        let path = path.canonicalize().unwrap_or(path);
+        if chain.contains(&path) {
+            let names: Vec<&str> = chain.iter().filter_map(|p| p.to_str()).collect();
+            return Err(format!(
+                "{written} includes itself ({} > {written})",
+                names.join(" > ")
+            ));
+        }
+        if chain.len() >= 16 {
+            return Err("includes are nested too deeply (more than 16)".into());
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("can't read \"{written}\" ({}): {e}", path.display()))?;
+        let script = Script::parse(&text).map_err(|e| format!("{written}: {e}"))?;
+        for (name, color) in &script.palette {
+            let value = super::parse_hex(color).map_err(|e| format!("{written}: palette: {e}"))?;
+            if let Some(existing) = self.palette.get(name)
+                && *existing != value
+            {
+                let owner = match self.included_colors.get(name) {
+                    Some(from) => from.clone(),
+                    None => "the script itself".to_owned(),
+                };
+                return Err(format!(
+                    "{written}: palette colour \"{name}\" is also defined, differently, by {owner}"
+                ));
+            }
+            self.palette.insert(name.clone(), value);
+            self.included_colors
+                .entry(name.clone())
+                .or_insert_with(|| written.to_owned());
+        }
+        chain.push(path.clone());
+        let folder = path.parent().map(std::path::Path::to_path_buf);
+        for (index, command) in script.commands.iter().enumerate() {
+            match command {
+                Command::Define(define) => {
+                    if let Some(existing) = self.symbols.get(&define.name) {
+                        let owner = match &existing.source {
+                            Some((from, number)) => format!("{from} (command {number})"),
+                            None => "the script itself".to_owned(),
+                        };
+                        return Err(format!(
+                            "{written}: command {} defines \"{}\", which is also defined by {owner}",
+                            index + 1,
+                            define.name
+                        ));
+                    }
+                    self.symbols.insert(
+                        define.name.clone(),
+                        Symbol {
+                            commands: Arc::new(define.commands.clone()),
+                            params: Arc::new(define.params.clone().unwrap_or_default()),
+                            source: Some((written.to_owned(), index + 1)),
+                        },
+                    );
+                }
+                Command::Include(inner) => {
+                    let inner_written = format!("{written} > {}", inner.file);
+                    self.include_file(folder.as_deref(), &inner.file, &inner_written, chain)
+                        .map_err(|e| e.replace(&inner_written, &inner.file))?;
+                }
+                Command::Canvas(_) => {} // a library file may start like a script
+                other => {
+                    return Err(format!(
+                        "{written}: command {} ({}): an included file holds only `define` and \
+                         `include` (and a palette); its drawing isn't played",
+                        index + 1,
+                        other.label()
+                    ));
+                }
+            }
+        }
+        chain.pop();
         Ok(())
     }
 
@@ -1594,10 +2548,195 @@ impl Player {
         if let Some(visible) = command.visible {
             props.visible = visible;
         }
+        if let Some(clip) = command.clip {
+            props.clip = clip;
+        }
+        if let Some(lock) = command.lock {
+            props.lock = lock;
+        }
         if let Some(step) = LayerPropsCommand::apply(document, id, props) {
             self.record(step);
         }
+        if let Some(from) = &command.from {
+            if from != "below" {
+                return Err(format!(
+                    "`from` is \"below\" (everything below the layer, flattened), not \"{from}\""
+                ));
+            }
+            if !self.options.dry_run {
+                self.fill_from_below(document, id);
+            }
+        }
         Ok(())
+    }
+
+    /// Covers `layer` with everything below it, flattened (hidden layers
+    /// left out; no paper), so a filter on it works on the whole picture.
+    fn fill_from_below(&mut self, document: &mut Document, id: LayerId) {
+        let Some(index) = document.layer_index(id) else {
+            return;
+        };
+        let mut coords: Vec<TileCoord> = document.layers()[..index]
+            .iter()
+            .filter(|layer| layer.visible())
+            .flat_map(|layer| layer.surface.tiles().map(|(coord, _)| coord))
+            .collect();
+        coords.sort_unstable_by_key(|c| (c.y, c.x));
+        coords.dedup();
+        let mut tiles = Vec::with_capacity(coords.len());
+        for coord in coords {
+            let below = |layer: &Layer| {
+                layer.visible() && document.layer_index(layer.id()).is_some_and(|i| i < index)
+            };
+            if let Some(tile) =
+                document.composite_tile_showing(coord, Background::Transparent, below)
+            {
+                tiles.push((coord, tile));
+            }
+        }
+        let Some(layer) = document.layer_mut(id) else {
+            return;
+        };
+        let mut before = TilesBefore::new();
+        for (coord, tile) in tiles {
+            let old = layer.surface.replace_tile(coord, Some(tile));
+            before.insert(coord, old);
+        }
+        self.remember_tiles(id, before);
+        self.mark_painted(document, id);
+        let top = self.position().0;
+        self.painted_by.entry(id).or_default().insert(top);
+    }
+
+    /// `filter`: changes a layer in place.
+    fn filter(&mut self, document: &mut Document, command: &FilterCmd) -> Result<(), String> {
+        let filters = self.read_filters(&command.fields())?;
+        if filters.is_empty() {
+            return Err(
+                "give at least one of `blur`, `glow`, `shadow`, `adjust`, `gradient_map`".into(),
+            );
+        }
+        let id = match &command.layer {
+            Some(name) => find_layer(document, name)?,
+            None => document.active_id(),
+        };
+        if self.options.dry_run {
+            return Ok(());
+        }
+        self.flush_tiles();
+        let limits = document.bounds();
+        let Some(layer) = document.layer_mut(id) else {
+            return Ok(());
+        };
+        let before = filters::apply(&mut layer.surface, &filters, limits);
+        if !before.is_empty() {
+            self.record(TileCommand::new("Filter", id, before));
+            let top = self.position().0;
+            self.painted_by.entry(id).or_default().insert(top);
+        }
+        Ok(())
+    }
+
+    /// An `outline` (and its `rim`) as filters, sizes in this frame's pixels.
+    fn read_outline(&self, spec: OutlineSpec) -> Result<Vec<Filter>, String> {
+        let scale = self.detail();
+        let hard = self.pixel.is_some();
+        let mut filters = vec![Filter::Outline {
+            size: not_negative("size", spec.size.unwrap_or(2.0))? * scale,
+            color: match &spec.color {
+                Some(color) => self.color(color)?,
+                None => [0, 0, 0, 255],
+            },
+            hard,
+        }];
+        if let Some(rim) = spec.rim {
+            filters.push(Filter::Rim {
+                size: not_negative("rim: size", rim.size.unwrap_or(1.5))? * scale,
+                color: match &rim.color {
+                    Some(color) => self.color(color).map_err(|p| format!("`rim`: {p}"))?,
+                    None => [255, 255, 255, 255],
+                },
+                angle: finite("rim: angle", rim.angle.unwrap_or(-45.0))?,
+                hard,
+            });
+        }
+        Ok(filters)
+    }
+
+    /// Filters as written (`blur`, `glow`, `shadow`, `adjust`,
+    /// `gradient_map`), with keyframes worked out and sizes in this
+    /// frame's pixels, in the order they're applied.
+    fn read_filters(&self, written: &Value) -> Result<Vec<Filter>, String> {
+        let value = self.value(written)?;
+        let spec: FilterFields = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let scale = self.detail();
+        let mut filters = Vec::new();
+        if let Some(adjust) = spec.adjust {
+            let signed = |what: &str, v: Option<f32>| -> Result<f32, String> {
+                match v {
+                    None => Ok(0.0),
+                    Some(v) if (-1.0..=1.0).contains(&v) => Ok(v),
+                    Some(v) => Err(format!("`adjust`: `{what}` is from -1 to 1, not {v}")),
+                }
+            };
+            filters.push(Filter::Adjust {
+                hue: finite("hue", adjust.hue.unwrap_or(0.0))?,
+                saturation: signed("saturation", adjust.saturation)?,
+                brightness: signed("brightness", adjust.brightness)?,
+                contrast: signed("contrast", adjust.contrast)?,
+            });
+        }
+        if let Some(map) = spec.gradient_map {
+            let stops = self
+                .stops_of(map.colors.as_deref(), map.stops.as_deref())
+                .map_err(|p| format!("`gradient_map`: {p}"))?;
+            filters.push(Filter::GradientMap(stops));
+        }
+        if let Some(blur) = spec.blur {
+            let radius = not_negative("blur", blur)?;
+            if radius > filters::MAX_BLUR {
+                return Err(format!("`blur` is at most {} pixels", filters::MAX_BLUR));
+            }
+            if radius > 0.0 {
+                filters.push(Filter::Blur(radius * scale));
+            }
+        }
+        if let Some(glow) = spec.glow {
+            filters.push(Filter::Glow {
+                radius: not_negative("glow: radius", glow.radius.unwrap_or(16.0))? * scale,
+                threshold: unit("glow: threshold", glow.threshold.unwrap_or(0.7))?,
+                strength: not_negative("glow: strength", glow.strength.unwrap_or(1.0))?,
+            });
+        }
+        if let Some(shadow) = spec.shadow {
+            let offset = pt(shadow.offset.unwrap_or([4.0, 4.0]))?;
+            let color = match &shadow.color {
+                Some(color) => self.color(color).map_err(|p| format!("`shadow`: {p}"))?,
+                None => [0, 0, 0, 128],
+            };
+            filters.push(Filter::Shadow {
+                offset: (offset.0 * scale, offset.1 * scale),
+                blur: not_negative("shadow: blur", shadow.blur.unwrap_or(4.0))? * scale,
+                color,
+            });
+        }
+        if let Some(outline) = spec.outline {
+            filters.extend(self.read_outline(outline)?);
+        }
+        if self.pixel.is_some()
+            && let Some(blurry) = filters.iter().find(|f| f.blurs())
+        {
+            let name = match blurry {
+                Filter::Blur(_) => "blur",
+                Filter::Glow { .. } => "glow",
+                _ => "a shadow with blur",
+            };
+            return Err(format!(
+                "a pixel canvas can't take {name}: its pixels would melt (use `shadow` with \
+                 \"blur\": 0, `adjust` or `gradient_map`)"
+            ));
+        }
+        Ok(filters)
     }
 
     /// Where a layer should go for `above` / `below` another layer, as a
@@ -1659,11 +2798,26 @@ impl Player {
     }
 
     fn set_brush(&mut self, command: &BrushCmd) -> Result<(), String> {
+        if command.reset.unwrap_or(false) {
+            self.brush = BrushSettings::default();
+            self.brush_alpha = 255;
+        }
         let mut brush = self.brush;
-        if let Some(color) = &command.color {
-            let [r, g, b, a] = self.color(color)?;
-            brush.color = [r, g, b];
-            self.brush_alpha = a;
+        match &command.color {
+            Some(Value::String(color)) => {
+                let [r, g, b, a] = self.color(color)?;
+                brush.color = [r, g, b];
+                brush.source = None;
+                self.brush_alpha = a;
+            }
+            Some(pattern) => {
+                // A pattern: the strokes get its colour pixel by pixel.
+                let paint = self.paint(pattern).map_err(|p| format!("`color`: {p}"))?;
+                brush.source = Some(self.sources.len() as u32);
+                self.sources.push(Arc::new(paint));
+                self.brush_alpha = 255;
+            }
+            None => {}
         }
         if let Some(size) = command.size {
             brush.size = brush_size(size)?;
@@ -1694,8 +2848,51 @@ impl Player {
         if let Some(on) = command.pressure_flow {
             brush.pressure_flow = on;
         }
+        if let Some(tip) = &command.tip {
+            brush.tip = self.tip(tip)?;
+        }
+        if let Some(angle) = command.angle {
+            brush.angle = finite("angle", angle)?;
+        }
+        if let Some(dynamics) = &command.dynamics {
+            brush.dynamics = read_dynamics(dynamics)?;
+        }
         self.brush = brush;
         Ok(())
+    }
+
+    /// A tip as written: a built-in name, or `{"file": "..."}` (loaded
+    /// once, relative to the script).
+    fn tip(&mut self, written: &Value) -> Result<Tip, String> {
+        let names: Vec<&str> = Tip::BUILT_IN.iter().filter_map(|t| t.name()).collect();
+        let help = format!(
+            "`tip` is one of {}, or {{\"file\": \"tips/splat.png\"}} (a greyscale picture)",
+            names.join(", ")
+        );
+        match written {
+            Value::String(name) => {
+                Tip::from_name(name).ok_or_else(|| format!("unknown tip \"{name}\"; {help}"))
+            }
+            Value::Object(object) if object.len() == 1 => {
+                let Some(Value::String(file)) = object.get("file") else {
+                    return Err(help);
+                };
+                if let Some(&id) = self.tip_files.get(file) {
+                    return Ok(Tip::File(id));
+                }
+                let path = match &self.options.folder {
+                    Some(folder) => folder.join(file),
+                    None => PathBuf::from(file),
+                };
+                let shape = load_tip(&path)
+                    .map_err(|problem| format!("can't load the tip \"{file}\": {problem}"))?;
+                let id = self.tips.len() as u32;
+                self.tips.push(Arc::new(shape));
+                self.tip_files.insert(file.clone(), id);
+                Ok(Tip::File(id))
+            }
+            _ => Err(help),
+        }
     }
 
     /// The brush for one stroke: the current brush with this command's
@@ -1710,6 +2907,7 @@ impl Player {
         if let Some(color) = changes.color {
             let [r, g, b, a] = self.color(color)?;
             brush.color = [r, g, b];
+            brush.source = None;
             alpha = a;
         }
         if let Some(size) = changes.size {
@@ -1729,6 +2927,7 @@ impl Player {
         brush.opacity *= f32::from(alpha) / 255.0;
         brush.opacity *= frame.opacity * fade;
         brush.size = size;
+        brush.dynamics.scatter *= frame.brush_scale;
         brush.mode = mode;
         Ok(brush)
     }
@@ -1775,13 +2974,19 @@ impl Player {
             mode,
         )?;
         let mut points = self.points(&command.points)?;
-        self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            false,
+        )?;
         self.place_all(&mut points);
-        self.jobs.push_back(Job::Stroke {
-            layer: document.active_id(),
+        self.push_stroke(
+            document.active_id(),
             brush,
             points,
-        });
+            self.seed_of(command.seed.as_ref())?,
+        );
         Ok(())
     }
 
@@ -1803,13 +3008,19 @@ impl Player {
             brush.pressure_size = true; // so the taper shows
             geometry::apply_taper(&mut points, start, end);
         }
-        self.jitter(&mut points, command.jitter, command.seed, false)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            false,
+        )?;
         self.place_all(&mut points);
-        self.jobs.push_back(Job::Stroke {
-            layer: document.active_id(),
+        self.push_stroke(
+            document.active_id(),
             brush,
             points,
-        });
+            self.seed_of(command.seed.as_ref())?,
+        );
         Ok(())
     }
 
@@ -1836,7 +3047,12 @@ impl Player {
             brush.pressure_size = true;
             geometry::apply_taper(&mut points, start, end);
         }
-        self.jitter(&mut points, command.jitter, command.seed, closed)?;
+        self.jitter(
+            &mut points,
+            command.jitter,
+            self.seed_of(command.seed.as_ref())?,
+            closed,
+        )?;
         self.place_all(&mut points);
 
         let layer = document.active_id();
@@ -1848,18 +3064,16 @@ impl Player {
             let opacity = unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
+                shape: Some(Shape::Rings(vec![
+                    points.iter().map(|p| (p.x, p.y)).collect(),
+                ])),
                 paint,
                 opacity,
                 mode: BrushMode::Paint,
             });
         }
         if command.line.unwrap_or(true) {
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         } else if command.fill.is_none() {
             return Err("with \"line\": false there's nothing to draw: add a `fill`".into());
         }
@@ -1887,7 +3101,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -1922,7 +3136,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -1943,7 +3157,7 @@ impl Player {
             opacity: command.opacity,
             erase: command.erase,
             jitter: command.jitter,
-            seed: command.seed,
+            seed: self.seed_of(command.seed.as_ref())?,
         };
         self.shape(document, outline, style)
     }
@@ -1976,7 +3190,9 @@ impl Player {
             let paint = self.paint(fill)?;
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(vec![points.iter().map(|p| (p.x, p.y)).collect()]),
+                shape: Some(Shape::Rings(vec![
+                    points.iter().map(|p| (p.x, p.y)).collect(),
+                ])),
                 paint,
                 opacity: opacity * self.frame().opacity,
                 mode,
@@ -1996,11 +3212,7 @@ impl Player {
             if let Some(&first) = points.first() {
                 points.push(first);
             }
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, style.seed);
         }
         Ok(())
     }
@@ -2089,11 +3301,7 @@ impl Player {
                 // would round off the long straight edges.
                 let mut points = to_stroke_points(&geometry::densify(ring, true, 1.0));
                 points.push(points[0]); // back to the start, to close it
-                self.jobs.push_back(Job::Stroke {
-                    layer,
-                    brush,
-                    points,
-                });
+                self.push_stroke(layer, brush, points, None);
             }
         } else if command.outline_size.is_some() {
             return Err("`outline_size` needs an `outline` colour too".into());
@@ -2101,7 +3309,7 @@ impl Player {
         if !rings.is_empty() {
             self.jobs.push_back(Job::Area {
                 layer,
-                shape: Some(rings),
+                shape: Some(Shape::Rings(rings)),
                 paint: Paint::Color(color),
                 opacity: opacity * self.frame().opacity,
                 mode: BrushMode::Paint,
@@ -2157,7 +3365,7 @@ impl Player {
                 let ring = vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
                 self.jobs.push_back(Job::Area {
                     layer,
-                    shape: Some(vec![self.place_polygon(ring)]),
+                    shape: Some(Shape::Rings(vec![self.place_polygon(ring)])),
                     paint: Paint::Color(color),
                     opacity,
                     mode: BrushMode::Paint,
@@ -2228,15 +3436,27 @@ impl Player {
     }
 
     fn gradient(&mut self, document: &Document, command: &GradientCmd) -> Result<(), String> {
-        let gradient = self.make_gradient(
-            command.kind.as_deref(),
-            command.from,
-            command.to,
-            command.colors.as_deref(),
-            command.stops.as_deref(),
-        )?;
+        let own = command.kind.is_some() || command.colors.is_some() || command.stops.is_some();
+        let paint = match (&command.fill, command.from, command.to) {
+            (Some(fill), None, None) if !own => self.paint(fill)?,
+            (Some(_), _, _) => {
+                return Err("give `fill`, or `from`/`to` with `colors`/`stops`, not both".into());
+            }
+            (None, Some(from), Some(to)) => Paint::Gradient(self.make_gradient(
+                command.kind.as_deref(),
+                from,
+                to,
+                command.colors.as_deref(),
+                command.stops.as_deref(),
+            )?),
+            (None, _, _) => {
+                return Err(
+                    "a gradient needs `from` and `to` (or a `fill` to cover the area with)".into(),
+                );
+            }
+        };
         let shape = match &command.area {
-            Some(area) => Some(vec![self.place_polygon(self.area(area)?)]),
+            Some(area) => Some(Shape::Rings(vec![self.place_polygon(self.area(area)?)])),
             None => None,
         };
         let mode = if command.erase.unwrap_or(false) {
@@ -2247,7 +3467,7 @@ impl Player {
         self.jobs.push_back(Job::Area {
             layer: document.active_id(),
             shape,
-            paint: Paint::Gradient(gradient),
+            paint,
             opacity: unit("opacity", command.opacity.unwrap_or(1.0))? * self.frame().opacity,
             mode,
         });
@@ -2289,7 +3509,7 @@ impl Player {
         }
         let jitter = not_negative("jitter", command.jitter.unwrap_or(0.0))?;
         let detail = self.detail();
-        let mut random = self.random(command.seed);
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
         let layer = document.active_id();
         for (a, b) in lines {
             // With jitter, each line's ends move a little, so it looks drawn by hand.
@@ -2319,11 +3539,7 @@ impl Player {
                 );
             }
             self.place_all(&mut points);
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         }
         Ok(())
     }
@@ -2381,7 +3597,7 @@ impl Player {
             (frame.brush_scale, frame.opacity, frame.detail)
         };
         let (left, top, right, bottom) = geometry::bounds(&area);
-        let mut random = self.random(command.seed);
+        let mut random = self.random(self.seed_of(command.seed.as_ref())?);
         let layer = document.active_id();
         for _ in 0..command.count {
             // Pick spots in the area's box until one is inside the area.
@@ -2399,7 +3615,7 @@ impl Player {
                 random.range(size.0, size.1.max(size.0 + f32::EPSILON)),
                 brush_scale,
             );
-            let brush = BrushSettings {
+            let mut brush = BrushSettings {
                 color: [r, g, b],
                 size: dab_size,
                 opacity: random
@@ -2414,6 +3630,11 @@ impl Player {
                 pressure_size: true,
                 ..self.brush
             };
+            brush.dynamics.scatter *= brush_scale;
+            if !strokes && brush.tip != Tip::Round {
+                // A shaped dab (a leaf, say) lands turned within `angle`.
+                brush.angle += random.range(angle.0, angle.1.max(angle.0 + f32::EPSILON));
+            }
             let mut points = if strokes {
                 let half = random.range(length.0, length.1.max(length.0 + f32::EPSILON)) / 2.0;
                 let (sin, cos) = random
@@ -2431,11 +3652,7 @@ impl Player {
                 vec![StrokePoint::new(x, y, 1.0)]
             };
             self.place_all(&mut points);
-            self.jobs.push_back(Job::Stroke {
-                layer,
-                brush,
-                points,
-            });
+            self.push_stroke(layer, brush, points, self.seed_of(command.seed.as_ref())?);
         }
         Ok(())
     }
@@ -2459,6 +3676,13 @@ impl Player {
                 .map(|item| self.value(item))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
+            // Any other object (an area, a mask...) may hold keyframes or
+            // parameters inside.
+            Value::Object(fields) => fields
+                .iter()
+                .map(|(key, item)| self.value(item).map(|v| (key.clone(), v)))
+                .collect::<Result<serde_json::Map<_, _>, _>>()
+                .map(Value::Object),
             other => Ok(other.clone()),
         }
     }
@@ -2626,12 +3850,36 @@ impl Player {
     }
 
     /// A `fill`: a colour, or a gradient object.
-    fn paint(&self, value: &Value) -> Result<Paint, String> {
-        match value {
+    fn paint(&mut self, written: &Value) -> Result<Paint, String> {
+        let help = "`fill` is a colour (like \"#FF8800\" or a palette name), a gradient like \
+                    {\"gradient\": \"linear\", \"from\": [0, 0], \"to\": [0, 100], \"colors\": [\"a\", \"b\"]}, \
+                    {\"noise\": {\"scale\": 60, \"colors\": [\"a\", \"b\"]}} or {\"texture\": \"paper\"}";
+        // A colour (or "$name" for one): as it always was.
+        if let Value::String(color) = written {
+            return Ok(Paint::Color(self.color(color)?));
+        }
+        // Keyframes and parameters inside (a noise's offset, say).
+        let value = self.value(written)?;
+        match &value {
             Value::String(color) => Ok(Paint::Color(self.color(color)?)),
+            Value::Object(object) if object.contains_key("noise") => {
+                if object.len() != 1 {
+                    return Err("a noise fill is just {\"noise\": {...}}".into());
+                }
+                let spec: NoiseFill = serde_json::from_value(object["noise"].clone())
+                    .map_err(|e| format!("noise: {e}"))?;
+                self.noise_paint(spec).map_err(|p| format!("noise: {p}"))
+            }
+            Value::Object(object) if object.contains_key("texture") => {
+                if object.len() != 1 {
+                    return Err("a texture fill is just {\"texture\": ...}".into());
+                }
+                self.texture_paint(&object["texture"])
+                    .map_err(|p| format!("texture: {p}"))
+            }
             Value::Object(_) => {
-                let spec: GradientFill = serde_json::from_value(value.clone())
-                    .map_err(|e| format!("fill: {e}"))?;
+                let spec: GradientFill =
+                    serde_json::from_value(value.clone()).map_err(|e| format!("fill: {e}"))?;
                 let gradient = self.make_gradient(
                     Some(&spec.gradient),
                     spec.from,
@@ -2641,9 +3889,126 @@ impl Player {
                 )?;
                 Ok(Paint::Gradient(gradient))
             }
-            _ => Err("`fill` is a colour (like \"#FF8800\" or a palette name) or a gradient like \
-                 {\"gradient\": \"linear\", \"from\": [0, 0], \"to\": [0, 100], \"colors\": [\"a\", \"b\"]}"
-                .into()),
+            _ => Err(help.into()),
+        }
+    }
+
+    /// From canvas pixels back to this frame's drawing units: where a
+    /// pattern is sampled, so it moves, turns and resizes with the group.
+    fn to_source(&self) -> Transform {
+        self.frame().place.inverse().unwrap_or(Transform::IDENTITY)
+    }
+
+    /// Noise as paint, in this frame's coordinates.
+    fn noise_paint(&self, spec: NoiseFill) -> Result<Paint, String> {
+        let scale = spec.scale.unwrap_or(64.0);
+        if scale <= 0.0 || !scale.is_finite() {
+            return Err("`scale` (pixels per wave) must be more than 0".into());
+        }
+        let detail = spec.detail.unwrap_or(3.0).round();
+        if !(1.0..=noise::MAX_DETAIL as f32).contains(&detail) {
+            return Err(format!("`detail` is from 1 to {}", noise::MAX_DETAIL));
+        }
+        let contrast = not_negative("contrast", spec.contrast.unwrap_or(1.0))?;
+        let stops = self.stops_of(spec.colors.as_deref(), spec.stops.as_deref())?;
+        Ok(Paint::Noise(Noise {
+            scale,
+            detail: detail as u32,
+            contrast,
+            offset: pt(spec.offset.unwrap_or([0.0, 0.0]))?,
+            seed: Random::mix(self.seed, spec.seed.unwrap_or(0)),
+            stops,
+            to_source: self.to_source(),
+        }))
+    }
+
+    /// A texture as paint: `"paper"`, or a file (loaded once), in this
+    /// frame's coordinates.
+    fn texture_paint(&mut self, written: &Value) -> Result<Paint, String> {
+        let help = "a texture is \"paper\" or {\"file\": \"textures/canvas.png\", \"scale\": 1, \
+                    \"offset\": [0, 0], \"colors\": [\"dark\", \"light\"]}";
+        let (image, spec) = match written {
+            Value::String(name) if name == "paper" => {
+                (Arc::clone(&noise::PAPER), TextureFill::default())
+            }
+            Value::String(other) => {
+                return Err(format!(
+                    "there's no built-in texture called \"{other}\"; {help}"
+                ));
+            }
+            Value::Object(_) => {
+                let spec: TextureFill =
+                    serde_json::from_value(written.clone()).map_err(|e| e.to_string())?;
+                let Some(file) = &spec.file else {
+                    return Err(format!("`file` is missing; {help}"));
+                };
+                let image = match self.textures.get(file) {
+                    Some(image) => Arc::clone(image),
+                    None => {
+                        let path = match &self.options.folder {
+                            Some(folder) => folder.join(file),
+                            None => PathBuf::from(file),
+                        };
+                        let image = Arc::new(
+                            load_texture(&path)
+                                .map_err(|p| format!("can't load \"{file}\": {p}"))?,
+                        );
+                        self.textures.insert(file.clone(), Arc::clone(&image));
+                        image
+                    }
+                };
+                (image, spec)
+            }
+            _ => return Err(help.into()),
+        };
+        let scale = spec.scale.unwrap_or(1.0);
+        if scale <= 0.0 || !scale.is_finite() {
+            return Err("`scale` must be more than 0".into());
+        }
+        let tint = match (&spec.colors, &spec.stops) {
+            (None, None) => None,
+            (colors, stops) => Some(self.stops_of(colors.as_deref(), stops.as_deref())?),
+        };
+        Ok(Paint::Texture(Texture {
+            image,
+            scale,
+            offset: pt(spec.offset.unwrap_or([0.0, 0.0]))?,
+            tint,
+            to_source: self.to_source(),
+        }))
+    }
+
+    /// Colour stops from `colors` (spread evenly) or `stops`.
+    fn stops_of(
+        &self,
+        colors: Option<&[String]>,
+        stops: Option<&[(f32, String)]>,
+    ) -> Result<Vec<GradientStop>, String> {
+        match (colors, stops) {
+            (Some(colors), None) if !colors.is_empty() => {
+                let last = (colors.len() - 1).max(1) as f32;
+                colors
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        Ok(GradientStop {
+                            position: i as f32 / last,
+                            color: self.color(c)?,
+                        })
+                    })
+                    .collect()
+            }
+            (None, Some(stops)) if !stops.is_empty() => stops
+                .iter()
+                .map(|(position, c)| {
+                    Ok(GradientStop {
+                        position: unit("a stop's position", *position)?,
+                        color: self.color(c)?,
+                    })
+                })
+                .collect(),
+            (Some(_), Some(_)) => Err("give `colors` or `stops`, not both".into()),
+            _ => Err("it needs `colors` (like [\"dark\", \"light\"]) or `stops`".into()),
         }
     }
 
@@ -2776,6 +4141,36 @@ impl Player {
         Ok(())
     }
 
+    /// A command's `seed` as written: a whole number, keyframes or a
+    /// parameter (anything in between is rounded).
+    fn seed_of(&self, written: Option<&Value>) -> Result<Option<u64>, String> {
+        // Seeds hold between keys (a pattern changes at a key, never
+        // halfway), unless the keys say otherwise.
+        let held;
+        let written = match written {
+            Some(Value::Object(keyed)) if animate::is_keyed(written.unwrap_or(&Value::Null)) => {
+                let mut keyed = keyed.clone();
+                keyed
+                    .entry("ease")
+                    .or_insert_with(|| Value::String("step".to_owned()));
+                held = Value::Object(keyed);
+                Some(&held)
+            }
+            other => other,
+        };
+        match written {
+            None => Ok(None),
+            Some(value) => match self.value(value)? {
+                Value::Number(n) => n
+                    .as_f64()
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .map(|v| Some(v.round() as u64))
+                    .ok_or_else(|| "`seed` is a whole number, 0 or more".to_owned()),
+                other => Err(format!("`seed` must be a number, not {other}")),
+            },
+        }
+    }
+
     /// Random numbers for the current command: from the script's seed and
     /// the command's own `seed` (or, without one, where it is).
     fn random(&self, seed: Option<u64>) -> Random {
@@ -2802,6 +4197,90 @@ struct ShapeStyle<'a> {
     erase: Option<bool>,
     jitter: Option<f32>,
     seed: Option<u64>,
+}
+
+/// The fields of a `filter` command or a group's `filter`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilterFields {
+    blur: Option<f32>,
+    glow: Option<GlowSpec>,
+    shadow: Option<ShadowSpec>,
+    adjust: Option<AdjustSpec>,
+    gradient_map: Option<MapSpec>,
+    outline: Option<OutlineSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutlineSpec {
+    color: Option<String>,
+    size: Option<f32>,
+    rim: Option<RimSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RimSpec {
+    color: Option<String>,
+    size: Option<f32>,
+    angle: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GlowSpec {
+    radius: Option<f32>,
+    threshold: Option<f32>,
+    strength: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShadowSpec {
+    offset: Option<[f32; 2]>,
+    blur: Option<f32>,
+    color: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdjustSpec {
+    hue: Option<f32>,
+    saturation: Option<f32>,
+    brightness: Option<f32>,
+    contrast: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapSpec {
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
+}
+
+/// `{"noise": {...}}` as a fill.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NoiseFill {
+    scale: Option<f32>,
+    detail: Option<f32>,
+    contrast: Option<f32>,
+    offset: Option<[f32; 2]>,
+    seed: Option<u64>,
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
+}
+
+/// `{"texture": {...}}` as a fill.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextureFill {
+    file: Option<String>,
+    scale: Option<f32>,
+    offset: Option<[f32; 2]>,
+    colors: Option<Vec<String>>,
+    stops: Option<Vec<(f32, String)>>,
 }
 
 /// A gradient used as a shape's `fill`.
@@ -2991,16 +4470,142 @@ fn layer_index(document: &Document, name: &str) -> Result<usize, String> {
     Ok(document.layer_index(id).unwrap_or(0))
 }
 
+/// A brush's dynamics as written, checked.
+fn read_dynamics(written: &DynamicsCmd) -> Result<Dynamics, String> {
+    let fraction = |what: &str, value: Option<f32>| -> Result<f32, String> {
+        match value {
+            None => Ok(0.0),
+            Some(v) if (0.0..=1.0).contains(&v) => Ok(v),
+            Some(v) => Err(format!(
+                "`dynamics`: `{what}` is a fraction from 0 to 1, not {v}"
+            )),
+        }
+    };
+    let degrees = |what: &str, value: Option<f32>| -> Result<f32, String> {
+        match value {
+            None => Ok(0.0),
+            Some(v) if (0.0..=180.0).contains(&v) => Ok(v),
+            Some(v) => Err(format!(
+                "`dynamics`: `{what}` is from 0 to 180 degrees, not {v}"
+            )),
+        }
+    };
+    Ok(Dynamics {
+        follow: written.follow.unwrap_or(false),
+        size: fraction("size", written.size)?,
+        angle: degrees("angle", written.angle)?,
+        opacity: fraction("opacity", written.opacity)?,
+        scatter: not_negative("scatter", written.scatter.unwrap_or(0.0))
+            .map_err(|p| format!("`dynamics`: {p}"))?,
+        hue: degrees("hue", written.hue)?,
+        lightness: fraction("lightness", written.lightness)?,
+        saturation: fraction("saturation", written.saturation)?,
+    })
+}
+
+/// A number that must be a real one (not infinite).
+fn finite(what: &str, value: f32) -> Result<f32, String> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(format!("`{what}` must be a number"))
+    }
+}
+
+/// Loads a brush tip from a PNG: its lightness is the dab's shape (and
+/// a see-through pixel is nothing).
+fn load_tip(path: &std::path::Path) -> Result<TipShape, String> {
+    let (width, height, channels, buffer) = read_png(path)?;
+    if width > 1024 || height > 1024 {
+        return Err("a tip picture is at most 1024 x 1024 pixels".into());
+    }
+    let lightness: Vec<u8> = buffer[..width * height * channels]
+        .chunks(channels)
+        .map(|px| {
+            let light = match channels {
+                1 | 2 => u32::from(px[0]),
+                _ => (u32::from(px[0]) * 54 + u32::from(px[1]) * 183 + u32::from(px[2]) * 19) / 256,
+            };
+            let alpha = match channels {
+                2 => u32::from(px[1]),
+                4 => u32::from(px[3]),
+                _ => 255,
+            };
+            (light * alpha / 255) as u8
+        })
+        .collect();
+    Ok(TipShape::from_lightness(width, height, &lightness))
+}
+
+/// Loads a texture from a PNG, as premultiplied pixels.
+fn load_texture(path: &std::path::Path) -> Result<TextureImage, String> {
+    let (width, height, channels, buffer) = read_png(path)?;
+    if width > 2048 || height > 2048 {
+        return Err("a texture is at most 2048 x 2048 pixels".into());
+    }
+    let pixels = buffer[..width * height * channels]
+        .chunks(channels)
+        .map(|px| match channels {
+            1 => Rgba8::new(px[0], px[0], px[0], 255),
+            2 => Rgba8::from_straight(px[0], px[0], px[0], px[1]),
+            3 => Rgba8::new(px[0], px[1], px[2], 255),
+            _ => Rgba8::from_straight(px[0], px[1], px[2], px[3]),
+        })
+        .collect();
+    Ok(TextureImage {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// Reads a PNG as 8-bit pixels: (width, height, channels per pixel, the
+/// pixels row by row). Channels: 1 grey, 2 grey + alpha, 3 RGB, 4 RGBA.
+fn read_png(path: &std::path::Path) -> Result<(usize, usize, usize, Vec<u8>), String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buffer).map_err(|e| e.to_string())?;
+    let (width, height) = (info.width as usize, info.height as usize);
+    if width == 0 || height == 0 {
+        return Err("the picture is empty".into());
+    }
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        _ => return Err("the picture's pixels aren't a kind I can read".into()),
+    };
+    Ok((width, height, channels, buffer))
+}
+
+/// True for the commands that matter while a symbol is painted for a
+/// mask: those that paint, and those that hold other commands.
+fn paints_or_structures(command: &Command) -> bool {
+    !matches!(
+        command,
+        Command::Canvas(_)
+            | Command::Paper(_)
+            | Command::Layer(_)
+            | Command::DeleteLayer(_)
+            | Command::MoveLayer(_)
+            | Command::RenameLayer(_)
+            | Command::ClearLayer(_)
+            | Command::TransformLayer(_)
+            | Command::Pixels(_)
+            | Command::Snapshot(_)
+            | Command::Filter(_)
+    )
+}
+
 fn layer_props(document: &Document, id: LayerId) -> LayerProps {
     document
         .layer(id)
         .map(|layer| layer.props())
-        .unwrap_or_else(|| LayerProps {
-            name: String::new(),
-            visible: true,
-            opacity: 1.0,
-            blend: BlendMode::Normal,
-        })
+        .unwrap_or_else(|| LayerProps::named(""))
 }
 
 fn is_empty(document: &Document, id: LayerId) -> bool {
@@ -3106,8 +4711,16 @@ fn job_extent(job: &Job, document: &Document) -> Extent {
             around(&mut points.iter().map(|p| (p.x, p.y)), brush.size / 2.0)
         }
         Job::Area {
-            shape: Some(rings), ..
+            shape: Some(Shape::Rings(rings)),
+            ..
         } => around(&mut rings.iter().flatten().copied(), 0.0),
+        Job::Area {
+            shape: Some(Shape::Mask(mask)),
+            ..
+        } => {
+            let r = mask.content_bounds();
+            (r.left as f32, r.top as f32, r.right as f32, r.bottom as f32)
+        }
         Job::Area { shape: None, .. } => whole,
         // Where it ends up isn't known until it's done: count where it starts.
         Job::Bucket { fill, .. } => (fill.x, fill.y, fill.x + 1.0, fill.y + 1.0),
@@ -3123,6 +4736,18 @@ fn union(a: Option<Extent>, b: Extent) -> Extent {
 }
 
 /// True if any of `area` is inside `canvas`.
+/// How much of the canvas a box covers, 0 to 1.
+fn covered((left, top, right, bottom): Extent, canvas: PixelRect) -> f32 {
+    let w = (right.min(canvas.right as f32) - left.max(canvas.left as f32)).max(0.0);
+    let h = (bottom.min(canvas.bottom as f32) - top.max(canvas.top as f32)).max(0.0);
+    let area = (canvas.right - canvas.left) as f32 * (canvas.bottom - canvas.top) as f32;
+    if area <= 0.0 {
+        0.0
+    } else {
+        (w * h / area).min(1.0)
+    }
+}
+
 fn overlaps((left, top, right, bottom): Extent, canvas: PixelRect) -> bool {
     left < canvas.right as f32
         && right > canvas.left as f32
@@ -4817,5 +6442,1590 @@ mod tests {
             problem.contains("\"$paint\" must be a colour, not 5"),
             "{problem}"
         );
+    }
+
+    // ---- Clipping, the alpha lock and masks (phase 3, step 1) ----------------
+
+    #[test]
+    fn a_clipping_layer_shows_only_on_its_base() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Base" },
+              { "cmd": "rect", "x": 20, "y": 20, "width": 40, "height": 40, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Shade", "clip": true },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" },
+              { "cmd": "layer", "name": "Light", "clip": true, "blend": "screen" },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 50, "fill": "#00FF00" }
+            ] }"##,
+        );
+        assert!(document.layers()[1].clip() && document.layers()[2].clip());
+        assert!(!document.layers()[0].clip());
+        // Inside the base: red, and lighter green up top; outside: paper.
+        assert_eq!(seen(&document, 40, 55), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(seen(&document, 40, 30), Rgba8::new(255, 255, 0, 255));
+        assert_eq!(seen(&document, 80, 80), Rgba8::WHITE);
+        assert_eq!(seen(&document, 80, 30), Rgba8::WHITE);
+        // The paint itself isn't limited: it's there, just not shown.
+        assert_eq!(
+            document.layers()[1].surface.pixel(80, 80),
+            Rgba8::new(255, 0, 0, 255)
+        );
+    }
+
+    #[test]
+    fn a_locked_layer_only_recolours_what_is_there() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Duck" },
+              { "cmd": "rect", "x": 20, "y": 20, "width": 40, "height": 40, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Duck", "lock": true },
+              { "cmd": "gradient", "from": [0, 0], "to": [100, 0], "colors": ["#FF0000", "#FF0000"] },
+              { "cmd": "erase", "points": [[20, 40], [60, 40]], "size": 10 },
+              { "cmd": "layer", "name": "Duck", "lock": false },
+              { "cmd": "stroke", "points": [[0, 90], [100, 90]], "size": 4, "color": "#00FF00" }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 40, 40),
+            Rgba8::new(255, 0, 0, 255),
+            "recoloured"
+        );
+        assert_eq!(seen(&document, 80, 80), Rgba8::WHITE, "no new paint");
+        assert_eq!(
+            seen(&document, 50, 90),
+            Rgba8::new(0, 255, 0, 255),
+            "unlocked again"
+        );
+        assert!(!document.layers()[0].lock());
+    }
+
+    #[test]
+    fn a_group_mask_limits_painting_and_moves_with_the_group() {
+        let masked = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "group", "name": "spot", "translate": [50, 0],
+                "mask": { "circle": [0, 50, 20] }, "commands": [
+                { "cmd": "rect", "x": -100, "y": 0, "width": 200, "height": 100, "fill": "#FF0000" },
+                { "cmd": "stroke", "points": [[-50, 50], [50, 50]], "size": 6, "color": "#0000FF" },
+                { "cmd": "fill", "at": [0, 50], "color": "#00FF00", "opacity": 0.5 }
+              ] }
+            ] }"##,
+        );
+        // The circle landed at (50, 50): painted inside, paper outside.
+        let inside = seen(&masked, 50, 40);
+        assert_eq!(inside, Rgba8::new(255, 0, 0, 255), "{inside:?}");
+        let centre = seen(&masked, 50, 50);
+        assert!(
+            centre.b > 0 && centre.g > 0,
+            "the stroke, then the half fill: {centre:?}"
+        );
+        assert_eq!(
+            seen(&masked, 0, 50),
+            Rgba8::WHITE,
+            "where the mask was written"
+        );
+        assert_eq!(seen(&masked, 90, 50), Rgba8::WHITE);
+        assert_eq!(seen(&masked, 50, 80), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn masks_nest_and_apply_on_whichever_layer_is_painted() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "A" },
+              { "cmd": "group", "mask": { "rect": [0, 0, 60, 100] }, "commands": [
+                { "cmd": "group", "mask": { "rect": [40, 0, 60, 100] }, "commands": [
+                  { "cmd": "layer", "name": "B" },
+                  { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" }
+                ] },
+                { "cmd": "rect", "x": 0, "y": 80, "width": 100, "height": 20, "fill": "#0000FF" }
+              ] }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 50, 50),
+            Rgba8::new(255, 0, 0, 255),
+            "in both"
+        );
+        assert_eq!(seen(&document, 20, 50), Rgba8::WHITE, "in the outer only");
+        assert_eq!(seen(&document, 80, 50), Rgba8::WHITE, "in the inner only");
+        assert_eq!(seen(&document, 20, 90), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(seen(&document, 80, 90), Rgba8::WHITE);
+        assert_eq!(
+            document.layers()[1].name(),
+            "B",
+            "the layer command still worked"
+        );
+    }
+
+    #[test]
+    fn a_mask_moves_with_keyframes_like_everything_else() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": [20, 12], "fill": "#000000" } ] }
+          ],
+          "animations": { "go": { "frames": 5, "commands": [
+            { "cmd": "group", "name": "shadow", "translate": { "keys": [[0, [20, 50]], [4, [80, 50]]] },
+              "mask": { "symbol": "blob", "rotate": 30 }, "commands": [
+              { "cmd": "gradient", "from": [-30, 0], "to": [30, 0], "colors": ["#FF0000", "#0000FF"] }
+            ] }
+          ] } }
+        }"##;
+        let frame = play_frame(script, Some("go"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": [20, 12], "fill": "#000000" } ] },
+            { "cmd": "group", "name": "shadow", "translate": [50, 50],
+              "mask": { "symbol": "blob", "rotate": 30 }, "commands": [
+              { "cmd": "gradient", "from": [-30, 0], "to": [30, 0], "colors": ["#FF0000", "#0000FF"] }
+            ] }
+          ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_ne!(seen(&by_hand, 50, 50), Rgba8::WHITE, "inside the blob");
+        assert_eq!(seen(&by_hand, 50, 85), Rgba8::WHITE, "outside it");
+        assert_eq!(by_hand.layers().len(), 1, "the silhouette made no layers");
+    }
+
+    #[test]
+    fn a_symbols_silhouette_makes_a_mask_without_painting() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "define", "name": "duck", "params": { "size": 10 }, "commands": [
+                { "cmd": "layer", "name": "Duck layer" },
+                { "cmd": "group", "scale": "$size", "commands": [
+                  { "cmd": "ellipse", "center": [0, 0], "radius": 1, "fill": "#FFFF00" } ] },
+                { "cmd": "group", "mask": { "circle": [0, 0, 5] }, "commands": [
+                  { "cmd": "rect", "x": -50, "y": -50, "width": 100, "height": 100, "fill": "#FF00FF" } ] }
+              ] },
+              { "cmd": "layer", "name": "Shadow" },
+              { "cmd": "group", "mask": { "symbol": "duck", "translate": [50, 50], "with": { "size": 20 } }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#0000FF" }
+              ] }
+            ] }"##,
+        );
+        assert_eq!(document.layers().len(), 1, "no layer from the silhouette");
+        assert_eq!(document.layers()[0].name(), "Shadow");
+        assert_eq!(seen(&document, 50, 50), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(
+            seen(&document, 65, 50),
+            Rgba8::new(0, 0, 255, 255),
+            "the size the use gave"
+        );
+        assert_eq!(seen(&document, 80, 50), Rgba8::WHITE);
+        assert_eq!(
+            seen(&document, 10, 10),
+            Rgba8::WHITE,
+            "nothing from the symbol itself"
+        );
+    }
+
+    #[test]
+    fn not_and_layer_masks() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "layer", "name": "Water" },
+              { "cmd": "rect", "x": 0, "y": 50, "width": 100, "height": 50, "fill": "#0000FF" },
+              { "cmd": "layer", "name": "Reflection" },
+              { "cmd": "group", "mask": { "layer": "Water" }, "commands": [
+                { "cmd": "rect", "x": 40, "y": 0, "width": 20, "height": 100, "fill": "#FF0000" } ] },
+              { "cmd": "layer", "name": "Sky" },
+              { "cmd": "group", "mask": { "not": { "circle": [20, 20, 10] } }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 40, "fill": "#00FF00" } ] }
+            ] }"##,
+        );
+        assert_eq!(
+            seen(&document, 50, 75),
+            Rgba8::new(255, 0, 0, 255),
+            "on the water"
+        );
+        assert_eq!(seen(&document, 50, 25), Rgba8::WHITE, "not above it");
+        assert_eq!(seen(&document, 20, 20), Rgba8::WHITE, "the hole");
+        assert_eq!(
+            seen(&document, 5, 5),
+            Rgba8::new(0, 255, 0, 255),
+            "around it"
+        );
+    }
+
+    #[test]
+    fn a_use_takes_a_mask_and_mask_numbers_may_be_keyframes() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "wall", "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" } ] }
+          ],
+          "animations": { "grow": { "frames": 5, "commands": [
+            { "cmd": "use", "name": "wall", "mask": { "circle": [50, 50, { "keys": [[0, 10], [4, 50]] }] } }
+          ] } } }"##;
+        let frame = play_frame(script, Some("grow"), 2).unwrap();
+        assert_eq!(seen(&frame, 50, 50), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(
+            seen(&frame, 50, 25),
+            Rgba8::new(255, 0, 0, 255),
+            "radius 30 by frame 2"
+        );
+        assert_eq!(seen(&frame, 50, 10), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn on_a_pixel_canvas_a_mask_has_hard_edges() {
+        let document = play(
+            r##"{ "palette": { "red": "#FF0000" }, "commands": [
+              { "cmd": "canvas", "width": 16, "height": 16, "pixel": { "supersample": 1 } },
+              { "cmd": "group", "mask": { "circle": [8, 8, 5] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": 16, "height": 16, "fill": "red" } ] }
+            ] }"##,
+        );
+        let (mut painted, mut partly) = (0, 0);
+        for y in 0..16 {
+            for x in 0..16 {
+                match document.layers()[0].surface.pixel(x, y).a {
+                    255 => painted += 1,
+                    0 => {}
+                    _ => partly += 1,
+                }
+            }
+        }
+        assert_eq!(partly, 0, "no half pixels");
+        assert!((60..=90).contains(&painted), "{painted}");
+    }
+
+    #[test]
+    fn mask_mistakes_are_explained() {
+        let base = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100 },
+            { "cmd": "define", "name": "blob", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "#000000" } ] },
+            { "cmd": "group", "name": "g", "mask": MASK, "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#FF0000" } ] }
+          ] }"##;
+        let error_with = |mask: &str| error(&base.replace("MASK", mask));
+        let bad = error_with("5");
+        assert!(
+            bad.contains("(group \"g\")") && bad.contains("`mask`: a mask is an area"),
+            "{bad}"
+        );
+        let unknown = error_with(r##"{ "symbol": "duck" }"##);
+        assert!(
+            unknown.contains("there's no symbol called \"duck\""),
+            "{unknown}"
+        );
+        let field = error_with(r##"{ "symbol": "blob", "radius": 3 }"##);
+        assert!(
+            field.contains("unknown field `radius`") && field.contains("fields of a use"),
+            "{field}"
+        );
+        let double = error_with(r##"{ "not": { "not": { "circle": [0, 0, 5] } } }"##);
+        assert!(double.contains("`not` inside `not`"), "{double}");
+        let layer = error_with(r##"{ "layer": "Nope" }"##);
+        assert!(layer.contains("Nope"), "{layer}");
+        // A mask that covers nothing is a warning, not an error.
+        let script =
+            Script::parse(&base.replace("MASK", r##"{ "circle": [500, 500, 5] }"##)).unwrap();
+        let mut player = Player::new(script, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let warnings = player.report().warnings;
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("(group \"g\")") && w.contains("covers nothing")),
+            "{warnings:?}"
+        );
+    }
+
+    // ---- Brush tips, dynamics and stamp (phase 3, step 2) --------------------
+
+    const TIP_SCRIPT: &str = r##"{ "seed": 2, "commands": [
+        { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+        { "cmd": "brush", "tip": "TIP", "size": 20, "color": "#000000", "hardness": 1, "dynamics": DYNAMICS },
+        { "cmd": "stroke", "points": [[20, 50], [180, 50]] }
+      ] }"##;
+
+    fn tip_script(tip: &str, dynamics: &str) -> String {
+        TIP_SCRIPT.replace("TIP", tip).replace("DYNAMICS", dynamics)
+    }
+
+    fn painted_pixels(document: &Document) -> usize {
+        let mut count = 0;
+        for y in 0..100 {
+            for x in 0..200 {
+                if document.layers()[0].surface.pixel(x, y).a > 0 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn every_tip_paints_and_each_looks_different() {
+        let mut pictures = Vec::new();
+        for tip in [
+            "round", "square", "bristle", "chalk", "leaf", "grass", "sparkle",
+        ] {
+            let document = play(&tip_script(tip, "{}"));
+            assert!(painted_pixels(&document) > 500, "{tip} paints");
+            // Nothing lands outside the stroke's reach.
+            assert_eq!(
+                document.layers()[0].surface.pixel(100, 20),
+                Rgba8::TRANSPARENT,
+                "{tip}"
+            );
+            pictures.push((tip, png(&document)));
+        }
+        for (i, (tip, picture)) in pictures.iter().enumerate() {
+            for (other, theirs) in &pictures[i + 1..] {
+                assert_ne!(picture, theirs, "{tip} and {other} look the same");
+            }
+        }
+        // The round tip is exactly the brush as it always was.
+        let plain = play(&tip_script("round", "{}"));
+        let before = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 20, "color": "#000000", "hardness": 1 },
+            { "cmd": "stroke", "points": [[20, 50], [180, 50]] } ] }"##,
+        );
+        assert_eq!(png(&plain), png(&before));
+    }
+
+    #[test]
+    fn a_square_tip_has_corners_and_follows_the_stroke() {
+        let square = play(&tip_script("square", "{}"));
+        // A horizontal stroke with a square tip: a 20-pixel-high band
+        // with square ends, solid right to the corner.
+        let layer = &square.layers()[0].surface;
+        assert_eq!(layer.pixel(100, 41).a, 255);
+        assert_eq!(layer.pixel(100, 58).a, 255);
+        assert_eq!(layer.pixel(100, 38).a, 0);
+        assert_eq!(layer.pixel(11, 41).a, 255, "the start's corner is square");
+        // Turned 45 degrees, the band gets wider (the square's diagonal).
+        let turned = play(
+            &tip_script("square", "{}")
+                .replace(r#""hardness": 1,"#, r#""hardness": 1, "angle": 45,"#),
+        );
+        assert!(turned.layers()[0].surface.pixel(100, 38).a > 0);
+        assert_ne!(png(&turned), png(&square));
+    }
+
+    #[test]
+    fn dynamics_vary_the_dabs_from_the_seed_only() {
+        let dynamics = r##"{ "size": 0.4, "angle": 30, "opacity": 0.5, "scatter": 6, "hue": 20, "lightness": 0.2, "saturation": 0.3 }"##;
+        // (A colour, not black: black has no hue or lightness to vary.)
+        let tip_script =
+            |tip: &str, dynamics: &str| tip_script(tip, dynamics).replace("#000000", "#4080C0");
+        let a = play(&tip_script("chalk", dynamics));
+        let b = play(&tip_script("chalk", dynamics));
+        assert_eq!(png(&a), png(&b), "the same seed: the same picture");
+        let c = play(&tip_script("chalk", dynamics).replace("\"seed\": 2", "\"seed\": 3"));
+        assert_ne!(png(&a), png(&c), "another seed: another picture");
+        let plain = play(&tip_script("chalk", "{}"));
+        assert_ne!(png(&a), png(&plain));
+        // Scatter puts paint off the line; colour dynamics vary the colour.
+        let layer = &a.layers()[0].surface;
+        let off_line = (0..200).filter(|&x| layer.pixel(x, 36).a > 0).count();
+        assert!(off_line > 0, "scatter");
+        let mut colors = std::collections::HashSet::new();
+        for x in 20..180 {
+            let p = layer.pixel(x, 50);
+            if p.a > 200 {
+                colors.insert((p.r, p.g, p.b));
+            }
+        }
+        assert!(colors.len() > 3, "colours vary: {colors:?}");
+        // Round tips take dynamics too (size and scatter), with the same seed rule.
+        let round = play(&tip_script("round", r##"{ "size": 0.5, "scatter": 5 }"##));
+        assert_ne!(png(&round), png(&play(&tip_script("round", "{}"))));
+    }
+
+    #[test]
+    fn dynamics_and_tips_are_checked() {
+        let bad_tip = error(&tip_script("fluffy", "{}"));
+        assert!(
+            bad_tip.contains("unknown tip \"fluffy\"") && bad_tip.contains("chalk"),
+            "{bad_tip}"
+        );
+        let bad_size = error(&tip_script("round", r##"{ "size": 3 }"##));
+        assert!(
+            bad_size.contains("`dynamics`: `size` is a fraction"),
+            "{bad_size}"
+        );
+        let bad_field = error(&tip_script("round", r##"{ "wobble": 3 }"##));
+        assert!(bad_field.contains("unknown field `wobble`"), "{bad_field}");
+        let missing = error(
+            &tip_script("round", "{}")
+                .replace(r#""tip": "round""#, r#""tip": { "file": "nope.png" }"#),
+        );
+        assert!(
+            missing.contains("can't load the tip \"nope.png\""),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn a_tip_from_a_file_is_its_lightness() {
+        // A 8 x 8 PNG: white on the left half, black on the right.
+        let folder = std::env::temp_dir().join(format!("art-app-tip-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("half.png");
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut encoder = png::Encoder::new(file, 8, 8);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            let mut data = vec![0u8; 64];
+            for y in 0..8 {
+                for x in 0..4 {
+                    data[y * 8 + x] = 255;
+                }
+            }
+            writer.write_image_data(&data).unwrap();
+        }
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "tip": { "file": "half.png" }, "size": 40, "color": "#000000", "hardness": 1 },
+            { "cmd": "stroke", "points": [[50, 50]] },
+            { "cmd": "brush", "tip": { "file": "half.png" } } ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            folder: Some(folder.clone()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        assert_eq!(player.tips.len(), 1, "loaded once");
+        let layer = &document.layers()[0].surface;
+        assert_eq!(layer.pixel(40, 50).a, 255, "the white half paints");
+        assert_eq!(layer.pixel(60, 50).a, 0, "the black half doesn't");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn stamp_puts_dabs_along_a_path() {
+        let document = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+              { "cmd": "brush", "size": 10, "color": "#000000", "hardness": 1 },
+              { "cmd": "stamp", "tip": "square", "points": [[20, 50], [180, 50]], "spacing": 40, "size": 10 }
+            ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        // Copies at x = 20, 60, 100, 140, 180: solid there, nothing between.
+        for x in [20, 60, 100, 140, 180] {
+            assert_eq!(layer.pixel(x, 50).a, 255, "a dab at {x}");
+        }
+        assert_eq!(layer.pixel(40, 50).a, 0, "nothing between dabs");
+        assert_eq!(layer.pixel(80, 50).a, 0);
+        // Keyframed points: frame 2 of a moving path equals the path by hand.
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "go": { "frames": 5, "commands": [
+            { "cmd": "stamp", "tip": "leaf", "points": { "keys": [[0, [[20, 20], [180, 20]]], [4, [[20, 60], [180, 60]]]] },
+              "spacing": 30, "size": 14, "color": "#008000", "seed": 1 } ] } } }"##;
+        let frame = play_frame(script, Some("go"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "stamp", "tip": "leaf", "points": [[20, 40], [180, 40]], "spacing": 30, "size": 14, "color": "#008000", "seed": 1 }
+            ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+    }
+
+    #[test]
+    fn stamp_copies_a_symbol_turned_scaled_and_coloured() {
+        let script = r##"{ "seed": 7, "commands": [
+            { "cmd": "canvas", "width": 400, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "dot", "params": { "color": "#FF0000", "r": 4 }, "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 4, "fill": "$color" },
+              { "cmd": "rect", "x": -1, "y": -12, "width": 2, "height": 8, "fill": "$color" } ] },
+            { "cmd": "stamp", "symbol": "dot", "points": [[20, 50], [380, 50]], "spacing": 18,
+              "size": [0.7, 1.3], "colors": ["#FF0000", "#0000FF"], "with": { "r": 5 } }
+          ] }"##;
+        let document = play(script);
+        let layer = &document.layers()[0].surface;
+        let (mut red, mut blue) = (0, 0);
+        for x in (20..=380).step_by(18) {
+            let p = layer.pixel(x, 50);
+            assert_eq!(p.a, 255, "a copy at {x}");
+            if p.r > p.b {
+                red += 1;
+            } else {
+                blue += 1;
+            }
+        }
+        assert!(
+            red > 0 && blue > 0,
+            "both colours are picked: {red} red, {blue} blue"
+        );
+        // `follow` on a path going right turns the stick (drawn upwards)
+        // to point right... which with angle 0 along a horizontal path is
+        // a 0-degree turn: the stick still points up.
+        assert!(layer.pixel(20, 42).a > 0, "the stick above the first dot");
+        // The same seed, the same picture; and copies land where a use would.
+        assert_eq!(png(&document), png(&play(script)));
+        let one = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "box", "commands": [
+              { "cmd": "rect", "x": -10, "y": -5, "width": 20, "height": 10, "fill": "#000000" } ] },
+            { "cmd": "stamp", "symbol": "box", "points": [[50, 50]], "spacing": 10, "size": 2, "angle": 90 }
+            ] }"##,
+        );
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "box", "commands": [
+              { "cmd": "rect", "x": -10, "y": -5, "width": 20, "height": 10, "fill": "#000000" } ] },
+            { "cmd": "use", "name": "box", "translate": [50, 50], "scale": 2, "rotate": 90 }
+            ] }"##,
+        );
+        assert_eq!(png(&one), png(&by_hand));
+    }
+
+    #[test]
+    fn stamp_mistakes_are_explained() {
+        let base = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100 },
+            { "cmd": "define", "name": "plain", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 4, "fill": "#000000" } ] },
+            STAMP
+          ] }"##;
+        let error_with = |stamp: &str| error(&base.replace("STAMP", stamp));
+        let both = error_with(
+            r##"{ "cmd": "stamp", "symbol": "plain", "tip": "leaf", "points": [[0, 0]], "spacing": 5 }"##,
+        );
+        assert!(
+            both.contains("(stamp)") && both.contains("`symbol` or `tip`, not both"),
+            "{both}"
+        );
+        let none = error_with(
+            r##"{ "cmd": "stamp", "symbol": "nope", "points": [[0, 0]], "spacing": 5 }"##,
+        );
+        assert!(none.contains("no symbol called \"nope\""), "{none}");
+        let color = error_with(
+            r##"{ "cmd": "stamp", "symbol": "plain", "points": [[0, 0]], "spacing": 5, "colors": ["#FF0000"] }"##,
+        );
+        assert!(
+            color.contains("`color` parameter") && color.contains("\"plain\" has none"),
+            "{color}"
+        );
+        let spacing = error_with(
+            r##"{ "cmd": "stamp", "tip": "leaf", "points": [[0, 0], [50, 0]], "spacing": 0 }"##,
+        );
+        assert!(
+            spacing.contains("`spacing` must be more than 0"),
+            "{spacing}"
+        );
+        let many = error_with(
+            r##"{ "cmd": "stamp", "tip": "leaf", "points": [[0, 0], [100, 0]], "spacing": 0.001 }"##,
+        );
+        assert!(many.contains("at most 10000"), "{many}");
+        let points =
+            error_with(r##"{ "cmd": "stamp", "tip": "leaf", "points": 5, "spacing": 1 }"##);
+        assert!(
+            points.contains("`points` is a list of [x, y] points"),
+            "{points}"
+        );
+    }
+
+    // ---- Noise and textures (phase 3, step 3) ----------------------------------
+
+    fn noise_script(fill: &str) -> String {
+        format!(
+            r##"{{ "seed": 4, "palette": {{ "a": "#2A5A8E", "b": "#6FA8D6" }}, "commands": [
+            {{ "cmd": "canvas", "width": 120, "height": 80, "paper": "#FFFFFF" }},
+            {{ "cmd": "rect", "x": 0, "y": 0, "width": 120, "height": 80, "fill": {fill} }} ] }}"##
+        )
+    }
+
+    #[test]
+    fn noise_fills_are_repeatable_and_vary_with_the_seed() {
+        let noise =
+            r##"{ "noise": { "scale": 20, "detail": 3, "colors": ["a", "b"], "seed": 1 } }"##;
+        let a = play(&noise_script(noise));
+        assert_eq!(png(&a), png(&play(&noise_script(noise))));
+        let b = play(&noise_script(&noise.replace("\"seed\": 1", "\"seed\": 2")));
+        assert_ne!(png(&a), png(&b));
+        let c = play(&noise_script(noise).replace("\"seed\": 4,", "\"seed\": 5,"));
+        assert_ne!(png(&a), png(&c), "the script's seed counts too");
+        // Every pixel is between the two colours, and they're not all the same.
+        let layer = &a.layers()[0].surface;
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..80 {
+            for x in 0..120 {
+                let p = layer.pixel(x, y);
+                assert_eq!(p.a, 255);
+                assert!(p.r >= 0x2A && p.r <= 0x6F && p.b >= 0x8E, "{p:?}");
+                seen.insert(p.r);
+            }
+        }
+        assert!(seen.len() > 20, "{} shades", seen.len());
+        // More contrast: more pixels near the two ends.
+        let sharp = play(&noise_script(
+            &noise.replace("\"detail\": 3", "\"detail\": 3, \"contrast\": 4"),
+        ));
+        let ends = |d: &Document| {
+            let l = &d.layers()[0].surface;
+            (0..80)
+                .flat_map(|y| (0..120).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let r = l.pixel(x, y).r;
+                    !(0x2A + 4..=0x6F - 4).contains(&r)
+                })
+                .count()
+        };
+        assert!(
+            ends(&sharp) > ends(&a) * 2,
+            "{} vs {}",
+            ends(&sharp),
+            ends(&a)
+        );
+    }
+
+    #[test]
+    fn a_pattern_lives_in_the_coordinates_of_its_group() {
+        // A textured symbol moved, resized and turned by a group...
+        let moved = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "rock", "commands": [
+              { "cmd": "rect", "x": -30, "y": -20, "width": 60, "height": 40,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] },
+            { "cmd": "group", "translate": [100, 100], "scale": 2, "rotate": 30, "commands": [
+              { "cmd": "use", "name": "rock" } ] } ] }"##,
+        );
+        // ...is the same as the noise moved, resized and turned by hand.
+        let by_hand = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "group", "translate": [100, 100], "scale": 2, "rotate": 30, "commands": [
+              { "cmd": "rect", "x": -30, "y": -20, "width": 60, "height": 40,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] } ] }"##,
+        );
+        assert_eq!(png(&moved), png(&by_hand));
+        // And differs from the same rock drawn without the group's transform
+        // (the pattern is bigger and turned, not just the shape).
+        let plain = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 40, "y": 60, "width": 120, "height": 80,
+              "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] }"##,
+        );
+        assert_ne!(png(&moved), png(&plain));
+        // Moving by a group equals moving the pattern by its offset.
+        let translated = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "group", "translate": [50, 20], "commands": [
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100,
+                "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3 } } } ] } ] }"##,
+        );
+        let offset = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 50, "y": 20, "width": 100, "height": 100,
+              "fill": { "noise": { "scale": 15, "detail": 2, "colors": ["a", "b"], "seed": 3, "offset": [50, 20] } } } ] }"##,
+        );
+        assert_eq!(png(&translated), png(&offset));
+    }
+
+    #[test]
+    fn noise_offset_and_scale_may_be_keyframes() {
+        let script = r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" } ],
+          "animations": { "drift": { "frames": 5, "commands": [
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60,
+              "fill": { "noise": { "scale": { "keys": [[0, 10], [4, 30]] }, "detail": 2, "colors": ["a", "b"],
+                                   "offset": { "keys": [[0, [0, 0]], [4, [40, 0]]] } } } } ] } } }"##;
+        let frame = play_frame(script, Some("drift"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "palette": { "a": "#2A5A8E", "b": "#6FA8D6" }, "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60,
+              "fill": { "noise": { "scale": 20, "detail": 2, "colors": ["a", "b"], "offset": [20, 0] } } } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+    }
+
+    #[test]
+    fn textures_tile_a_picture_and_paper_is_built_in() {
+        let folder = std::env::temp_dir().join(format!("art-app-texture-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        {
+            // 2 x 2: white, black / black, white.
+            let file = std::fs::File::create(folder.join("check.png")).unwrap();
+            let mut encoder = png::Encoder::new(file, 2, 2);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[255, 0, 0, 255]).unwrap();
+        }
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 40, "height": 40, "paper": "#808080" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 40,
+              "fill": { "texture": { "file": "check.png", "scale": 5 } } },
+            { "cmd": "layer", "name": "Tinted" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 40, "height": 20,
+              "fill": { "texture": { "file": "check.png", "scale": 5, "colors": ["#FF0000", "#0000FF"] } } },
+            { "cmd": "layer", "name": "Paper" },
+            { "cmd": "rect", "x": 0, "y": 20, "width": 40, "height": 20, "fill": { "texture": "paper" } }
+            ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            folder: Some(folder.clone()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        assert_eq!(player.textures.len(), 1, "loaded once");
+        let checks = &document.layers()[0].surface;
+        // Each texture pixel is 5 canvas pixels; the picture repeats every 10.
+        assert_eq!(checks.pixel(2, 2), Rgba8::WHITE);
+        assert_eq!(checks.pixel(7, 2), Rgba8::BLACK);
+        assert_eq!(checks.pixel(12, 2), Rgba8::WHITE, "repeats");
+        assert_eq!(checks.pixel(2, 7), Rgba8::BLACK);
+        let tinted = &document.layers()[1].surface;
+        assert_eq!(
+            tinted.pixel(2, 2),
+            Rgba8::new(0, 0, 255, 255),
+            "white -> the last colour"
+        );
+        assert_eq!(
+            tinted.pixel(7, 2),
+            Rgba8::new(255, 0, 0, 255),
+            "black -> the first"
+        );
+        let paper = &document.layers()[2].surface;
+        let p = paper.pixel(10, 30);
+        assert!(p.a == 255 && p.r > 180 && p.r == p.g && p.g == p.b, "{p:?}");
+        assert!((0..40).any(|x| paper.pixel(x, 30) != p), "it has grain");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_brush_can_paint_with_a_pattern_and_gradient_takes_a_fill() {
+        let document = play(
+            r##"{ "palette": { "a": "#FF0000", "b": "#0000FF" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 20, "hardness": 1,
+              "color": { "noise": { "scale": 10, "detail": 2, "colors": ["a", "b"], "seed": 1 } } },
+            { "cmd": "stroke", "points": [[10, 30], [190, 30]] },
+            { "cmd": "stroke", "points": [[10, 70], [190, 70]], "color": "#00FF00" },
+            { "cmd": "layer", "name": "Fill" },
+            { "cmd": "gradient", "area": { "rect": [0, 90, 200, 10] }, "fill": { "texture": "paper" } }
+            ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        let mut shades = std::collections::HashSet::new();
+        for x in 20..180 {
+            let p = layer.pixel(x, 30);
+            assert_eq!(p.a, 255);
+            assert_eq!(p.g, 0, "between red and blue: {p:?}");
+            shades.insert(p.r);
+        }
+        assert!(
+            shades.len() > 10,
+            "the stroke is patterned: {} shades",
+            shades.len()
+        );
+        assert_eq!(
+            layer.pixel(100, 70),
+            Rgba8::new(0, 255, 0, 255),
+            "a plain colour again"
+        );
+        let fill = &document.layers()[1].surface;
+        assert!(fill.pixel(100, 95).a == 255 && fill.pixel(100, 85).a == 0);
+    }
+
+    #[test]
+    fn pattern_mistakes_are_explained() {
+        let bad = |fill: &str| error(&noise_script(fill));
+        let e = bad(r##"{ "noise": { "scale": 0, "colors": ["a", "b"] } }"##);
+        assert!(e.contains("noise: `scale`"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10, "detail": 9, "colors": ["a", "b"] } }"##);
+        assert!(e.contains("`detail` is from 1 to 6"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10 } }"##);
+        assert!(e.contains("needs `colors`"), "{e}");
+        let e = bad(r##"{ "noise": { "scale": 10, "colors": ["a", "b"], "wobble": 1 } }"##);
+        assert!(e.contains("unknown field `wobble`"), "{e}");
+        let e = bad(r##"{ "texture": "linen" }"##);
+        assert!(e.contains("no built-in texture called \"linen\""), "{e}");
+        let e = bad(r##"{ "texture": { "file": "nope.png" } }"##);
+        assert!(e.contains("can't load \"nope.png\""), "{e}");
+        let e = bad(r##"{ "texture": { "scale": 2 } }"##);
+        assert!(e.contains("`file` is missing"), "{e}");
+        let e = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "gradient", "from": [0, 0], "fill": "#FF0000" } ] }"##,
+        );
+        assert!(e.contains("give `fill`, or `from`/`to`"), "{e}");
+        let e = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "gradient", "colors": ["#FF0000", "#0000FF"] } ] }"##,
+        );
+        assert!(e.contains("needs `from` and `to`"), "{e}");
+    }
+
+    // ---- Filters (phase 3, step 4) ---------------------------------------------
+
+    #[test]
+    fn a_filter_changes_a_layer_in_place_and_can_be_undone() {
+        let script = Script::parse(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "layer", "name": "A" },
+            { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" },
+            { "cmd": "layer", "name": "B" },
+            { "cmd": "rect", "x": 150, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" },
+            { "cmd": "filter", "layer": "A", "blur": 6, "adjust": { "saturation": -1 } } ] }"##,
+        )
+        .unwrap();
+        let options = PlayOptions {
+            record_undo: true,
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let undo = player.take_undo(&mut document);
+        let a = &document.layers()[0].surface;
+        assert!(a.pixel(70, 50).a > 200);
+        assert_eq!(
+            (a.pixel(70, 50).r, a.pixel(70, 50).g),
+            (a.pixel(70, 50).a, a.pixel(70, 50).a),
+            "grey now"
+        );
+        assert!(a.pixel(93, 50).a > 0, "blurred outwards");
+        let b = &document.layers()[1].surface;
+        assert_eq!(
+            b.pixel(170, 50),
+            Rgba8::new(255, 0, 0, 255),
+            "the other layer is untouched"
+        );
+        assert_eq!(b.pixel(193, 50).a, 0);
+        // The filter is one undo step that puts the layer back.
+        let mut group = CommandGroup::new("script", undo);
+        group.undo(&mut document);
+        let empty = document.layers()[0].surface.tile_count() == 0;
+        assert!(empty, "everything undone");
+        // And the report says the filter painted on A.
+        assert!(player.report().painted_by.values().any(|c| c.contains(&6)));
+    }
+
+    #[test]
+    fn a_filtered_group_draws_on_its_own_then_lands_on_the_layers() {
+        // A glow around a sun: the halo reaches beyond the shape, but a
+        // dark shape on the same layer from before is untouched.
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#000000" },
+            { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "#202020" },
+            { "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 10, "threshold": 0.5, "strength": 1 } }, "commands": [
+              { "cmd": "ellipse", "center": [100, 50], "radius": 15, "fill": "#FFFFC0" } ] } ] }"##,
+        );
+        let layer = &document.layers()[0].surface;
+        assert!(layer.pixel(118, 50).a > 0, "a halo outside the sun");
+        assert_eq!(
+            layer.pixel(20, 20),
+            Rgba8::new(0x20, 0x20, 0x20, 255),
+            "untouched"
+        );
+        assert_eq!(document.layers().len(), 1);
+        // A use with a shadow on two layers: one shadow of the whole
+        // silhouette, on the lower layer, under the drawing.
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "#FFD000" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "#FFD000" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            { "cmd": "use", "name": "duck", "translate": [100, 100],
+              "filter": { "shadow": { "offset": [20, 20], "blur": 0, "color": "#000000FF" } } } ] }"##,
+        );
+        let body = &document.layers()[0].surface;
+        let head = &document.layers()[1].surface;
+        assert_eq!(
+            body.pixel(100, 100),
+            Rgba8::new(255, 208, 0, 255),
+            "the body"
+        );
+        assert_eq!(
+            head.pixel(120, 80),
+            Rgba8::new(255, 208, 0, 255),
+            "the head"
+        );
+        assert_eq!(
+            body.pixel(145, 120),
+            Rgba8::BLACK,
+            "the body's shadow, on the body layer"
+        );
+        assert_eq!(
+            body.pixel(145, 85),
+            Rgba8::BLACK,
+            "the head's shadow too, on the body layer"
+        );
+        assert_eq!(
+            head.pixel(145, 85).a,
+            0,
+            "nothing on the head layer but the head"
+        );
+        assert_eq!(
+            body.pixel(125, 105),
+            Rgba8::new(255, 208, 0, 255),
+            "the shadow is under the body"
+        );
+        assert_eq!(
+            seen(&document, 125, 75),
+            Rgba8::new(255, 208, 0, 255),
+            "and under the head"
+        );
+        // Without the filter, the same pixels, minus the shadow.
+        let plain = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "#FFD000" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "#FFD000" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            { "cmd": "use", "name": "duck", "translate": [100, 100] } ] }"##,
+        );
+        assert_eq!(
+            plain.layers()[1].surface.pixel(120, 80),
+            head.pixel(120, 80)
+        );
+        assert_eq!(seen(&plain, 145, 120), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn from_below_flattens_the_picture_onto_a_layer() {
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "layer", "name": "Sky" },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 50, "fill": "#0000FF" },
+            { "cmd": "layer", "name": "Hidden", "visible": false },
+            { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 100, "fill": "#00FF00" },
+            { "cmd": "layer", "name": "Ground" },
+            { "cmd": "rect", "x": 0, "y": 50, "width": 100, "height": 50, "fill": "#FF0000" },
+            { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.5 },
+            { "cmd": "filter", "gradient_map": { "colors": ["#000000", "#FFFFFF"] } } ] }"##,
+        );
+        let mood = &document.layers()[3].surface;
+        assert_eq!(mood.pixel(50, 25).a, 255, "copied from below");
+        assert_eq!(mood.pixel(50, 75).a, 255);
+        assert_eq!(mood.pixel(50, 25).g, mood.pixel(50, 25).r, "mapped to grey");
+        assert!(
+            mood.pixel(50, 75).r > mood.pixel(50, 25).r,
+            "red is lighter than blue"
+        );
+        // Seen: half the original colour, half the grey.
+        let sky = seen(&document, 50, 25);
+        assert!(sky.b > sky.r && sky.r > 0, "{sky:?}");
+        assert!(sky.b < 255 && sky.b > 100, "half way: {sky:?}");
+        let bad = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "layer", "name": "A", "from": "above" } ] }"##,
+        );
+        assert!(bad.contains("`from` is \"below\""), "{bad}");
+    }
+
+    #[test]
+    fn filter_numbers_may_be_keyframes_and_scale_with_the_group() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "pulse": { "frames": 5, "commands": [
+            { "cmd": "group", "filter": { "shadow": { "offset": { "keys": [[0, [0, 0]], [4, [40, 0]]] }, "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" } ] } ] } } }"##;
+        let frame = play_frame(script, Some("pulse"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "filter": { "shadow": { "offset": [20, 0], "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 50, "y": 30, "width": 40, "height": 40, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_eq!(seen(&by_hand, 100, 50), Rgba8::BLACK, "offset 20");
+        // In a group scaled by 2, the offset doubles.
+        let scaled = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "scale": 2, "filter": { "shadow": { "offset": [20, 0], "blur": 0, "color": "#000000FF" } }, "commands": [
+              { "cmd": "rect", "x": 25, "y": 15, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(seen(&scaled, 120, 50), Rgba8::BLACK, "offset 40");
+        assert_eq!(seen(&scaled, 70, 50), Rgba8::new(255, 0, 0, 255));
+    }
+
+    #[test]
+    fn filter_mistakes_are_explained() {
+        let base = r##"{ "palette": { "k": "#000000" }, "commands": [
+            { "cmd": "canvas", "width": 20, "height": 20 CANVAS },
+            { "cmd": "rect", "x": 5, "y": 5, "width": 5, "height": 5, "fill": "k" },
+            FILTER ] }"##;
+        let plain = |filter: &str| error(&base.replace("CANVAS", "").replace("FILTER", filter));
+        let e = plain(r##"{ "cmd": "filter" }"##);
+        assert!(e.contains("give at least one of `blur`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "blur": -1 }"##);
+        assert!(e.contains("`blur`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "adjust": { "saturation": 3 } }"##);
+        assert!(e.contains("`saturation` is from -1 to 1"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "glow": { "size": 3 } }"##);
+        assert!(e.contains("unknown field `size`"), "{e}");
+        let e = plain(r##"{ "cmd": "filter", "layer": "Nope", "blur": 2 }"##);
+        assert!(e.contains("Nope"), "{e}");
+        let e = plain(r##"{ "cmd": "group", "filter": { "wobble": 2 }, "commands": [] }"##);
+        assert!(e.contains("`filter`: unknown field `wobble`"), "{e}");
+        // A pixel canvas refuses anything that melts pixels.
+        let pixel = |filter: &str| {
+            error(
+                &base
+                    .replace("CANVAS", r##", "pixel": { "supersample": 1 }"##)
+                    .replace("FILTER", filter),
+            )
+        };
+        let e = pixel(r##"{ "cmd": "filter", "blur": 2 }"##);
+        assert!(e.contains("a pixel canvas can't take blur"), "{e}");
+        let e = pixel(r##"{ "cmd": "filter", "shadow": { "blur": 2 } }"##);
+        assert!(e.contains("can't take a shadow with blur"), "{e}");
+        let ok = base
+            .replace("CANVAS", r##", "pixel": { "supersample": 1 }"##)
+            .replace("FILTER", r##"{ "cmd": "filter", "shadow": { "offset": [2, 2], "blur": 0, "color": "k" }, "adjust": { "brightness": 0.1 } }"##);
+        play(&ok);
+    }
+
+    // ---- Review fixes after phase 3, step 4 -----------------------------------
+
+    #[test]
+    fn a_symbol_looks_the_same_whatever_the_brush_was() {
+        let script = |before: &str| {
+            format!(
+                r##"{{ "seed": 3, "commands": [
+                {{ "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "define", "name": "coin", "commands": [
+                  {{ "cmd": "ellipse", "center": [0, 0], "radius": 20, "fill": "#F2C230", "outline": "#1A1410", "outline_size": 3 }},
+                  {{ "cmd": "line", "from": [-10, 0], "to": [10, 0] }},
+                  {{ "cmd": "stroke", "points": [[-8, 8], [8, 8]] }} ] }},
+                {before}
+                {{ "cmd": "use", "name": "coin", "translate": [60, 60] }} ] }}"##
+            )
+        };
+        let plain = play(&script(""));
+        let hairy = play(&script(
+            r##"{ "cmd": "brush", "tip": "bristle", "size": 40, "color": "#FF0000", "opacity": 0.3,
+                 "dynamics": { "follow": true, "size": 0.5, "scatter": 10, "hue": 90 } },"##,
+        ));
+        assert_eq!(
+            png(&plain),
+            png(&hairy),
+            "the brush before a use doesn't reach into it"
+        );
+        let patterned = play(&script(
+            r##"{ "cmd": "brush", "color": { "noise": { "scale": 5, "colors": ["#FF0000", "#0000FF"] } }, "hardness": 0 },"##,
+        ));
+        assert_eq!(png(&plain), png(&patterned));
+        // A stamp's copies too.
+        let stamped = |before: &str| {
+            play(&format!(
+                r##"{{ "commands": [
+                {{ "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "define", "name": "coin", "commands": [
+                  {{ "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "#F2C230", "outline": "#1A1410", "outline_size": 2 }} ] }},
+                {before}
+                {{ "cmd": "stamp", "symbol": "coin", "points": [[20, 60], [100, 60]], "spacing": 40 }} ] }}"##
+            ))
+        };
+        assert_eq!(
+            png(&stamped("")),
+            png(&stamped(
+                r##"{ "cmd": "brush", "tip": "chalk", "size": 30, "dynamics": { "scatter": 8 } },"##
+            ))
+        );
+        // After the use, the brush from before is back.
+        let after = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "dot", "commands": [
+              { "cmd": "brush", "size": 2, "color": "#00FF00" },
+              { "cmd": "stroke", "points": [[0, 0]] } ] },
+            { "cmd": "brush", "size": 30, "color": "#FF0000" },
+            { "cmd": "use", "name": "dot", "translate": [30, 30] },
+            { "cmd": "stroke", "points": [[90, 90]] } ] }"##,
+        );
+        assert_eq!(seen(&after, 90, 90), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(
+            seen(&after, 100, 90),
+            Rgba8::new(255, 0, 0, 255),
+            "30 wide again"
+        );
+        let own = seen(&after, 30, 30);
+        assert!(
+            own.g == 255 && own.r < 80,
+            "the symbol's own brush: {own:?}"
+        );
+    }
+
+    #[test]
+    fn brush_changes_stay_inside_a_group_and_reset_goes_back_to_the_plain_brush() {
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 10, "color": "#FF0000" },
+            { "cmd": "group", "commands": [
+              { "cmd": "brush", "size": 40, "color": "#0000FF", "tip": "square" },
+              { "cmd": "stroke", "points": [[30, 30]] } ] },
+            { "cmd": "stroke", "points": [[90, 30]] },
+            { "cmd": "brush", "reset": true, "color": "#00FF00" },
+            { "cmd": "stroke", "points": [[60, 90]] } ] }"##,
+        );
+        assert_eq!(seen(&document, 30, 30), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(
+            seen(&document, 90, 30),
+            Rgba8::new(255, 0, 0, 255),
+            "red and small again"
+        );
+        assert_eq!(seen(&document, 98, 30), Rgba8::WHITE);
+        // Reset: the plain brush (24 wide), then green.
+        assert_eq!(seen(&document, 60, 90), Rgba8::new(0, 255, 0, 255));
+        assert_eq!(
+            seen(&document, 68, 90),
+            Rgba8::new(0, 255, 0, 255),
+            "24 wide"
+        );
+        assert_eq!(seen(&document, 74, 90), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn a_part_that_paints_most_of_the_canvas_with_small_shapes_is_a_warning() {
+        let warnings_of = |text: &str| {
+            let script = Script::parse(text).unwrap();
+            let mut player = Player::new(script, PlayOptions::default()).unwrap();
+            let mut document = player.create_document().unwrap();
+            player.run(&mut document, |_, _| {}).unwrap();
+            player.report().warnings
+        };
+        let warnings = warnings_of(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 400, "height": 400, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "pad", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 12, "fill": "#308030" },
+              { "cmd": "group", "mask": { "not": { "circle": [8, 0, 4] } }, "commands": [
+                { "cmd": "gradient", "from": [-12, -12], "to": [12, 12], "colors": ["#FFFFFF60", "transparent"] } ] } ] },
+            { "cmd": "use", "name": "pad", "translate": [200, 200] } ] }"##,
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with(
+                    "command 3 (use \"pad\") painted 100% of the canvas, but its shapes cover 0%"
+                ) && w.contains("without an area, inside a mask with \"not\"?")),
+            "{warnings:?}"
+        );
+        // A whole-canvas gradient in a named group is fine (no small shapes
+        // to mislead), and so is a part whose shapes are big.
+        let fine = warnings_of(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 400, "height": 400, "paper": "#FFFFFF" },
+            { "cmd": "group", "name": "sky", "commands": [
+              { "cmd": "gradient", "from": [0, 0], "to": [0, 400], "colors": ["#2040A0", "#FFFFFF"] } ] },
+            { "cmd": "group", "name": "ground", "commands": [
+              { "cmd": "rect", "x": 0, "y": 200, "width": 400, "height": 200, "fill": "#308030" },
+              { "cmd": "gradient", "from": [0, 200], "to": [0, 400], "colors": ["#00000040", "transparent"] } ] } ] }"##,
+        );
+        assert!(fine.iter().all(|w| !w.contains("painted")), "{fine:?}");
+    }
+
+    // ---- Outlines and rim light (phase 3, step 5) --------------------------------
+
+    const TWO_LAYER_DUCK: &str = r##"{ "palette": { "ink": "#000000", "body": "#FFD000", "cream": "#FFFFFF" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 200, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "duck", "commands": [
+              { "cmd": "layer", "name": "Body" },
+              { "cmd": "rect", "x": -30, "y": -10, "width": 60, "height": 40, "fill": "body" },
+              { "cmd": "layer", "name": "Head" },
+              { "cmd": "rect", "x": 10, "y": -40, "width": 30, "height": 40, "fill": "body" } ] },
+            { "cmd": "layer", "name": "Body" },
+            { "cmd": "layer", "name": "Head" },
+            USE ] }"##;
+
+    #[test]
+    fn an_outline_goes_around_the_whole_silhouette_behind_it() {
+        let document = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "outline": { "color": "ink", "size": 4 } }"##,
+        ));
+        let body = &document.layers()[0].surface;
+        let head = &document.layers()[1].surface;
+        assert_eq!(
+            body.pixel(67, 100),
+            Rgba8::BLACK,
+            "around the body, on the body layer"
+        );
+        assert_eq!(
+            body.pixel(125, 57),
+            Rgba8::BLACK,
+            "around the head, also on the body layer"
+        );
+        assert_eq!(head.pixel(125, 57).a, 0);
+        assert_eq!(
+            seen(&document, 100, 100),
+            Rgba8::new(255, 208, 0, 255),
+            "the body on top"
+        );
+        assert_eq!(
+            seen(&document, 115, 85),
+            Rgba8::new(255, 208, 0, 255),
+            "no line where head meets body"
+        );
+        assert_eq!(seen(&document, 125, 75), Rgba8::new(255, 208, 0, 255));
+        assert_eq!(seen(&document, 60, 100), Rgba8::WHITE, "not 10 pixels out");
+        // With a rim from the right: light along the inside of the right
+        // edges, on the top layer, over the drawing.
+        let lit = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "outline": { "color": "ink", "size": 2, "rim": { "color": "cream", "size": 2, "angle": 0 } } }"##,
+        ));
+        assert_eq!(
+            seen(&lit, 129, 110),
+            Rgba8::WHITE,
+            "the body's right edge, inside"
+        );
+        assert_eq!(seen(&lit, 139, 80), Rgba8::WHITE, "the head's right edge");
+        assert_eq!(
+            seen(&lit, 71, 110),
+            Rgba8::new(255, 208, 0, 255),
+            "the left edge is not lit"
+        );
+        assert_eq!(
+            lit.layers()[1].surface.pixel(129, 110),
+            Rgba8::WHITE,
+            "the rim is on the top layer"
+        );
+        // A mirrored duck is outlined where it is.
+        let mirrored = play(&TWO_LAYER_DUCK.replace(
+            "USE",
+            r##"{ "cmd": "use", "name": "duck", "translate": [100, 100], "mirror": "x", "outline": { "color": "ink", "size": 4 } }"##,
+        ));
+        assert_eq!(seen(&mirrored, 75, 57), Rgba8::BLACK);
+        assert_eq!(seen(&mirrored, 125, 57), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn outline_sizes_may_be_keyframes_and_pixel_outlines_are_whole_pixels() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "grow": { "frames": 5, "commands": [
+            { "cmd": "group", "outline": { "color": "#000000", "size": { "keys": [[0, 0], [4, 8]] } }, "commands": [
+              { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] } } }"##;
+        let frame = play_frame(script, Some("grow"), 2).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "group", "outline": { "color": "#000000", "size": 4 }, "commands": [
+              { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" } ] } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        assert_eq!(seen(&by_hand, 37, 50), Rgba8::BLACK);
+        let pixel = play(
+            r##"{ "palette": { "k": "#000000", "r": "#FF0000" }, "commands": [
+            { "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 1 } },
+            { "cmd": "group", "outline": { "color": "k", "size": 2, "rim": { "color": "r", "size": 1, "angle": 0 } }, "commands": [
+              { "cmd": "rect", "x": 10, "y": 10, "width": 10, "height": 10, "fill": "r" } ] } ] }"##,
+        );
+        let layer = &pixel.layers()[0].surface;
+        for y in 0..32 {
+            for x in 0..32 {
+                let a = layer.pixel(x, y).a;
+                assert!(a == 0 || a == 255, "({x}, {y}): {a}");
+            }
+        }
+        assert_eq!(layer.pixel(8, 15), Rgba8::BLACK);
+        assert_eq!(layer.pixel(7, 15).a, 0);
+        // The filter command takes an outline too.
+        let filtered = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 40, "y": 40, "width": 20, "height": 20, "fill": "#FF0000" },
+            { "cmd": "filter", "outline": { "color": "#0000FF", "size": 3 } } ] }"##,
+        );
+        assert_eq!(seen(&filtered, 38, 50), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(seen(&filtered, 50, 50), Rgba8::new(255, 0, 0, 255));
+        let bad = error(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "group", "outline": { "width": 3 }, "commands": [] } ] }"##,
+        );
+        assert!(bad.contains("`outline`: unknown field `width`"), "{bad}");
+    }
+
+    // ---- include (phase 3, step 6) -----------------------------------------------
+
+    /// A folder with library files, for include tests.
+    fn library() -> std::path::PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "art-app-include-{}-{}",
+            std::process::id(),
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "-")
+        ));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("parts")).unwrap();
+        std::fs::write(
+            folder.join("parts/cloud.json"),
+            r##"{ "palette": { "cloud": "#FFFFFF", "shade": "#C0C8D8" }, "commands": [
+              { "cmd": "include", "file": "puff.json" },
+              { "cmd": "define", "name": "cloud", "params": { "puff": 1 }, "commands": [
+                { "cmd": "group", "scale": "$puff", "commands": [
+                  { "cmd": "use", "name": "puff", "translate": [-20, 0] },
+                  { "cmd": "use", "name": "puff", "translate": [20, 0] } ] } ] } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/puff.json"),
+            r##"{ "palette": { "cloud": "#FFFFFF" }, "commands": [
+              { "cmd": "define", "name": "puff", "commands": [
+                { "cmd": "ellipse", "center": [0, 0], "radius": 24, "fill": "cloud" } ] } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/loop-a.json"),
+            r##"{ "commands": [ { "cmd": "include", "file": "loop-b.json" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/loop-b.json"),
+            r##"{ "commands": [ { "cmd": "include", "file": "loop-a.json" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/paints.json"),
+            r##"{ "commands": [ { "cmd": "rect", "x": 0, "y": 0, "width": 5, "height": 5, "fill": "#000000" } ] }"##,
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("parts/broken.json"),
+            r##"{ "commands": [ { "cmd": "define", "name": "bad", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "nope" } ] } ] }"##,
+        )
+        .unwrap();
+        folder
+    }
+
+    fn play_in(folder: &std::path::Path, text: &str) -> Result<(Document, Report), ScriptError> {
+        let script = Script::parse(text)?;
+        let options = PlayOptions {
+            folder: Some(folder.to_path_buf()),
+            ..PlayOptions::default()
+        };
+        let mut player = Player::new(script, options)?;
+        let mut document = player.create_document()?;
+        player.run(&mut document, |_, _| {})?;
+        Ok((document, player.report()))
+    }
+
+    #[test]
+    fn include_brings_in_defines_and_palette_from_another_file_and_its_includes() {
+        let folder = library();
+        let (document, report) = play_in(
+            &folder,
+            r##"{ "palette": { "sky": "#8EC1E6" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "sky" },
+            { "cmd": "include", "file": "parts/cloud.json" },
+            { "cmd": "use", "name": "cloud", "translate": [100, 50], "with": { "puff": 0.5 } },
+            { "cmd": "rect", "x": 0, "y": 90, "width": 200, "height": 10, "fill": "shade" } ] }"##,
+        )
+        .unwrap();
+        assert_eq!(
+            seen(&document, 100, 50),
+            Rgba8::WHITE,
+            "the cloud, from the include"
+        );
+        assert_eq!(
+            seen(&document, 100, 95),
+            Rgba8::new(0xC0, 0xC8, 0xD8, 255),
+            "its colour"
+        );
+        assert_eq!(seen(&document, 100, 20), Rgba8::new(0x8E, 0xC1, 0xE6, 255));
+        // Included symbols and colours aren't "never used" (a library holds more).
+        let unused = unused_warnings(&[&report]);
+        assert!(unused.is_empty(), "{unused:?}");
+        assert!(
+            report.parts.iter().any(|p| p
+                .path
+                .contains("use \"cloud\" (from parts/cloud.json, command 2)")),
+            "{:?}",
+            report.parts
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn include_mistakes_name_the_files() {
+        let folder = library();
+        let error_in = |text: &str| play_in(&folder, text).unwrap_err().to_string();
+        let script = |include: &str, rest: &str| {
+            format!(
+                r##"{{ "commands": [ {{ "cmd": "canvas", "width": 50, "height": 50 }},
+                {{ "cmd": "include", "file": "{include}" }} {rest} ] }}"##
+            )
+        };
+        let missing = error_in(&script("parts/nope.json", ""));
+        assert!(
+            missing.contains("can't read \"parts/nope.json\""),
+            "{missing}"
+        );
+        let looped = error_in(&script("parts/loop-a.json", ""));
+        assert!(looped.contains("includes itself"), "{looped}");
+        let paints = error_in(&script("parts/paints.json", ""));
+        assert!(
+            paints.contains(
+                "parts/paints.json: command 1 (rect): an included file holds only `define`"
+            ),
+            "{paints}"
+        );
+        let twice = error_in(&script(
+            "parts/cloud.json",
+            r##", { "cmd": "define", "name": "puff", "commands": [] }"##,
+        ));
+        assert!(
+            twice.contains(
+                "\"puff\" was already defined by parts/cloud.json > puff.json (command 1)"
+            ),
+            "{twice}"
+        );
+        let twice_included = error_in(&script(
+            "parts/cloud.json",
+            r##", { "cmd": "include", "file": "parts/puff.json" }"##,
+        ));
+        assert!(twice_included.contains("defines \"puff\", which is also defined by parts/cloud.json > puff.json (command 1)"), "{twice_included}");
+        let clash = error_in(
+            r##"{ "palette": { "cloud": "#000000" }, "commands": [ { "cmd": "canvas", "width": 50, "height": 50 },
+            { "cmd": "include", "file": "parts/puff.json" } ] }"##,
+        );
+        assert!(
+            clash.contains(
+                "palette colour \"cloud\" is also defined, differently, by the script itself"
+            ),
+            "{clash}"
+        );
+        let inside = error_in(&script(
+            "parts/broken.json",
+            r##", { "cmd": "use", "name": "bad" }"##,
+        ));
+        assert!(
+            inside.contains("(use \"bad\" (from parts/broken.json, command 1)) > 1 (ellipse)"),
+            "{inside}"
+        );
+        let nested = Script::parse(
+            r##"{ "commands": [ { "cmd": "canvas", "width": 50, "height": 50 },
+            { "cmd": "group", "commands": [ { "cmd": "include", "file": "x.json" } ] } ] }"##,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            nested.contains("`include` only works at the top level"),
+            "{nested}"
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    // ---- Phase 2 review fixes (phase 3, step 7) ---------------------------------
+
+    #[test]
+    fn keys_may_be_in_seconds_and_animations_keep_their_written_order() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": {
+            "zebra": { "frames": 24, "fps": 12, "commands": [
+              { "cmd": "group", "translate": { "keys": [[0, [0, 0]], ["1.5s", [60, 0]]] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] } ] },
+            "apple": { "frames": 24, "fps": 12, "time": "seconds", "commands": [
+              { "cmd": "group", "translate": { "keys": [[0, [0, 0]], [1.5, [60, 0]]], "shift": "0.5s" }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] } ] } } }"##;
+        let parsed = Script::parse(script).unwrap();
+        let names: Vec<&String> = parsed.animations.keys().collect();
+        assert_eq!(names, ["zebra", "apple"], "as written, not alphabetical");
+        assert!(parsed.animations["apple"].seconds);
+        // "1.5s" at 12 fps is frame 18: half way at frame 9.
+        let frame = play_frame(script, Some("zebra"), 9).unwrap();
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 30, "y": 40, "width": 10, "height": 10, "fill": "#000000" } ] }"##,
+        );
+        assert_eq!(png(&frame), png(&by_hand));
+        // In seconds, with a shift of half a second (6 frames): frame 15 is half way.
+        let shifted = play_frame(script, Some("apple"), 15).unwrap();
+        assert_eq!(png(&shifted), png(&by_hand));
+        // The first animation written is the one played by default.
+        let default = play_with(
+            script,
+            PlayOptions {
+                frame: 9,
+                ..PlayOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(png(&default), png(&by_hand));
+        let bad = Script::parse(&script.replace("\"time\": \"seconds\"", "\"time\": \"minutes\""))
+            .unwrap_err();
+        assert!(bad.to_string().contains("`time` is \"frames\""), "{bad}");
+        let twice = Script::parse(&script.replace("\"apple\"", "\"zebra\"")).unwrap_err();
+        assert!(twice.to_string().contains("written twice"), "{twice}");
+        let bad_key = play_frame(&script.replace("\"1.5s\"", "\"soon\""), Some("zebra"), 0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            bad_key.contains("seconds like \"1.5s\", not \"soon\""),
+            "{bad_key}"
+        );
+    }
+
+    #[test]
+    fn seed_keyframes_hold_until_the_next_key() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" } ],
+          "animations": { "twinkle": { "frames": 6, "commands": [
+            { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000",
+              "seed": { "keys": [[0, 1], [3, 2]] } } ] } } }"##;
+        let frames: Vec<Vec<u8>> = (0..6)
+            .map(|f| png(&play_frame(script, Some("twinkle"), f).unwrap()))
+            .collect();
+        assert_eq!(frames[0], frames[1], "seed 1 holds");
+        assert_eq!(frames[1], frames[2]);
+        assert_ne!(frames[2], frames[3], "the seed changes at the key");
+        assert_eq!(frames[3], frames[5], "seed 2 holds");
+        let by_hand = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000", "seed": 2 } ] }"##,
+        );
+        assert_eq!(frames[4], png(&by_hand));
     }
 }

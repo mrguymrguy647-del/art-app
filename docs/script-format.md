@@ -117,6 +117,9 @@ another layer). Then applies any settings given:
 | `opacity` | 0 to 1. |
 | `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. |
 | `visible` | `true` / `false`. |
+| `clip` | `true`: a clipping layer, shown only where the nearest unclipped layer below it has paint. See [Clipping and masks](#clipping-and-masks). |
+| `lock` | `true`: the alpha lock. Painting only recolours what's already on the layer; the eraser does nothing. |
+| `from` | `"below"`: fill the layer with everything below it, flattened (hidden layers left out, no paper), for a [filter](#filters) over the whole picture. |
 | `above` / `below` | Put the layer just above / below another layer (also moves an existing layer). |
 
 ### `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`
@@ -155,13 +158,17 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 
 | Field | |
 |---|---|
-| `color` | Brush colour. A colour's opacity (`#RRGGBBAA`) multiplies the brush opacity. |
+| `color` | Brush colour. A colour's opacity (`#RRGGBBAA`) multiplies the brush opacity. Or a pattern, `{ "noise": {...} }` / `{ "texture": ... }`: strokes get the pattern's colour pixel by pixel (see [Noise and texture](#noise-and-texture)). |
 | `size` | Diameter in pixels at full pressure (above 0, up to 1000). |
 | `opacity` | The most opaque one stroke gets. Going over the same spot within a stroke never gets darker than this. |
 | `flow` | How much paint each dab adds. Below 1, paint builds up where dabs overlap, like an airbrush. |
 | `hardness` | 1 = crisp edge, 0 = very soft edge. |
 | `spacing` | Distance between dabs as a fraction of the size (0.01 to 5). Default 0.1. |
 | `pressure_size`, `pressure_opacity`, `pressure_flow` | Which settings point pressure changes (`true`/`false`). |
+| `reset` | `true`: back to the plain brush first (round, 24 wide, dark grey, no dynamics), then any settings given. |
+| `tip` | The dab's shape: `"round"` (default), `"square"`, `"bristle"`, `"chalk"`, `"leaf"`, `"grass"`, `"sparkle"`, or `{ "file": "tips/splat.png" }`. See [Brushes with character](#brushes-with-character). |
+| `angle` | How far the tip is turned, degrees clockwise. |
+| `dynamics` | How dabs vary along a stroke (see below). Replaces the dynamics as a whole: `{}` turns them all off. |
 
 Only the settings given change.
 
@@ -219,7 +226,7 @@ A smooth curve through all the points (it never overshoots or loops), drawn with
 | `center` | (`ellipse`) The middle. |
 | `points` | (`polygon`) At least 3 corners. Crossing edges are fine: everything enclosed is filled. |
 | `rotation` | (`rect`, `ellipse`) Degrees, clockwise, around the middle. |
-| `fill` | A colour or a [gradient](#gradients-as-fills). Edges are smooth (anti-aliased). |
+| `fill` | A colour, a [gradient](#gradients-as-fills), [noise or a texture](#noise-and-texture). Edges are smooth (anti-aliased). |
 | `outline` | A colour: draws the edge with the brush (`outline_size` sets its size). |
 | `opacity` | 0 to 1, for both. |
 | `erase` | `true`: cut the shape out of the layer instead of painting it. |
@@ -257,6 +264,7 @@ Fills the area around `at` whose colour is close to the colour there, like the p
 | `colors` | Colours spread evenly from start to end. |
 | `stops` | Or colours at chosen places: `[[position, colour], ...]`, positions 0 to 1. |
 | `area` | Only inside this [area](#areas). Without it, the whole layer is covered. |
+| `fill` | Instead of `from`/`to`/`colors`: any fill (a colour, a gradient object, [noise or a texture](#noise-and-texture)) over the area or the whole layer. |
 | `opacity` | 0 to 1. |
 | `erase` | `true`: fade the layer out instead (the gradient's opacity says how much). |
 
@@ -272,7 +280,7 @@ A shape's (or closed path's) `fill` can be a gradient instead of a colour:
 ```
 
 It takes `gradient` (`"linear"` or `"radial"`), `from`, `to`, and `colors` or `stops`, in canvas
-pixels.
+pixels. A fill can also be [noise or a texture](#noise-and-texture).
 
 ### `hatch` — strokes in one direction
 
@@ -381,6 +389,9 @@ of `hatch` and `scatter`.
 | `origin` | The point the group mirrors, resizes and turns around, in the group's own coordinates. Default `[0, 0]`. |
 | `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
+| `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
+| `filter` | Filters on what the group draws, on its own, before it lands on the layers: `{ "glow": {...} }`, `{ "shadow": {...} }`... See [Filters](#filters). |
+| `outline` | A line around the silhouette of everything the group draws, behind it, with optional rim light: `{ "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } }`. See [Outlines for whole shapes](#outlines-for-whole-shapes). |
 
 The order is always the same: around `origin`, first **mirror**, then **scale**, then **rotate**;
 then **translate**. So `"mirror": "x", "origin": [64, 0]` flips a drawing left to right around
@@ -413,7 +424,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 | | |
 |---|---|
 | `define` | `name` and `commands`. Only at the top level of the script (not inside a group, symbol or repeat), each name once, and before it's used. |
-| `use` | `name`, the group fields above, and `colors`. |
+| `use` | `name`, the group fields above (`mask`, `filter` and `outline` too), and `colors`. |
 | `colors` | Colours to swap for this use: `{ "yellow": "#C04040" }` paints red wherever the symbol paints the palette colour `yellow`. The left side can also be a hex code (`"#F2C230"`). For enemy variants, team colours and so on. |
 
 - **Symbols can use other symbols.** A symbol using itself, even through others, is an error:
@@ -424,9 +435,31 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
   `Shadow` layers (created if missing). A symbol without `layer` commands paints on the layer
   selected when it's used. After a `use`, the brush and the selected layer are back to what they
   were before it.
+- **A symbol starts from the plain brush**, whatever the brush was before the `use` (so it looks
+  the same wherever it's used); set its own `brush` inside if it needs one. After the `use` the
+  brush from before is back. Brush changes inside a `group` stay inside it too.
 - **Random patterns** (jitter, scatter, hatch) in a symbol are the same every time it's used.
 - Mistakes inside a symbol name the `use` and the symbol's command:
   `command 9 (use "duck") > 2 (ellipse): unknown colour "yelow"`.
+
+## `include` — symbols from another file
+
+```json
+{ "cmd": "include", "file": "../skills/art-app/library/cloud.json" }
+{ "cmd": "use", "name": "cloud", "translate": [200, 80], "with": { "puff": 1.3 } }
+```
+
+`include` (top level only) reads another script's `define`s and palette entries, not its
+commands or animations. The path is relative to the script; an included file may include others,
+relative to itself. A file that includes itself, directly or through others, is a mistake that
+shows the chain; a symbol or colour defined twice says both files; mistakes inside an included
+symbol name it (`command 9 (use "cloud" (from cloud.json, command 2)) > 3 (ellipse): ...`).
+Included symbols and colours aren't "never used" warnings: a library holds more than one picture
+needs.
+
+**The library** in `skills/art-app/library/` holds ready parts, each with parameters, an example
+script and a preview: cloud, water, grass, reed, tree, lily pad and the duck. Its `README.md`
+lists them.
 
 ## `repeat` — copies with a step
 
@@ -466,6 +499,234 @@ parameter, round and round if there are more copies than values:
 ] }
 ```
 
+## Brushes with character
+
+```json
+{ "cmd": "brush", "tip": "chalk", "size": 18, "color": "rock",
+  "dynamics": { "follow": true, "size": 0.3, "angle": 20, "opacity": 0.4, "scatter": 3, "hue": 4, "lightness": 0.08, "saturation": 0.1 } }
+{ "cmd": "brush", "tip": { "file": "tips/splat.png" } }
+```
+
+A brush's **tip** is the shape of each dab. The built-in tips are made by the engine (the same
+on every computer): `round` is the plain brush; `square` is hard, for pixels and blocks;
+`bristle` is a row of bristles across the stroke, streaky like a flat brush; `chalk` is grainy;
+`leaf` points along the stroke; `grass` stands up; `sparkle` is a four-pointed star with a glow.
+`{ "file": "..." }` is a greyscale PNG, relative to the script: white paints, black doesn't,
+see-through is nothing. A dab stamps the tip scaled to `size`, turned by `angle`, and
+`hardness` softens its edge as before. Tips work on a pixel canvas too (they come out crisp).
+
+**Dynamics** make each dab a little different, from the stroke's `seed` (so the same script
+always paints the same picture). `follow` turns the tip along the stroke (a leaf tip paints a
+vine); the rest are the most each dab may vary, either way:
+
+| | |
+|---|---|
+| `size` | A fraction: 0.3 is from 70% to 130% of the size. |
+| `angle` | Degrees (0 to 180). |
+| `opacity` | A fraction. |
+| `scatter` | Pixels off the line (scaled with the brush in a group). |
+| `hue` | Degrees around the colour wheel (0 to 180). |
+| `lightness`, `saturation` | Fractions. |
+
+The brush carries its tip and dynamics, so `stroke`, `line`, `path`, `hatch` and `scatter`
+all use them (`scatter`'s own `size`, `colors` and `angle` still win; its dabs with a shaped
+tip are turned within `angle`).
+
+### `stamp` — copies along a path
+
+```json
+{ "cmd": "stamp", "symbol": "blade", "points": [[20, 300], [300, 290], [620, 310]], "spacing": 9,
+  "size": [0.8, 1.3], "angle": [-10, 10], "colors": ["grass1", "grass2"], "seed": 4 }
+{ "cmd": "stamp", "tip": "leaf", "points": [[100, 100], [160, 40], [240, 60]], "spacing": 14, "size": [10, 16], "color": "leaf" }
+```
+
+Puts copies of a `symbol`, or single dabs of a `tip` (default: the brush's own), along a smooth
+path through `points`, one every `spacing` units, each turned to follow the path. A row of
+grass, a vine, a string of lights, pebbles along a shore.
+
+| Field | |
+|---|---|
+| `symbol` / `tip` | What to put down: one or the other. A symbol copy is a `use` (drawn around `[0, 0]`); a tip copy is one dab with the brush's settings. |
+| `points`, `spacing` | The path and the distance between copies. Both may be keyframes. |
+| `size` | A number or `[min, max]` to pick from. For a symbol a scale (default 1); for a tip pixels across (default: the brush size). |
+| `angle` | Degrees added to each copy's turn: a number or `[min, max]`. |
+| `follow` | `true` (default): turned along the path. `false`: only `angle`. |
+| `scatter` | Copies land up to this many units off the path. |
+| `color` / `colors` | One colour, or colours picked from per copy. For a symbol it goes to the symbol's `color` parameter (`"params": { "color": "..." }` in its define). |
+| `opacity` | For tip dabs. |
+| `with` | Values for the symbol's other parameters (the same for every copy). |
+| `seed` | Which random picks. |
+
+## Noise and texture
+
+```json
+{ "cmd": "rect", "x": 0, "y": 200, "width": 640, "height": 160,
+  "fill": { "noise": { "scale": 60, "detail": 3, "contrast": 1.3, "colors": ["water_dark", "water_light"], "offset": [0, 0], "seed": 2 } } }
+{ "cmd": "gradient", "area": { "rect": [0, 0, 640, 200] },
+  "fill": { "noise": { "scale": 180, "detail": 4, "stops": [[0, "sky"], [0.6, "sky"], [1, "cloud"]] } } }
+{ "cmd": "layer", "name": "Grain", "blend": "multiply", "opacity": 0.25 }
+{ "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 360, "fill": { "texture": "paper" } }
+{ "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 360, "fill": { "texture": { "file": "textures/canvas.png", "scale": 0.5 } } }
+{ "cmd": "brush", "size": 30, "color": { "noise": { "scale": 40, "colors": ["grass1", "grass2"] } } }
+```
+
+A **noise** fill is smooth, natural-looking randomness (clouds, water, rock, grass, skin): its
+value at each point, 0 to 1, picks a colour from `colors` (spread evenly) or `stops`.
+
+| | |
+|---|---|
+| `scale` | Pixels per wave of the coarsest layer (default 64). |
+| `detail` | Layers of finer noise, 1 to 6 (default 3): more is rougher. |
+| `contrast` | 1 = as is (default); more pushes values to the two ends, less towards the middle. |
+| `offset` | `[x, y]`: moves the pattern. |
+| `seed` | Which pattern (mixed with the script's `seed`). |
+
+A **texture** is a picture tiled over the area: `"paper"` (built-in, light grain for a paper
+look on a `multiply` or `overlay` layer at low opacity), or a PNG `file` relative to the script
+with `scale` (2 = twice as big), `offset`, and optionally `colors`/`stops` to tint it: the
+picture's lightness picks the colour (its see-through parts stay see-through).
+
+- Noise and textures go anywhere a fill goes (shapes, closed paths, `gradient` with a `fill`,
+  a brush `color`), through clipping and masks like any paint, and on a pixel canvas (the vote
+  snaps them to the palette, which gives a dithered texture for free).
+- **They live in the coordinates of the group they're written in**, like the shapes there: a
+  textured rock placed by a `use` or a `group` keeps its grain as it's moved, resized or turned,
+  and a walking duck doesn't swim through its texture. (`scale` and `offset` are in those
+  coordinates too.) For deliberate drift (clouds, water), give `offset` keyframes; `scale` and
+  `contrast` may be keyframes as well.
+- A brush `color` pattern is sampled where the stroke lands; the next plain `color` (on the
+  brush or on a drawing command) switches back to one colour.
+
+## Clipping and masks
+
+Three ways to keep paint where it belongs, so shading, light and texture stay inside a shape.
+
+**A clipping layer** (`"clip": true`) is shown only where the nearest layer below it that isn't
+itself clipped (its *base*) has paint. Several clipping layers can sit on one base. The paint
+isn't limited, only what's shown: the hatch below covers the whole canvas, but only the duck's
+part of it is seen, and if the duck is repainted or moved later, the shading follows.
+
+```json
+{ "cmd": "layer", "name": "Duck" }
+{ "cmd": "use", "name": "duck", "translate": [64, 96] }
+{ "cmd": "layer", "name": "Duck shading", "clip": true, "blend": "multiply" }
+{ "cmd": "hatch", "area": { "rect": [0, 0, 128, 128] }, "color": "shade", "angle": 40, "opacity": 0.4 }
+{ "cmd": "layer", "name": "Duck light", "clip": true, "blend": "screen" }
+{ "cmd": "gradient", "from": [90, 40], "to": [40, 100], "colors": ["#FFFFFF80", "transparent"] }
+```
+
+**The alpha lock** (`"lock": true`) makes painting change only the colour of what's already on
+the layer: new paint lands as strongly as the pixel is opaque, the pixel's opacity never changes,
+and the eraser does nothing. For recolouring a line, or shading a sprite that's all on one layer.
+`"lock": false` turns it off again.
+
+```json
+{ "cmd": "layer", "name": "Lines", "lock": true }
+{ "cmd": "gradient", "from": [0, 0], "to": [0, 300], "colors": ["#402010", "#A06030"] }
+{ "cmd": "layer", "name": "Lines", "lock": false }
+```
+
+**A mask on a group or `use`** limits where its commands paint: every stroke, shape, gradient,
+fill and dab inside is multiplied by the mask. A mask is one of:
+
+| Mask | |
+|---|---|
+| an [area](#areas) | `{ "circle": [64, 96, 40] }`, `{ "polygon": [...] }`... in the group's own coordinates. |
+| `{ "symbol": "duck", ... }` | The silhouette of a symbol: everywhere it would paint, placed with the fields of a `use` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `with`). Nothing is painted; its `layer` commands are ignored. |
+| `{ "layer": "Water" }` | Where a layer already has paint (as it is when the group starts). |
+| `{ "not": ... }` | Everything but one of the above: a hole. |
+
+```json
+{ "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "commands": [
+  { "cmd": "use", "name": "duck", "translate": [64, 150], "mirror": "y", "opacity": 0.4 } ] }
+{ "cmd": "group", "name": "shadow", "mask": { "symbol": "duck", "translate": [64, 96] }, "commands": [
+  { "cmd": "gradient", "from": [64, 60], "to": [64, 116], "colors": ["transparent", "#00000060"] } ] }
+{ "cmd": "use", "name": "wall", "mask": { "not": { "circle": [320, 180, 60] } } }
+```
+
+- A mask is worked out when the group starts, in the group's coordinates, and placed by the
+  group's transform like everything else: with keyframes it moves along (a shadow clipped to a
+  walking duck). Its numbers may be keyframes or parameters.
+- Masks nest: a group inside a masked group paints only where both masks are. A `layer` command
+  inside still selects its layer; the mask applies on whichever layer is painted.
+- On a pixel canvas, a mask has hard edges (a pixel is in or out).
+- A mask that covers nothing (off the canvas, an empty layer) is a warning: the group paints
+  nothing.
+- A named group or `use` whose shapes are small but which painted most of the canvas is a
+  warning too (`painted 100% of the canvas, but its shapes cover 1%`): usually a `gradient` or
+  `fill` without an `area` inside a `not` mask. Give it an `area`.
+
+## Filters
+
+```json
+{ "cmd": "filter", "blur": 8 }
+{ "cmd": "filter", "layer": "Far hills", "blur": 3, "adjust": { "saturation": -0.3, "brightness": 0.1 } }
+{ "cmd": "filter", "glow": { "radius": 24, "threshold": 0.75, "strength": 0.8 } }
+{ "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.5 }
+{ "cmd": "filter", "gradient_map": { "stops": [[0, "#1B2433"], [0.5, "#C2651C"], [1, "#FFF3DC"]] } }
+{ "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 40, "strength": 1 } }, "commands": [
+  { "cmd": "ellipse", "center": [520, 90], "radius": 34, "fill": "#FFF2B0" } ] }
+{ "cmd": "use", "name": "duck", "translate": [64, 96], "filter": { "shadow": { "offset": [6, 8], "blur": 6, "color": "#00000070" } } }
+```
+
+The **`filter` command** changes everything on a layer (`layer`, or the selected one) in place.
+Give any of these; they're applied in this order (use two `filter` commands for another order):
+
+| | |
+|---|---|
+| `adjust` | `hue` (degrees), then `saturation`, `brightness`, `contrast`, each -1 to 1 (0 = as is). |
+| `gradient_map` | Every pixel recoloured by its lightness through `stops` or `colors` (dark to light); opacity stays. |
+| `blur` | Pixels of softening (up to 500). |
+| `glow` | `radius` (how far, default 16), `threshold` (how light a pixel must be, 0 to 1, default 0.7), `strength` (default 1): the light parts spread and are added on top, brighter inside, a halo outside. |
+| `shadow` | `offset` `[x, y]` (default `[4, 4]`), `blur` (default 4), `color` (default half-transparent black): a soft copy of the silhouette, behind. |
+| `outline` | `{ "color", "size", "rim": {...} }`: a line around everything on the layer, behind it, and rim light on top (see below). |
+
+Every number may be keyframes. Sizes are in the drawing units of where the command is, so in a
+group scaled by 2 a blur of 3 is 6 pixels. In the app, **Filters** in the top bar has the same
+five for the selected layer, each one undo step, written down by Export strokes.
+
+**The whole picture:** `"from": "below"` on a layer fills it with everything below, flattened.
+A gradient map or an adjustment on that layer then unifies the picture; at `opacity` 0.5, half
+way.
+
+**`filter` on a group or `use`** applies to what the group draws, on its own, before it lands
+on the layers: a sun gets a glow, a duck a drop shadow, a far hill a haze, without touching
+what's already there. When the group paints on several layers (a symbol that switches layers),
+`blur`, `glow`, `adjust` and `gradient_map` are applied to each layer's part separately, and
+each part lands on its own layer. A `shadow` is made from the **combined silhouette** of all the
+parts and laid on the **lowest** of those layers, under everything the group drew, so one shadow
+falls behind the whole duck and no seam shows between its layers. Filtered groups can nest.
+
+- A `fill` (paint bucket) inside a filtered group spreads over the real picture, as it would
+  outside.
+- **Pixel canvas:** `blur`, `glow` and a `shadow` with blur are refused (pixels would melt);
+  `shadow` with `"blur": 0`, `adjust` and `gradient_map` work and snap to the palette.
+
+## Outlines for whole shapes
+
+```json
+{ "cmd": "use", "name": "duck", "translate": [64, 96],
+  "outline": { "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } } }
+{ "cmd": "group", "name": "logo", "outline": { "color": "#FFFFFF", "size": 6 }, "commands": [
+  { "cmd": "text", "text": "DUCK FORGE", "at": [320, 40], "size": 64, "color": "ember", "align": "center" } ] }
+```
+
+A group or `use` with `outline` draws a line around the **silhouette of everything it draws
+together**, on the lowest layer it painted, behind it. So a head on a body shows no seam, even
+when they're on different layers, and text gets one clean outline around all its letters.
+
+| | |
+|---|---|
+| `color` | The line's colour (default black). |
+| `size` | How far out the line reaches, in pixels (default 2). Ends and corners are round. |
+| `rim` | Rim light: `color` (default white), `size` (default 1.5) and `angle` (degrees clockwise, 0 = light from the right, -45 from the top right; default -45). A line of that colour along the inside edge, on the side facing the light, on top of the drawing. |
+
+- It happens after the drawing, so it works with keyframes, `mirror`, `scale` and `rotate`;
+  `size` and the rim's numbers may be keyframes, and they scale with the group.
+- Shapes inside keep their own `outline` fields. `outline` and `filter` go together: shadow
+  furthest back, then the outline, then the drawing, then the rim light.
+- On a pixel canvas the line is whole pixels (like `pixel`'s own `outline`).
+
 ## Animations: frames and timing
 
 ```json
@@ -486,9 +747,11 @@ parameter, round and round if there are more copies than values:
 
 A script with an `animations` section is an animation (or several, by name). Each one has
 `frames` (how many, 1 to 100000), `fps` (default 12), `loop` (default false: the last frame leads
-back to the first) and its own `commands`. The canvas is the size of one frame. Each frame plays
-the script's `commands` (the canvas, symbols, a background) and then the animation's. Time is
-the frame number, counting from 0; keyframes (next section) make values change with it. A top
+back to the first), `time` (`"frames"`, the default, or `"seconds"`: then plain numbers in its
+keyframes are seconds) and its own `commands`. The canvas is the size of one frame. Each frame
+plays the script's `commands` (the canvas, symbols, a background) and then the animation's. Time
+is the frame number, counting from 0; keyframes (next section) make values change with it.
+Animations are kept in the order written: the first is the one `render` shows by default. A top
 level `"pivot": [x, y]` is the character's anchor point for sprite sheets (default: the bottom
 centre of the canvas). A script without `animations` is a single picture, exactly as before.
 
@@ -511,12 +774,14 @@ number on its own) and colours (each channel on its own). Anything else, like a 
 
 | Field | |
 |---|---|
-| `keys` | `[[frame, value], ...]`, or `[frame, value, "ease"]` to name the curve *into* that key. |
+| `keys` | `[[frame, value], ...]`, or `[frame, value, "ease"]` to name the curve *into* that key. A key's time may be seconds instead: `"1.5s"` (at the animation's `fps`), or a plain number when the animation has `"time": "seconds"`. |
 | `ease` | The curve between keys: `linear` (default), `in` (starts slow), `out` (ends slow), `in-out`, `step` (holds the earlier value until the next key). |
-| `shift` | Plays the same keys this many frames later, wrapping round in a looping animation. A walk's far leg is the near leg's keys with `"shift"` of half the cycle. |
+| `shift` | Plays the same keys this many frames (or `"0.5s"`) later, wrapping round in a looping animation. A walk's far leg is the near leg's keys with `"shift"` of half the cycle. |
 
 Exactly on a key's frame, the value is the key's. In a single picture (no animation) keyframes
-are read at frame 0. To animate text or a shape, put it in a group.
+are read at frame 0. To animate text or a shape, put it in a group. A `seed` with keys holds
+each seed until the next key (a pattern changes at a key, never half way): a twinkle is
+`"seed": { "keys": [[0, 1], [4, 2], [8, 3]] }`.
 
 ### Symbol parameters, and `upright`
 
@@ -542,9 +807,10 @@ mirrors and resizes with the groups around it.
 
 ### Seeing an animation without watching it
 
-`art-cli render` paints frame 0 of the first animation unless told otherwise: `--frame 3`,
-`--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation. Frames are
-saved as `name-walk-003.png`. Then:
+`art-cli render` paints frame 0 of the first animation written unless told otherwise:
+`--frame 3`, `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation.
+Frames are saved as `name-walk-003.png`. A thing that is off the canvas in some frames but on
+it in others (an entrance, an exit) isn't warned about; one that never is, is. Then:
 
 - `--frame-sheet` (or `--frame-sheet 2` for every 2nd frame): every frame in one numbered
   picture, `name-walk-frames.png`, to judge a whole walk at a glance.
@@ -603,7 +869,7 @@ and `fill` already come out crisp on a pixel canvas.
 
 ## Areas
 
-`gradient`, `hatch` and `scatter` take an `area`:
+`gradient`, `hatch` and `scatter` take an `area`, and a group's `mask` can be one:
 
 ```json
 { "rect": [x, y, width, height] }
@@ -620,7 +886,8 @@ the command's number.
 
 So: adding or removing a command before a random command changes its pattern (its number
 changes). To keep a pattern you like while editing the script, give that command its own
-`"seed"`. To try a different pattern, change the seed.
+`"seed"`. To try a different pattern, change the seed. A command's `seed` may be keyframes or a
+symbol parameter (`"seed": "$seed"`), so a library part can take one.
 
 ## Errors
 

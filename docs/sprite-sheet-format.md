@@ -37,7 +37,7 @@ reading order, gives exactly that numbering (`sprite.frames(w, h)` in Duck Forge
 | `columns`, `rows` | The grid: `columns` is the longest animation's frame count; `rows` is the number of animations. The picture is `columns × width` by `rows × height`. |
 | `scale` | How many times the frames were enlarged with sharp pixels (1 = as painted). Pixel art is usually exported at 1 for a game and at 8 for people to look at. |
 | `pivot` | `[x, y]` in frame pixels (after scaling): the character's anchor point. Draw the frame so this point lands where the character stands. Default: the bottom centre of the frame, so a character stands on its feet and switching animations never moves it. The script sets it with a top-level `"pivot": [x, y]`. |
-| `animations` | By name, in alphabetical order. `row` is its row; `frames` are its frame numbers in the grid, in play order; `fps` how fast; `loop` whether the last frame leads back to the first. |
+| `animations` | By name, in the order the script wrote them. `row` is its row; `frames` are its frame numbers in the grid, in play order; `fps` how fast; `loop` whether the last frame leads back to the first. |
 
 Playing an animation: for each number in `frames`, show cell number `n` for `1 / fps` seconds;
 at the end, start again if `loop`, otherwise stay on the last frame. In Duck Forge, that's

@@ -935,3 +935,310 @@ What was still slow or uncomfortable as an agent, for phase 3:
   not for sharing. (MP4 is 66 KB.)
 Rendering was never the slow part: the title's 72 frames take about
 2 seconds; the sprites, hundredths of a second.
+
+## 59. Clipping, the alpha lock and masks (phase 3, step 1)
+
+Three ways to keep paint inside a shape, each where a painting app would
+put it:
+- **Clipping is decided when the picture is shown**, not when it's
+  painted. A clipping layer's pixels are multiplied by the opacity of its
+  base (the nearest unclipped layer below) while compositing, so the base
+  can be repainted or moved and the shading follows, and the app's
+  layers panel can switch it on and off. A base that's hidden hides its
+  clipping layers; a clipping layer with no base shows nothing. The
+  flag lives on the layer, is saved in the `.artapp` (old files simply
+  have it off), and is written by Export strokes.
+- **The alpha lock is decided when painting.** It's a flag on the
+  `Surface`, so every way of painting (strokes, fills, gradients, the
+  bucket, the app's own tools) sees it in one place. Paint recolours a
+  pixel by its strength times the paint's opacity, and the pixel's own
+  opacity never changes; the eraser does nothing. Painting a see-through
+  colour is scaled by the pixel's opacity, not added to it, so a locked
+  soft edge stays exactly as soft.
+- **A group's mask is a `Mask` in painted pixels**, worked out once when
+  the group starts (so it's placed by the group's transform and moves
+  with keyframes), multiplied by the masks of the groups around it, and
+  handed to every job the group queues: strokes get it through
+  `Stroke::clipped`, fills and the bucket through the `_within`
+  functions. Nothing in the engine knows "a group" at paint time: just a
+  coverage mask.
+- **A symbol's silhouette is painted, not computed.** The symbol is
+  played onto a scratch `Document` of the same size (a stack of them,
+  since masks can nest), with its layer commands skipped and nothing
+  recorded for undo or the report; the scratch layer's opacity becomes
+  the mask. That way everything a symbol can draw, including jitter,
+  text and nested groups, has the right silhouette, for the cost of
+  painting it once more. On a pixel canvas, masks are thresholded at
+  half so edges stay crisp.
+- `value()` now resolves `$params` and keyframes inside any object, not
+  only keyed ones, so mask numbers can animate without a special case.
+
+## 60. Brush tips, dynamics and `stamp` (phase 3, step 2)
+
+- **A tip is a small greyscale picture, sampled per pixel**, not a
+  formula evaluated per dab: the same code stamps a built-in tip and one
+  from a PNG. Built-in tips are made once from formulas with fixed seeds
+  (3 x 3 samples per texel for smooth edges) at 128 texels across, then
+  halved down to 2 x 2, and a dab samples the level nearest its own size
+  (bilinear), so a 10-pixel chalk dab doesn't alias. The `round` tip
+  keeps the old analytic path, so every existing picture is unchanged
+  (the reference tests say so). `hardness` on a shaped tip softens a
+  round envelope around the dab's corners, so a square stays square at
+  hardness 1 and fades at the corners when softer.
+- **Dynamics are per dab, from the stroke's seed.** The stroke owns a
+  `Random` (seeded by the player from the script's seed, the command's
+  seed and the stroke's number in the command), so a script with chalk
+  strokes paints the same picture every time, and a different `seed`
+  gives a different one. Colour variation is kept per pixel (which dab
+  last raised the pixel's coverage), so the stroke's "never darker than
+  its opacity" rule still holds. Black doesn't vary in hue or lightness:
+  it has none.
+- **`BrushSettings` stays `Copy`**: a tip from a file is `Tip::File(n)`,
+  a number into the player's list of loaded shapes (each file loaded
+  once), handed to the stroke with `with_tip`. The app's brush panel
+  never needs file tips.
+- **`stamp` reuses what's there.** Tip copies are single-point strokes
+  (so masks, clipping, lock and the brush's hardness all apply);
+  symbol copies are a `repeat`-like frame whose copies have their own
+  placements instead of a step, and the picked colour reaches the symbol
+  as its `color` parameter through `each`. So a stamped copy is exactly
+  a `use`, and messages say `stamp, copy 3 > 1 (use "blade")`.
+- **Cost** (1920 x 1080, 40 paths of 1840 px with a 40 px brush,
+  release build): round 0.89 s; round with size, scatter and hue
+  dynamics 0.84 s; chalk 2.4 s; chalk with follow, size, opacity and
+  lightness dynamics 2.7 s; leaf with follow 2.2 s. A shaped tip costs
+  about 2.7x a round one: its box is twice the area (it may be turned)
+  and each pixel samples the shape. Fine for paintings; worth a sampled
+  envelope if animations with big textured brushes ever feel slow.
+
+## 61. Noise and textures as paint (phase 3, step 3)
+
+- **A pattern is a `Paint`**, next to colours and gradients, so it goes
+  everywhere a fill goes (shapes, `gradient` with a `fill`, the bucket's
+  paint, a brush `color`) and through clipping, masks and the alpha lock
+  without those knowing. `Prepared` now owns its data, so a stroke can
+  carry one and sample it per pixel.
+- **Value noise, not Perlin.** Random values on a grid, blended with a
+  quintic curve, `detail` layers each twice as fine and half as strong,
+  then stretched (blended random values crowd around the middle). It's
+  simpler to explain and plenty natural for clouds, water and rock. The
+  grid values come from a hash of (seed, x, y), so no table and no
+  state: the same on every computer, and a script's `seed` is mixed in.
+- **Patterns live in the coordinates they're written in**: each paint
+  keeps the inverse of its frame's transform and samples through it, so
+  a rock symbol's grain scales and turns with every use, and the test
+  that a textured symbol moved by a group equals the texture moved by
+  hand passes exactly. Drift is `offset` keyframes, resolved by
+  `value()` inside the fill object like any other keyframe.
+- **Textures are small premultiplied pictures tiled with bilinear
+  wrap-around**; `"paper"` is a 256 x 256 seamless tile made once from
+  periodic noise. Tinting maps the picture's lightness through stops and
+  keeps its opacity.
+- **Cost** (release build). A full 1920 x 1080 fill: one colour 0.10 s,
+  a gradient 0.13 s, noise with detail 1 / 3 / 6: 0.22 / 0.29 / 0.39 s,
+  paper 0.24 s. A 96-frame 640 x 360 animation with a drifting noise
+  fill and a paper layer on every frame, exported as frames: 11.8 s
+  against 3.4 s with plain fills (about 0.09 s a frame for the two
+  patterns; the PNG writing is most of the rest). Nothing here needs
+  caching yet.
+
+## 62. Filters: in place on a layer, or on a group's own drawing (phase 3, step 4)
+
+- **One block of floats.** A filter copies the layer's painted area
+  (grown by the filter's reach) into a block of premultiplied floats,
+  works there, and writes back tile by tile, keeping the old tiles for
+  undo: the same shape as `transform_layer`. Premultiplied, so a blurred
+  red edge fades to clear red, never to grey.
+- **Blur is three box blurs each way**, with the box widths chosen for
+  a Gaussian of sigma = radius / 2, as running sums: the cost doesn't
+  depend on the radius. Glow is "the light parts, blurred, added";
+  shadow is "the silhouette, moved, blurred, tinted, underneath".
+- **A filtered group paints on a scratch picture**, one scratch layer
+  per real layer it touches (the same scratch stack that captures a
+  symbol's silhouette for a mask: one mechanism, with `single` saying
+  whether everything goes on one layer). When the group ends, each
+  part is filtered on its own and laid on its layer through the alpha
+  lock; a shadow is made once from the combined silhouette and laid on
+  the lowest layer first, so it sits under all the parts and no seam
+  shows between a head and a body on different layers. Nested filtered
+  groups lay onto the scratch of the group around them. A bucket fill
+  inside spreads over the real picture (its region is worked out
+  there), not the empty scratch.
+- **Order:** `adjust`, `gradient_map`, `blur`, `glow`, `shadow`, fixed,
+  because JSON objects have no reliable order; two `filter` commands
+  give any other order. Sizes scale with the frame's `detail`, so a
+  blur inside a scaled group scales too, and a preview blurs less.
+- **`from: "below"`** is just "composite the visible layers below onto
+  this layer" (no paper), recorded for undo like painting. It's the
+  only way to filter the whole picture, and it's enough.
+- **The app's Filters menu** writes a `filter` command, reads it back
+  into engine filters and applies it: so Export strokes replays exactly
+  what the window did, like Layer → Transform.
+- **Cost** (release build, 1920 x 1080 with a full-canvas noise fill
+  that takes 0.20 s on its own): blur 4 / 40 / 200 px: 0.33 / 0.34 /
+  0.44 s; glow 0.38 s; a blurred shadow 0.38 s; adjust 0.36 s; gradient
+  map 0.24 s. A 96-frame 640 x 360 animation with a glowing sun, a
+  moving shape with a blurred shadow and a gradient-mapped "from below"
+  layer on every frame: 1.5 s for all the frames. Blur is the costliest
+  thing in phase 3 so far and still well under the painting itself.
+
+## 63. Two review fixes after phase 3, step 4
+
+- **A symbol starts from the plain brush.** Before, a `use` inherited
+  the brush as it was (tip, dynamics, pattern and all), so a bristle
+  brush set for a texture stroke made every symbol after it hairy, and
+  leftover dynamics made outlines blobby. Now `push_frame` sets the
+  plain brush for a symbol's frame (the frame's `restore` already put
+  the old brush back afterwards), and a symbol that needs a brush sets
+  its own. Groups never reset: a group is a way to place commands, and
+  it already kept its brush changes to itself. `"reset": true` on
+  `brush` is the explicit way back. No reference picture changed: none
+  relied on a symbol picking up the brush from outside.
+- **"Painted most of the canvas" warning.** Every frame already kept
+  the box of everything it drew; it now also keeps the box of its
+  *shapes* (jobs with an outline or points: not a whole-layer fill or
+  gradient, not the bucket). When a named group or use ends with its
+  drawn box over half the canvas and its shapes under a tenth, the
+  report warns and guesses the cause (a gradient or fill without an
+  `area` inside a `not` mask). A group with no shapes at all (a sky
+  gradient) doesn't warn: nothing there is misleading. Percentages are
+  of the boxes, which is what an agent needs to find the command.
+
+## 64. Outlines and rim light from the silhouette (phase 3, step 5)
+
+- **An outline is a silhouette filter**, like a shadow: `Outline` and
+  `Rim` are `Filter`s, so a group's `outline` joins its `filter` list
+  and the same scratch mechanism handles both. In `lay_effect` the
+  silhouette filters are laid in a fixed order: shadow, then outline,
+  on the lowest layer under the parts; the parts; then the rim light on
+  the highest layer, over them. The `filter` command takes `outline`
+  too, for one layer.
+- **Distances, not dilation.** The line is `size + 0.5 - distance` to
+  the silhouette (pixels at least half opaque), from an exact
+  Euclidean distance transform (Felzenszwalb-Huttenlocher, two linear
+  passes), so corners are round, edges smooth, and the cost doesn't
+  depend on the size. Rim light uses the distance *inside* the
+  silhouette and the downhill direction of that field as the edge's
+  normal; `facing` is its dot with the light direction. On a pixel
+  canvas both are thresholded to whole pixels.
+- **Cost** (release, 1920 x 1080, an ellipse covering most of the
+  canvas: 0.04 s alone): outline 0.17 s; outline with rim 0.26 s; a
+  blurred shadow 0.18 s.
+
+## 65. `include` and the library (phase 3, step 6)
+
+- **Includes are played, not spliced.** When the player meets
+  `include`, it reads the file, parses it as a script (so the same
+  checks apply), and takes its `define`s and palette: a symbol gets a
+  source (file and command number) that shows up in messages and in
+  the report's part paths; a palette colour gets its file too, for the
+  "defined differently" message. Nested includes resolve relative to
+  the file that includes them, a chain of real paths catches loops,
+  and anything but `define`, `include` and `canvas` in an included file
+  is refused: a library file draws nothing.
+- **Included symbols and colours are never "unused"**: a library holds
+  more than one picture needs, so they're left out of the report's
+  `defined` and `palette` lists.
+- **`seed` takes keyframes and parameters now** on every command that
+  has one (a `Value`, read through `value()` and rounded), because a
+  library part wants a `seed` parameter; this was also on the phase 2
+  review list.
+- **The library lives in `skills/art-app/library/`**, next to the
+  gallery, so one folder can be copied as a skill; every part has an
+  example and a preview, and a test plays every example and refuses
+  warnings, so the library can't rot quietly.
+
+## 66. Phase 2's review list, done (phase 3, step 7)
+
+- **Animations in the order written.** `Script.animations` is a small
+  ordered map (`Animations`, a vector of pairs with a map's methods)
+  read through a custom deserializer, since JSON objects have an order
+  and a script's author means it: the first animation is the one
+  `render` shows and `check` summarises. Sprite sheets follow suit; a
+  name written twice is refused.
+- **Keys in seconds.** The clock carries the animation's `fps` and
+  whether it counts in seconds; a key's time is a number (frames, or
+  seconds with `"time": "seconds"`) or text like `"1.5s"`, and `shift`
+  the same. Everything downstream still sees frames.
+- **Seeds hold.** A keyed `seed` gets `"ease": "step"` unless the keys
+  say otherwise: a pattern changes at a key, never half way, which is
+  the only thing a seed in between could mean.
+- **Entrances aren't warnings.** In `check`, an "entirely outside the
+  canvas" warning for a part is dropped when the part is on the canvas
+  in some other frame; one that never is still warns, with its frame
+  range. A layer is "empty in every frame" only when no frame paints it.
+  Painting by an animation's commands is numbered after the script's
+  own ("animation command 2") instead of colliding with them.
+- **Small things:** `export --animation` says which animations it
+  skipped; `render --scale 0.5` saves `name-50pct.png` (not
+  `-preview`, which is `--preview`'s); `render --pixels` prints a pixel
+  canvas as rows of palette letters with a legend, so an agent can read
+  a sprite without looking at it; the app's Text tool starts at a
+  twelfth of the canvas height instead of a fixed 48 pixels.
+
+## 67. The app catches up with the scripts (phase 3, step 8)
+
+- **Tip and dynamics in the brush panel**, not a new tool: a `Tip`
+  dropdown, an angle slider for shaped tips, and a collapsed "Dynamics"
+  section with one slider per setting and a "No dynamics" button. They
+  live on the same `BrushSettings` the scripts use, so Export strokes
+  writes them through `record::brush` with nothing new.
+- **Strokes get a seed** in the app: each stroke's number, seeded the
+  way the player seeds a recorded `"seed"` (`record::stroke_seed`), and
+  written down only when dynamics are on. A test paints a chalk stroke
+  with dynamics, exports it and replays it to the same pixels.
+- **Clip and lock are two small toggles** on each layer row, each one
+  undo step ("Clip layer", "Lock layer paint"), recorded like show and
+  hide. (The undo step naming had no case for them before: a clip-only
+  change applied but left no undo step.)
+- Checked on a virtual screen: the panel fits, the toggles light up,
+  and the tip list shows all seven tips.
+
+## 68. Proof of phase 3: the gallery (phase 3, step 10)
+
+Two finished pieces in `skills/art-app/gallery/`, each with its script,
+the painted picture, a process sheet and honest notes, listed in
+`index.json` with tags; a test plays both and refuses warnings.
+
+- **Sunset pond**: the simple pond (`examples/sunset-pond-simple.json`,
+  written here: no such file was on `main`, so the "before" is this
+  session's own plain version) repainted at 1920 x 1080 with noise
+  skies and water, clipped shading, a glowing sun with a masked
+  reflection, library parts, stamped grass, a drop shadow, a gradient
+  map and paper; a 48-frame loop drifts the water and clouds, bobs the
+  duck and sways the reeds.
+- **Duck portrait**: the duck painted large at 1024 x 1024: noise-filled
+  feathers, clipped shadow and light, stamped leaf feathers, bristle
+  down, one outline with rim light, bokeh, a mood pass.
+
+**Speed** (release build, this machine):
+- the pond still at 1920 x 1080 with 20 snapshots: 8.7 s; without
+  snapshots about 7 s; 48 preview frames (800 x 450) plus the GIF: 16 s;
+  the quarter-size GIF: 7 s. A full-size loop would be about 6 minutes.
+- the portrait at 1024 x 1024 with snapshots: 3.5 s.
+- costliest single things: the big blurs on the clouds and reflections
+  and the full-canvas noise fills; nothing is slow enough to change
+  how one works.
+
+**What was still hard, as the agent painting these:**
+- **Water.** Noise plus ripple strokes gives texture, not water; a
+  reflection is a blurred mirror. A real reflection breaks along the
+  ripples: a "displace by noise" filter, or a mask that is itself noise,
+  would get there in one line.
+- **Feathers and fur.** Stamped tips in rows look like rows. A stamp
+  that follows a flow field, or jitters each copy's position and angle
+  more freely with overlap, would read as plumage.
+- **Soft masks.** Masks are hard-edged shapes or silhouettes; a mask
+  from a gradient or noise (feathered edges, the haze band on the
+  hills) would remove several workarounds.
+- **Seeing small things.** Judging a 1920 x 1080 picture from an 800 px
+  preview hides the texture; `--crop` works but needs coordinates. A
+  "crop around a named part" would save a round trip each time.
+- **Palette clashes with includes** are refused loudly, which is right,
+  but a library part's colours then have to be known; a `use` could
+  take `colors` for all of them at once ("recolour with my palette").
+- **Animated keyframes inside the script's own commands** work (the
+  clock applies everywhere), but nothing in `check` says which of the
+  script's commands move; the motion summary covers only the animation's
+  own commands.
+

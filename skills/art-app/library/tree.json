@@ -1,0 +1,16 @@
+{ "title": "Library: tree", "notes": "A round tree standing on y = 0, about 140 wide and 170 tall. Params: trunk, leaf (dark), leaf_light, seed. Use's scale for size; rotate a little for lean.",
+  "palette": { "tree_trunk": "#5A3E2B", "tree_leaf": "#2F6B2A", "tree_leaf_light": "#6FB04A", "tree_ink": "#1E2A1A" },
+  "commands": [
+    { "cmd": "define", "name": "tree", "params": { "trunk": "tree_trunk", "leaf": "tree_leaf", "leaf_light": "tree_leaf_light", "seed": 1 }, "commands": [
+      { "cmd": "path", "points": [[0, 0], [2, -50], [-4, -100]], "size": 18, "color": "$trunk", "taper": [0, 0.6] },
+      { "cmd": "path", "points": [[-2, -60], [-24, -84], [-34, -104]], "size": 8, "color": "$trunk", "taper": [0, 0.8] },
+      { "cmd": "path", "points": [[0, -70], [22, -90], [30, -112]], "size": 7, "color": "$trunk", "taper": [0, 0.8] },
+      { "cmd": "group", "name": "canopy", "outline": { "color": "tree_ink", "size": 1.5 }, "commands": [
+        { "cmd": "ellipse", "center": [0, -120], "radius": [66, 50],
+          "fill": { "noise": { "scale": 22, "detail": 3, "contrast": 1.3, "colors": ["$leaf", "$leaf_light"], "seed": "$seed" } } },
+        { "cmd": "ellipse", "center": [-40, -100], "radius": [34, 28],
+          "fill": { "noise": { "scale": 22, "detail": 3, "contrast": 1.3, "colors": ["$leaf", "$leaf_light"], "seed": "$seed" } } },
+        { "cmd": "ellipse", "center": [42, -98], "radius": [32, 26],
+          "fill": { "noise": { "scale": 22, "detail": 3, "contrast": 1.3, "colors": ["$leaf", "$leaf_light"], "seed": "$seed" } } },
+        { "cmd": "group", "mask": { "ellipse": [0, -118, 64, 48] }, "commands": [
+          { "cmd": "gradient", "area": { "rect": [-72, -176, 144, 120] }, "from": [0, -170], "to": [0, -70], "colors": ["#FFFFFF40", "#00000050"] } ] } ] } ] } ] }

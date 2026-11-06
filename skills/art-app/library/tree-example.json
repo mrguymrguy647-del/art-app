@@ -1,0 +1,6 @@
+{ "palette": { "sky": "#DCE8F0", "ground": "#6B8F3A" }, "commands": [
+    { "cmd": "canvas", "width": 320, "height": 200, "paper": "sky" },
+    { "cmd": "include", "file": "tree.json" },
+    { "cmd": "rect", "x": 0, "y": 170, "width": 320, "height": 30, "fill": "ground" },
+    { "cmd": "use", "name": "tree", "translate": [100, 172] },
+    { "cmd": "use", "name": "tree", "translate": [240, 176], "scale": 0.6, "rotate": 5, "with": { "seed": 3 } } ] }

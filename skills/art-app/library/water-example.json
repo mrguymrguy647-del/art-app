@@ -1,0 +1,4 @@
+{ "palette": { "sky": "#DCE8F0" }, "commands": [
+    { "cmd": "canvas", "width": 320, "height": 200, "paper": "sky" },
+    { "cmd": "include", "file": "water.json" },
+    { "cmd": "use", "name": "water", "translate": [160, 120], "scale": [0.8, 1] } ] }

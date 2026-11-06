@@ -12,10 +12,11 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use super::{
-    BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, FillCmd, GradientCmd, LayerCmd,
-    MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd, TransformLayerCmd,
+    Animations, BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd,
+    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
+    TransformLayerCmd,
 };
-use crate::brush::{BrushMode, BrushSettings};
+use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
 use crate::layer::LayerProps;
 use crate::stroke::StrokePoint;
@@ -36,6 +37,41 @@ pub fn hex([r, g, b, a]: Rgba) -> String {
     }
 }
 
+/// A brush's dynamics as written in a script: only what's on.
+pub fn dynamics(dynamics: &Dynamics) -> DynamicsCmd {
+    let on = |value: f32| (value != 0.0).then(|| round(value, 3));
+    DynamicsCmd {
+        follow: dynamics.follow.then_some(true),
+        size: on(dynamics.size),
+        angle: on(dynamics.angle),
+        opacity: on(dynamics.opacity),
+        scatter: on(dynamics.scatter),
+        hue: on(dynamics.hue),
+        lightness: on(dynamics.lightness),
+        saturation: on(dynamics.saturation),
+    }
+}
+
+/// The brush settings a fresh script starts from, for `tidy`: a plain
+/// round tip, so those aren't written unless they change.
+fn plain_brush() -> BrushCmd {
+    BrushCmd {
+        tip: Some(Value::String(
+            Tip::Round.name().unwrap_or("round").to_owned(),
+        )),
+        angle: Some(0.0),
+        dynamics: Some(DynamicsCmd::default()),
+        ..BrushCmd::default()
+    }
+}
+
+/// The random numbers a `stroke` command with `"seed": seed` gets when
+/// the script's own seed is `script_seed` (the default 1): the app seeds
+/// its strokes this way, so Export strokes replays them exactly.
+pub fn stroke_seed(script_seed: u64, seed: u64) -> u64 {
+    crate::random::Random::mix(crate::random::Random::mix(script_seed, seed), 1)
+}
+
 /// Selects (or creates) the layer called `name`.
 pub fn select_layer(name: &str) -> Command {
     Command::Layer(LayerCmd {
@@ -48,7 +84,7 @@ pub fn select_layer(name: &str) -> Command {
 pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
     let [r, g, b] = settings.color;
     Command::Brush(BrushCmd {
-        color: with_color.then(|| hex([r, g, b, 255])),
+        color: with_color.then(|| Value::String(hex([r, g, b, 255]))),
         size: Some(round(settings.size, 2)),
         opacity: Some(round(settings.opacity, 3)),
         flow: Some(round(settings.flow, 3)),
@@ -57,12 +93,23 @@ pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
         pressure_size: Some(settings.pressure_size),
         pressure_opacity: Some(settings.pressure_opacity),
         pressure_flow: Some(settings.pressure_flow),
+        tip: Some(Value::String(
+            settings.tip.name().unwrap_or("round").to_owned(),
+        )),
+        angle: Some(round(settings.angle, 2)),
+        dynamics: Some(dynamics(&settings.dynamics)),
+        reset: None,
     })
 }
 
 /// A brush or eraser stroke on `layer`, through `points` exactly as
 /// they went into the stroke (after smoothing).
-pub fn stroke(layer: &str, settings: &BrushSettings, points: &[StrokePoint]) -> Vec<Command> {
+pub fn stroke(
+    layer: &str,
+    settings: &BrushSettings,
+    points: &[StrokePoint],
+    seed: Option<u64>,
+) -> Vec<Command> {
     let erase = settings.mode == BrushMode::Erase;
     let points = points
         .iter()
@@ -73,6 +120,10 @@ pub fn stroke(layer: &str, settings: &BrushSettings, points: &[StrokePoint]) -> 
         .collect();
     let stroke = StrokeCmd {
         points,
+        // With dynamics, the seed makes the replay the same stroke.
+        seed: seed
+            .filter(|_| !settings.dynamics.is_off())
+            .map(|seed| Value::Number(seed.into())),
         ..StrokeCmd::default()
     };
     vec![
@@ -121,8 +172,9 @@ pub fn gradient(layer: &str, gradient: &Gradient, opacity: f32) -> Vec<Command> 
                 }
                 .to_owned(),
             ),
-            from: point(gradient.start),
-            to: point(gradient.end),
+            from: Some(point(gradient.start)),
+            to: Some(point(gradient.end)),
+            fill: None,
             colors: None,
             stops: Some(
                 gradient
@@ -190,6 +242,14 @@ pub fn transform_layer(name: &str, command: &TransformLayerCmd) -> Vec<Command> 
     })]
 }
 
+/// A filter applied to the layer called `name` (the app's Filters menu).
+pub fn filter(name: &str, command: &FilterCmd) -> Vec<Command> {
+    vec![Command::Filter(FilterCmd {
+        layer: Some(name.to_owned()),
+        ..command.clone()
+    })]
+}
+
 /// Changing a layer's name, visibility, opacity or blend mode.
 pub fn layer_changes(before: &LayerProps, after: &LayerProps) -> Vec<Command> {
     let mut commands = Vec::new();
@@ -204,9 +264,16 @@ pub fn layer_changes(before: &LayerProps, after: &LayerProps) -> Vec<Command> {
         opacity: (before.opacity != after.opacity).then(|| round(after.opacity, 3)),
         blend: (before.blend != after.blend).then(|| after.blend.name().to_owned()),
         visible: (before.visible != after.visible).then_some(after.visible),
+        clip: (before.clip != after.clip).then_some(after.clip),
+        lock: (before.lock != after.lock).then_some(after.lock),
         ..LayerCmd::default()
     };
-    if settings.opacity.is_some() || settings.blend.is_some() || settings.visible.is_some() {
+    if settings.opacity.is_some()
+        || settings.blend.is_some()
+        || settings.visible.is_some()
+        || settings.clip.is_some()
+        || settings.lock.is_some()
+    {
         commands.push(Command::Layer(settings));
     }
     commands
@@ -248,9 +315,10 @@ fn colors_in_value(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
     }
 }
 
-/// Calls `f` on every colour written in `command`.
-fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
-    let paint = |value: &mut Value, f: &mut dyn FnMut(&mut String)| match value {
+/// Calls `f` on every colour in a fill: a colour, or the `colors` or
+/// `stops` of a gradient, noise or texture object.
+fn colors_in_fill(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+    match value {
         Value::String(color) => f(color),
         Value::Object(object) => {
             if let Some(Value::Array(colors)) = object.get_mut("colors") {
@@ -267,9 +335,33 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                     }
                 }
             }
+            for key in ["noise", "texture"] {
+                if let Some(inner) = object.get_mut(key) {
+                    colors_in_fill(inner, f);
+                }
+            }
         }
         _ => {}
-    };
+    }
+}
+
+/// Calls `f` on the colours of an `outline` object (and its `rim`).
+fn outline_colors(value: &mut Value, f: &mut dyn FnMut(&mut String)) {
+    if let Value::Object(object) = value {
+        if let Some(color) = object.get_mut("color") {
+            colors_in_value(color, f);
+        }
+        if let Some(Value::Object(rim)) = object.get_mut("rim")
+            && let Some(color) = rim.get_mut("color")
+        {
+            colors_in_value(color, f);
+        }
+    }
+}
+
+/// Calls `f` on every colour written in `command`.
+fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
+    let paint = colors_in_fill;
     let option = |color: &mut Option<String>, f: &mut dyn FnMut(&mut String)| {
         if let Some(c) = color {
             f(c);
@@ -278,7 +370,11 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
     match command {
         Command::Canvas(c) => option(&mut c.paper, f),
         Command::Paper(c) => f(&mut c.color),
-        Command::Brush(c) => option(&mut c.color, f),
+        Command::Brush(c) => {
+            if let Some(color) = &mut c.color {
+                paint(color, f);
+            }
+        }
         Command::Stroke(c) | Command::Erase(c) => option(&mut c.color, f),
         Command::Line(c) => option(&mut c.color, f),
         Command::Path(c) => {
@@ -313,6 +409,9 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             for (_, color) in c.stops.iter_mut().flatten() {
                 f(color);
             }
+            if let Some(fill) = &mut c.fill {
+                paint(fill, f);
+            }
         }
         Command::Hatch(c) => option(&mut c.color, f),
         Command::Scatter(c) => {
@@ -345,6 +444,25 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
                 for_each_color(inner, f);
             }
         }
+        Command::Stamp(c) => {
+            option(&mut c.color, f);
+            if let Some(colors) = &mut c.colors {
+                colors.iter_mut().for_each(&mut *f);
+            }
+        }
+        Command::Filter(c) => {
+            if let Some(Value::Object(shadow)) = &mut c.shadow
+                && let Some(color) = shadow.get_mut("color")
+            {
+                colors_in_value(color, f);
+            }
+            if let Some(map) = &mut c.gradient_map {
+                paint(map, f);
+            }
+            if let Some(outline) = &mut c.outline {
+                outline_colors(outline, f);
+            }
+        }
         Command::Use(c) => {
             // Both sides of a colour swap are colours (the new one may be
             // keyframes, with a colour in each key).
@@ -365,6 +483,7 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
         | Command::RenameLayer(_)
         | Command::ClearLayer(_)
         | Command::TransformLayer(_)
+        | Command::Include(_)
         | Command::Snapshot(_) => {}
     }
 }
@@ -375,7 +494,7 @@ pub fn tidy(commands: Vec<Command>) -> Vec<Command> {
     let mut out = Vec::with_capacity(commands.len());
     let mut layer: Option<String> = None;
     // The brush settings known so far (None = not known yet).
-    let mut known = BrushCmd::default();
+    let mut known = plain_brush();
     for command in commands {
         match command {
             Command::Layer(select)
@@ -404,7 +523,7 @@ pub fn tidy(commands: Vec<Command>) -> Vec<Command> {
             }
             Command::Canvas(canvas) => {
                 layer = None;
-                known = BrushCmd::default();
+                known = plain_brush();
                 out.push(Command::Canvas(canvas));
             }
             other => out.push(other),
@@ -443,6 +562,10 @@ fn changed_brush_settings(known: &mut BrushCmd, new: BrushCmd) -> BrushCmd {
         pressure_size: keep(&mut known.pressure_size, new.pressure_size),
         pressure_opacity: keep(&mut known.pressure_opacity, new.pressure_opacity),
         pressure_flow: keep(&mut known.pressure_flow, new.pressure_flow),
+        tip: keep(&mut known.tip, new.tip),
+        angle: keep(&mut known.angle, new.angle),
+        dynamics: keep(&mut known.dynamics, new.dynamics),
+        reset: new.reset,
     }
 }
 
@@ -486,6 +609,11 @@ fn rename_uses(command: &mut Command, called: &HashMap<String, String>) {
                 using.name = name.clone();
             }
         }
+        Command::Stamp(stamp) => {
+            if let Some(name) = stamp.symbol.as_ref().and_then(|s| called.get(s)) {
+                stamp.symbol = Some(name.clone());
+            }
+        }
         Command::Group(group) => group
             .commands
             .iter_mut()
@@ -526,7 +654,7 @@ pub fn script(
         seed: 1,
         palette: BTreeMap::new(),
         commands,
-        animations: BTreeMap::new(),
+        animations: Animations::default(),
         pivot: None,
     }
 }
@@ -579,7 +707,7 @@ mod tests {
         settings: &BrushSettings,
         points: &[StrokePoint],
     ) -> Vec<Command> {
-        stroke(name, settings, points)
+        stroke(name, settings, points, None)
     }
 
     #[test]
@@ -695,13 +823,13 @@ mod tests {
     fn tidying_drops_repeated_layers_and_brush_settings() {
         let settings = BrushSettings::default();
         let point = [StrokePoint::new(1.0, 2.0, 1.0)];
-        let mut commands = stroke("A", &settings, &point);
-        commands.extend(stroke("A", &settings, &point));
+        let mut commands = stroke("A", &settings, &point, None);
+        commands.extend(stroke("A", &settings, &point, None));
         let bigger = BrushSettings {
             size: 50.0,
             ..settings
         };
-        commands.extend(stroke("A", &bigger, &point));
+        commands.extend(stroke("A", &bigger, &point, None));
         let tidy = tidy(commands);
         let kinds: Vec<&str> = tidy.iter().map(Command::kind).collect();
         assert_eq!(
@@ -743,6 +871,7 @@ mod tests {
             "A",
             &BrushSettings::default(),
             &[StrokePoint::new(1.23456, 7.891, 0.33333)],
+            None,
         );
         let Command::Stroke(stroke) = &commands[2] else {
             panic!()
@@ -900,5 +1029,129 @@ mod tests {
         );
         assert!(exported.to_json().contains("\"transform_layer\""));
         assert_eq!(png(&replay(&exported)), png(&document));
+    }
+
+    #[test]
+    fn clip_and_lock_changes_are_written() {
+        let before = LayerProps::named("Shade");
+        let after = LayerProps {
+            clip: true,
+            lock: true,
+            ..before.clone()
+        };
+        let commands = layer_changes(&before, &after);
+        assert_eq!(commands.len(), 1);
+        let json = serde_json::to_string(&commands[0]).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"layer","name":"Shade","clip":true,"lock":true}"#
+        );
+        assert!(layer_changes(&after, &after).is_empty());
+    }
+
+    #[test]
+    fn tips_and_dynamics_are_recorded_only_when_they_change() {
+        let plain = BrushSettings::default();
+        let chalk = BrushSettings {
+            tip: Tip::Chalk,
+            angle: 15.0,
+            dynamics: Dynamics {
+                follow: true,
+                size: 0.25,
+                ..Dynamics::default()
+            },
+            ..plain
+        };
+        let commands = tidy(vec![
+            brush(&plain, true),
+            brush(&chalk, true),
+            brush(&plain, true),
+        ]);
+        let json: Vec<String> = commands
+            .iter()
+            .map(|c| serde_json::to_string(c).unwrap())
+            .collect();
+        assert_eq!(json.len(), 3);
+        assert!(
+            !json[0].contains("tip"),
+            "a plain brush writes no tip: {}",
+            json[0]
+        );
+        assert!(
+            json[1]
+                .contains(r#""tip":"chalk","angle":15.0,"dynamics":{"follow":true,"size":0.25}"#),
+            "{}",
+            json[1]
+        );
+        assert!(
+            json[2].contains(r#""tip":"round","angle":0.0,"dynamics":{}"#),
+            "back to plain: {}",
+            json[2]
+        );
+        let script = format!(
+            "{{ \"commands\": [ {{ \"cmd\": \"canvas\", \"width\": 10, \"height\": 10 }}, {} ] }}",
+            json[1]
+        );
+        let parsed = crate::script::Script::parse(&script).unwrap();
+        assert_eq!(parsed.commands[1], commands[1]);
+    }
+
+    #[test]
+    fn a_stroke_with_dynamics_records_its_seed_and_replays_the_same() {
+        use crate::brush::{Dynamics, Tip};
+        let settings = BrushSettings {
+            size: 20.0,
+            color: [200, 40, 40],
+            tip: Tip::Chalk,
+            dynamics: Dynamics {
+                size: 0.4,
+                scatter: 6.0,
+                ..Dynamics::default()
+            },
+            ..BrushSettings::default()
+        };
+        let mut document = Document::new(200, 100);
+        let id = document.active_id();
+        let points = [
+            StrokePoint::new(20.0, 50.0, 1.0),
+            StrokePoint::new(100.0, 40.0, 0.8),
+            StrokePoint::new(180.0, 50.0, 1.0),
+        ];
+        let mut painting = Stroke::new(settings, document.bounds()).seeded(stroke_seed(1, 7));
+        for &p in &points {
+            painting.add_point(&mut document.active_layer_mut().surface, p);
+        }
+        painting.finish(&mut document.active_layer_mut().surface);
+        let commands = stroke("Layer 1", &settings, &points, Some(7));
+        let json = serde_json::to_string(&commands[2]).unwrap();
+        assert!(json.contains("\"seed\":7"), "{json}");
+        // Played back, the script paints the same pixels.
+        let script = Script {
+            commands: {
+                let mut all = vec![Command::Canvas(CanvasCmd {
+                    width: Some(200),
+                    height: Some(100),
+                    ..CanvasCmd::default()
+                })];
+                all.extend(commands);
+                all
+            },
+            ..Script::parse(r#"{ "commands": [ { "cmd": "canvas", "width": 1, "height": 1 } ] }"#)
+                .unwrap()
+        };
+        let mut player =
+            crate::script::Player::new(script, crate::script::PlayOptions::default()).unwrap();
+        let mut replayed = player.create_document().unwrap();
+        player.run(&mut replayed, |_, _| {}).unwrap();
+        let a = &document.layer(id).unwrap().surface;
+        let b = &replayed.layers()[0].surface;
+        for y in 20..80 {
+            for x in 0..200 {
+                assert_eq!(a.pixel(x, y), b.pixel(x, y), "({x}, {y})");
+            }
+        }
+        // Without dynamics, no seed is written.
+        let plain = stroke("Layer 1", &BrushSettings::default(), &points, Some(7));
+        assert!(!serde_json::to_string(&plain[2]).unwrap().contains("seed"));
     }
 }

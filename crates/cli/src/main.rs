@@ -32,6 +32,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use std::collections::{BTreeMap, HashSet};
+
 use art_engine::document::{Background, Document};
 use art_engine::file::{self, FILE_EXTENSION};
 use art_engine::gif::save_gif;
@@ -90,6 +92,8 @@ RENDER OPTIONS
                      as <name>-<animation>-frames.png
   --onion            with --frame n: the frame with the one before it faint
                      in red and the one after in blue, as ...-onion.png
+  --pixels           for a pixel canvas: print the picture as rows of
+                     letters, one per palette colour (. = see-through)
   --gif              every frame as <name>-<animation>.gif, for a quick look
 
   Pictures for looking at (previews, crops, snapshots, sheets) get --bg and
@@ -220,6 +224,8 @@ struct RenderOptions {
     frame_sheet: Option<u32>,
     /// `--onion`: the frame with its neighbours faint behind it.
     onion: bool,
+    /// `--pixels`: print a pixel canvas as rows of palette letters.
+    pixels: bool,
     /// `--gif`: all the frames as an animated GIF.
     gif: bool,
 }
@@ -255,6 +261,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
         frames: Frames::Default,
         frame_sheet: None,
         onion: false,
+        pixels: false,
         gif: false,
     };
     let mut script = None;
@@ -274,6 +281,7 @@ fn parse_render(args: &[String]) -> Result<RenderOptions, Problem> {
             "--detail" => options.detail = true,
             "--all-frames" => options.frames = Frames::All,
             "--onion" => options.onion = true,
+            "--pixels" => options.pixels = true,
             "--gif" => options.gif = true,
             "--frame-sheet" => {
                 // The number is optional: `--frame-sheet` alone is every frame.
@@ -753,8 +761,26 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 }
             } else {
                 let image = for_looking(zoomed(image), view);
-                let path = options.out.join(format!("{name}-preview.png"));
+                let suffix = if options.preview {
+                    "preview".to_owned()
+                } else {
+                    format!("{:.0}pct", scale * 100.0)
+                };
+                let path = options.out.join(format!("{name}-{suffix}.png"));
                 save(&image, path, keeps_alpha, &mut saved)?;
+            }
+        }
+        if options.pixels {
+            if player.is_pixel() {
+                say!("  pixels of {name} (. = see-through):");
+                for line in pixel_rows(&document, &script.palette) {
+                    say!("    {line}");
+                }
+            } else {
+                let note = "--pixels is for a pixel canvas (\"pixel\" on the canvas command)";
+                if !notes.contains(&note) {
+                    notes.push(note);
+                }
             }
         }
         if options.sheet {
@@ -846,7 +872,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     let layers = layer_boxes(&document, scale, shown, Some(&report));
     let warnings = warnings(&report, &layers);
     if options.detail {
-        print_findings(&layers, &report, &warnings, true);
+        print_findings(&layers, &report, &warnings, true, command_count);
     } else {
         say!("  layers, bottom to top:");
         let entries: Vec<String> = layers
@@ -1098,6 +1124,61 @@ fn command_list(numbers: &[usize]) -> String {
     format!("{word} {}", parts.join(", "))
 }
 
+/// A pixel canvas as rows of letters, one letter per palette colour (a
+/// legend first), `.` for see-through and `?` for anything else.
+fn pixel_rows(document: &Document, palette: &BTreeMap<String, String>) -> Vec<String> {
+    let letters: Vec<char> = ('a'..='z').chain('A'..='Z').chain('0'..='9').collect();
+    let mut legend: Vec<(char, [u8; 3], String)> = Vec::new();
+    for (i, (name, hex)) in palette.iter().enumerate() {
+        if let Ok([r, g, b, _]) = art_engine::script::parse_hex(hex)
+            && let Some(&letter) = letters.get(i)
+        {
+            legend.push((letter, [r, g, b], format!("{letter} = {name} {hex}")));
+        }
+    }
+    let mut rows: Vec<String> = legend.iter().map(|(_, _, text)| text.clone()).collect();
+    for y in 0..document.height() as i32 {
+        let mut row = String::with_capacity(document.width() as usize);
+        for x in 0..document.width() as i32 {
+            let pixel = document.composite_pixel(x, y, Background::Transparent);
+            let letter = if pixel.a == 0 {
+                '.'
+            } else {
+                let color = art_engine::image::unpremultiply(pixel);
+                legend
+                    .iter()
+                    .find(|(_, rgb, _)| *rgb == [color[0], color[1], color[2]])
+                    .map_or('?', |(letter, _, _)| *letter)
+            };
+            row.push(letter);
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// Like `command_list`, naming the animation's own commands (numbered
+/// after the script's `own` commands) as such: "command 4, animation
+/// command 2".
+fn command_list_of(numbers: &[usize], own: usize) -> String {
+    let script: Vec<usize> = numbers.iter().copied().filter(|n| *n <= own).collect();
+    let animation: Vec<usize> = numbers
+        .iter()
+        .filter(|n| **n > own)
+        .map(|n| n - own)
+        .collect();
+    match (script.is_empty(), animation.is_empty()) {
+        (false, true) => command_list(&script),
+        (true, false) => format!("animation {}", command_list(&animation)),
+        (false, false) => format!(
+            "{}, animation {}",
+            command_list(&script),
+            command_list(&animation)
+        ),
+        (true, true) => String::new(),
+    }
+}
+
 /// "x 10..118, y 20..120", or "empty".
 fn describe_box(area: Option<PixelRect>) -> String {
     match area {
@@ -1215,6 +1296,13 @@ fn frame_warnings(motions: &[Motion]) -> Vec<String> {
             }
         }
         for (text, frames) in found {
+            // A part that's off the canvas in some frames but on it in
+            // others is an entrance or an exit, not a mistake.
+            if text.contains("draws entirely outside the canvas")
+                && frames.len() < motion.reports.len()
+            {
+                continue;
+            }
             let mut ranges: Vec<(u32, u32)> = Vec::new();
             for frame in frames {
                 match ranges.last_mut() {
@@ -1555,14 +1643,29 @@ fn check(options: &CheckOptions) -> Result<(), Problem> {
     if motions.is_empty() {
         warnings.extend(report.warnings.iter().cloned());
     }
-    for layer in layers.iter().filter(|layer| layer.area.is_none()) {
-        warnings.push(format!("layer \"{}\" is empty", layer.name));
-    }
     let all_reports: Vec<&Report> = if motions.is_empty() {
         vec![&report]
     } else {
         motions.iter().flat_map(|m| m.reports.iter()).collect()
     };
+    // A layer is empty only if no frame of any animation paints on it
+    // (layers are made in the same order in every frame, so ids match).
+    let ever_painted: HashSet<&str> = all_reports
+        .iter()
+        .flat_map(|r| r.painted_by.keys())
+        .filter_map(|id| document.layer(*id))
+        .map(Layer::name)
+        .collect();
+    for layer in layers.iter().filter(|layer| layer.area.is_none()) {
+        if ever_painted.contains(layer.name.as_str()) {
+            continue;
+        }
+        warnings.push(if motions.is_empty() {
+            format!("layer \"{}\" is empty", layer.name)
+        } else {
+            format!("layer \"{}\" is empty in every frame", layer.name)
+        });
+    }
     warnings.extend(unused_warnings(&all_reports));
     warnings.extend(frame_warnings(&motions));
     let canvas = (document.width(), document.height());
@@ -1617,7 +1720,7 @@ fn check(options: &CheckOptions) -> Result<(), Problem> {
         motion_warnings.extend(print_motion(motion, canvas, detail));
     }
     warnings.extend(motion_warnings);
-    print_findings(&layers, &report, &warnings, detail);
+    print_findings(&layers, &report, &warnings, detail, command_count);
     Ok(())
 }
 
@@ -1627,13 +1730,19 @@ const CHECK_WARNINGS: usize = 40;
 
 /// Every layer with its box; the named groups and uses (only the
 /// outermost ones, unless `detail`); and the warnings.
-fn print_findings(layers: &[LayerBox], report: &Report, warnings: &[String], detail: bool) {
+fn print_findings(
+    layers: &[LayerBox],
+    report: &Report,
+    warnings: &[String],
+    detail: bool,
+    own_count: usize,
+) {
     say!("  layers, bottom to top:");
     for layer in layers {
         let by = if layer.commands.is_empty() {
             String::new()
         } else {
-            format!(" ({})", command_list(&layer.commands))
+            format!(" ({})", command_list_of(&layer.commands, own_count))
         };
         say!("    {}: {}{by}", layer.title(), describe_box(layer.area));
     }
@@ -1768,12 +1877,13 @@ fn info(path: &Path) -> Result<(), Problem> {
     let is_script = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-    let (document, report) = if is_script {
+    let (document, report, own_count) = if is_script {
+        let own_count = load(path)?.commands.len();
         let (document, report, _) = paint(path)?;
-        (document, Some(report))
+        (document, Some(report), own_count)
     } else {
         let document = file::open(path).map_err(|e| failed(format!("{}: {e}", path.display())))?;
-        (document, None)
+        (document, None, 0)
     };
     let [r, g, b, _] = unpremultiply(document.paper());
     say!("{}", path.display());
@@ -1790,10 +1900,10 @@ fn info(path: &Path) -> Result<(), Problem> {
             None => "empty".to_owned(),
         };
         if let Some(numbers) = report.as_ref().and_then(|r| r.painted_by.get(&layer.id())) {
-            painted += &format!(", by {}", command_list(numbers));
+            painted += &format!(", by {}", command_list_of(numbers, own_count));
         }
         say!(
-            "  {:>3}. {}{}  [{}, opacity {:.0}%, {}]  {painted}",
+            "  {:>3}. {}{}  [{}, opacity {:.0}%, {}{}{}]  {painted}",
             i + 1,
             layer.name(),
             if layer.id() == active {
@@ -1804,6 +1914,8 @@ fn info(path: &Path) -> Result<(), Problem> {
             if layer.visible() { "visible" } else { "hidden" },
             layer.opacity() * 100.0,
             layer.blend().name(),
+            if layer.clip() { ", clip" } else { "" },
+            if layer.lock() { ", lock" } else { "" },
         );
     }
     Ok(())

@@ -147,6 +147,9 @@ struct ActiveStroke {
     fed: Vec<StrokePoint>,
     smoother: Smoother,
     source: Source,
+    /// Where the brush's dynamics get their randomness (written down
+    /// with the stroke, so Export strokes replays it exactly).
+    seed: u64,
     /// The latest point from the pen or mouse (before smoothing).
     last_point: StrokePoint,
 }
@@ -179,7 +182,7 @@ impl ActiveStroke {
         if !tiles_before.is_empty() {
             history.push_recorded(
                 Box::new(TileCommand::new(self.name, self.layer, tiles_before)),
-                record::stroke(&name, &self.settings, &self.fed),
+                record::stroke(&name, &self.settings, &self.fed, Some(self.seed)),
             );
         }
     }
@@ -188,6 +191,8 @@ impl ActiveStroke {
 pub struct PaintTool {
     /// The selected tool.
     pub tool: Tool,
+    /// How many strokes have started: each one's seed for its dynamics.
+    strokes_started: u64,
     /// Each tool remembers its own settings (size, softness, ...).
     pub brush: BrushSettings,
     pub eraser: BrushSettings,
@@ -222,6 +227,7 @@ pub struct PaintTool {
 impl Default for PaintTool {
     fn default() -> Self {
         Self {
+            strokes_started: 0,
             tool: Tool::Brush,
             brush: BrushSettings::default(),
             eraser: BrushSettings::eraser(),
@@ -689,12 +695,15 @@ impl PaintTool {
             },
             layer: document.active_id(),
             settings,
-            stroke: Stroke::new(settings, document.bounds()),
+            stroke: Stroke::new(settings, document.bounds())
+                .seeded(record::stroke_seed(1, self.strokes_started)),
             fed: Vec::new(),
             smoother: Smoother::new(string_length),
             source,
             last_point: point,
+            seed: self.strokes_started,
         };
+        self.strokes_started += 1;
         active.add(document, point);
         self.stroke = Some(active);
     }

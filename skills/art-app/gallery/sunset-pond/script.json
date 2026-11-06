@@ -1,0 +1,121 @@
+{
+  "title": "Sunset pond",
+  "notes": [
+    "The simple pond (examples/sunset-pond-simple.json) repainted with the phase 3 tools: noise skies and water,",
+    "clipping layers for the hills' light, a glowing sun with its reflection masked to the water, library parts",
+    "(duck, lily pads, reeds), grass stamped along the bank, a drop shadow and one outline on the duck, and a",
+    "faint gradient-map pass with paper grain. The loop animation drifts the water and clouds, bobs the duck",
+    "and sways the reeds; frame 0 is the still."
+  ],
+  "seed": 11,
+  "palette": {
+    "sky_top": "#2A2448", "sky_mid": "#C4583C", "sky_low": "#F7B25A", "cloud_light": "#FFD9A6", "cloud_shade": "#B86A5A",
+    "sun": "#FFF1C0", "sun_core": "#FFFBE8",
+    "hill_far": "#6B4B6E", "hill_far_light": "#9A6E86", "hill": "#33334A", "hill_light": "#5A4A62",
+    "water_dark": "#2A3560", "water_mid": "#5E5478", "water_light": "#9A7A80", "glint": "#FFE9A8",
+    "bank": "#3E3A2E", "grass_dark": "#5A6A2E", "grass_light": "#C2A84E",
+    "pond_pad": "#3F6A3A", "pond_pad_light": "#7FA04A",
+    "pond_reed": "#5A5A38", "pond_reed_head": "#4A3222",
+    "mood_dark": "#1B1A33", "mood_mid": "#C2651C", "mood_light": "#FFF3DC", "vignette": "#1A1020"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 1920, "height": 1080, "paper": "sky_low" },
+    { "cmd": "include", "file": "../../library/duck.json" },
+    { "cmd": "include", "file": "../../library/lilypad.json" },
+    { "cmd": "include", "file": "../../library/reed.json" },
+
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 640], "stops": [[0, "sky_top"], [0.45, "sky_mid"], [1, "sky_low"]] },
+    { "cmd": "group", "name": "clouds", "opacity": 0.85, "filter": { "blur": 14 }, "commands": [
+      { "cmd": "gradient", "area": { "rect": [0, 0, 1920, 520] },
+        "fill": { "noise": { "scale": 420, "detail": 4, "contrast": 1.35, "seed": 5,
+          "stops": [[0, "transparent"], [0.6, "transparent"], [0.78, "cloud_shade"], [1, "cloud_light"]],
+          "offset": { "keys": [[0, [0, 0]], [47, [-60, 0]]] } } } } ] },
+    { "cmd": "snapshot", "name": "sky" },
+
+    { "cmd": "layer", "name": "Sun glow", "blend": "screen" },
+    { "cmd": "gradient", "kind": "radial", "from": [1300, 500], "to": [1300, 160], "stops": [[0, "#FFB06080"], [0.4, "#FF804030"], [1, "transparent"]] },
+    { "cmd": "layer", "name": "Sun" },
+    { "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 60, "threshold": 0.7, "strength": 1.3 } }, "commands": [
+      { "cmd": "ellipse", "center": [1300, 500], "radius": 92, "fill": "sun" },
+      { "cmd": "ellipse", "center": [1300, 500], "radius": 70, "fill": "sun_core" } ] },
+
+    { "cmd": "layer", "name": "Far hills" },
+    { "cmd": "ellipse", "center": [400, 770], "radius": [720, 210],
+      "fill": { "noise": { "scale": 90, "detail": 3, "contrast": 1.1, "colors": ["hill_far", "hill_far_light"], "seed": 2 } } },
+    { "cmd": "ellipse", "center": [1520, 790], "radius": [620, 190],
+      "fill": { "noise": { "scale": 90, "detail": 3, "contrast": 1.1, "colors": ["hill_far", "hill_far_light"], "seed": 3 } } },
+    { "cmd": "filter", "blur": 5, "adjust": { "saturation": -0.25, "brightness": 0.08 } },
+    { "cmd": "layer", "name": "Far hills haze", "clip": true, "blend": "screen" },
+    { "cmd": "gradient", "from": [0, 600], "to": [0, 740], "colors": ["transparent", "#F7B25A38"] },
+
+    { "cmd": "layer", "name": "Hills" },
+    { "cmd": "polygon", "points": [[0, 700], [300, 622], [700, 684], [1100, 604], [1500, 664], [1920, 644], [1920, 722], [0, 722]], "jitter": 3,
+      "fill": { "noise": { "scale": 60, "detail": 4, "contrast": 1.2, "colors": ["hill", "hill_light"], "seed": 7 } } },
+    { "cmd": "layer", "name": "Hills light", "clip": true, "blend": "screen" },
+    { "cmd": "gradient", "from": [1300, 600], "to": [600, 700], "colors": ["#F7B25A60", "transparent"] },
+    { "cmd": "snapshot", "name": "hills" },
+
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "rect", "x": 0, "y": 718, "width": 1920, "height": 362,
+      "fill": { "noise": { "scale": 260, "detail": 2, "contrast": 0.7, "seed": 4,
+        "stops": [[0, "water_dark"], [0.55, "water_mid"], [1, "water_light"]],
+        "offset": { "keys": [[0, [0, 0]], [47, [90, 0]]] } } } },
+    { "cmd": "layer", "name": "Water depth", "clip": true, "blend": "multiply" },
+    { "cmd": "gradient", "from": [0, 720], "to": [0, 1080], "colors": ["transparent", "#2A3560C0"] },
+    { "cmd": "layer", "name": "Reflections", "blend": "screen" },
+    { "cmd": "group", "name": "sun reflection", "mask": { "layer": "Water" }, "filter": { "blur": 16 }, "commands": [
+      { "cmd": "gradient", "area": { "ellipse": [1300, 820, 130, 260] }, "from": [1300, 718], "to": [1300, 1080],
+        "colors": ["#FFD08068", "transparent"] },
+      { "cmd": "ellipse", "center": [1300, 736], "radius": [110, 20], "fill": "#FFF1C0B0" } ] },
+    { "cmd": "layer", "name": "Ripples" },
+    { "cmd": "group", "mask": { "layer": "Water" }, "commands": [
+      { "cmd": "brush", "tip": "bristle", "size": 18, "spacing": 0.25, "dynamics": { "follow": true, "size": 0.3, "opacity": 0.5 } },
+      { "cmd": "scatter", "area": { "rect": [0, 730, 1920, 340] }, "count": 90, "kind": "stroke", "length": [60, 220], "angle": [-1, 1],
+        "size": [4, 10], "colors": ["glint", "#D08A5A", "water_dark"], "opacity": [0.1, 0.35], "hardness": 0.2, "seed": 9 },
+      { "cmd": "stamp", "tip": "sparkle", "points": [[1230, 760], [1340, 900], [1260, 1060]], "spacing": 22, "size": [8, 22],
+        "scatter": 40, "colors": ["glint", "sun"], "opacity": 0.8, "seed": 12 } ] },
+    { "cmd": "snapshot", "name": "water" },
+
+    { "cmd": "layer", "name": "Pads" },
+    { "cmd": "use", "name": "lilypad", "translate": [500, 985], "scale": 2.2, "with": { "notch": 25 },
+      "filter": { "shadow": { "offset": [0, 6], "blur": 6, "color": "#1A102060" } } },
+    { "cmd": "use", "name": "lilypad", "translate": [700, 1030], "scale": 1.7, "with": { "notch": 150 },
+      "filter": { "shadow": { "offset": [0, 6], "blur": 6, "color": "#1A102060" } } },
+    { "cmd": "use", "name": "lilypad", "translate": [1560, 960], "scale": 1.5, "with": { "notch": -60, "color": "pond_pad", "light": "pond_pad_light" },
+      "filter": { "shadow": { "offset": [0, 5], "blur": 5, "color": "#1A102060" } } },
+
+    { "cmd": "layer", "name": "Duck reflection" },
+    { "cmd": "group", "mask": { "layer": "Water" }, "opacity": 0.35, "filter": { "blur": 3 }, "commands": [
+      { "cmd": "group", "translate": { "keys": [[0, [0, 0]], [24, [0, 8], "in-out"], [47, [0, 0], "in-out"]] }, "commands": [
+        { "cmd": "use", "name": "duck", "translate": [1000, 938], "scale": 2.2, "mirror": "y" } ] } ] },
+    { "cmd": "layer", "name": "Duck" },
+    { "cmd": "group", "name": "duck", "translate": { "keys": [[0, [0, 0]], [24, [0, -8], "in-out"], [47, [0, 0], "in-out"]] },
+      "rotate": { "keys": [[0, -2], [24, 2, "in-out"], [47, -2, "in-out"]] }, "origin": [1000, 880],
+      "filter": { "shadow": { "offset": [0, 14], "blur": 10, "color": "#1A102070" } }, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [1000, 880], "scale": 2.2 } ] },
+    { "cmd": "snapshot", "name": "duck" },
+
+    { "cmd": "layer", "name": "Bank" },
+    { "cmd": "polygon", "points": [[0, 700], [420, 690], [560, 730], [380, 760], [0, 770]], "fill": "bank", "jitter": 4 },
+    { "cmd": "use", "name": "lilypad", "translate": [300, 1010], "scale": 1.4, "with": { "notch": 200 } },
+    { "cmd": "layer", "name": "Reeds" },
+    { "cmd": "repeat", "count": 9, "step": { "translate": [34, 7] }, "each": { "lean": [4, -8, 10, -3, 6, -6, 9, -2, 5] }, "commands": [
+      { "cmd": "group", "translate": { "keys": [[0, [0, 0]], [24, [5, 0], "in-out"], [47, [0, 0], "in-out"]] }, "commands": [
+        { "cmd": "use", "name": "reed", "translate": [170, 790], "scale": 1.9, "with": { "lean": "$lean", "stem": "pond_reed", "head": "pond_reed_head" } } ] } ] },
+    { "cmd": "layer", "name": "Grass" },
+    { "cmd": "stamp", "tip": "grass", "points": [[0, 706], [420, 694], [560, 734]], "spacing": 6, "size": [18, 40], "angle": [-14, 14],
+      "follow": false, "scatter": 3, "colors": ["grass_dark", "grass_light"], "seed": 6 },
+    { "cmd": "snapshot", "name": "bank" },
+
+    { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.22 },
+    { "cmd": "filter", "gradient_map": { "stops": [[0, "mood_dark"], [0.5, "mood_mid"], [1, "mood_light"]] } },
+    { "cmd": "layer", "name": "Vignette", "blend": "multiply", "opacity": 0.5 },
+    { "cmd": "gradient", "kind": "radial", "from": [960, 540], "to": [960, -200], "stops": [[0, "transparent"], [0.6, "transparent"], [1, "vignette"]] },
+    { "cmd": "layer", "name": "Paper", "blend": "multiply", "opacity": 0.18 },
+    { "cmd": "rect", "x": 0, "y": 0, "width": 1920, "height": 1080, "fill": { "texture": "paper" } }
+  ],
+  "animations": {
+    "loop": { "frames": 48, "fps": 12, "loop": true, "commands": [] }
+  }
+}

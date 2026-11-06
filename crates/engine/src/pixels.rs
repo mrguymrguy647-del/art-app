@@ -211,17 +211,14 @@ mod tests {
         document
             .active_layer_mut()
             .set_props(crate::layer::LayerProps {
-                name: "Bottom".into(),
-                visible: true,
                 opacity: 0.5,
                 blend: crate::layer::BlendMode::Multiply,
+                ..crate::layer::LayerProps::named("Bottom")
             });
         let mut top = document.new_layer();
         top.set_props(crate::layer::LayerProps {
-            name: "Top".into(),
             visible: false,
-            opacity: 1.0,
-            blend: crate::layer::BlendMode::Normal,
+            ..crate::layer::LayerProps::named("Top")
         });
         document.insert_layer(1, top);
         let small = mode(None).shrink(&document, 4, 4);

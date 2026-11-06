@@ -1,7 +1,7 @@
 //! The tool panel: pick a tool (brush, eraser, eyedropper, paint bucket,
 //! gradient, text), choose a colour, and adjust the tool's settings.
 
-use art_engine::brush::{MAX_SIZE, MIN_SIZE};
+use art_engine::brush::{BrushSettings, Dynamics, MAX_SIZE, MIN_SIZE, Tip};
 use art_engine::fill::GradientShape;
 use art_engine::text::Align;
 use eframe::egui::{self, Slider};
@@ -104,11 +104,64 @@ fn brush_settings(ui: &mut egui::Ui, tools: &mut PaintTool) {
         ui.checkbox(&mut settings.pressure_size, "Size");
         ui.checkbox(&mut settings.pressure_opacity, strength_name);
         ui.checkbox(&mut settings.pressure_flow, "Flow");
+
+        if !is_eraser {
+            ui.separator();
+            tip_and_dynamics(ui, settings);
+        }
     }
 
     ui.separator();
     // Smoothing is shared by the brush and the eraser.
     ui.add(percent_slider(&mut tools.smoothing, 0.0..=1.0, "Smoothing"));
+}
+
+/// The brush's tip (the shape of each dab) and dynamics (how dabs vary).
+fn tip_and_dynamics(ui: &mut egui::Ui, settings: &mut BrushSettings) {
+    ui.horizontal(|ui| {
+        ui.label("Tip");
+        let current = settings.tip.name().unwrap_or("round");
+        egui::ComboBox::from_id_salt("brush_tip")
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for tip in Tip::BUILT_IN {
+                    let name = tip.name().unwrap_or("round");
+                    ui.selectable_value(&mut settings.tip, tip, name);
+                }
+            });
+    });
+    if settings.tip != Tip::Round {
+        ui.add(
+            Slider::new(&mut settings.angle, -180.0..=180.0)
+                .text("Angle")
+                .suffix("°"),
+        );
+    }
+    ui.collapsing("Dynamics", |ui| {
+        ui.weak("How much each dab varies:");
+        let d = &mut settings.dynamics;
+        ui.checkbox(&mut d.follow, "Follow the stroke")
+            .on_hover_text("Turn the tip along the direction of the stroke");
+        ui.add(percent_slider(&mut d.size, 0.0..=1.0, "Size"));
+        ui.add(
+            Slider::new(&mut d.angle, 0.0..=180.0)
+                .text("Angle")
+                .suffix("°"),
+        );
+        ui.add(percent_slider(&mut d.opacity, 0.0..=1.0, "Opacity"));
+        ui.add(
+            Slider::new(&mut d.scatter, 0.0..=50.0)
+                .text("Scatter")
+                .suffix(" px"),
+        );
+        ui.add(Slider::new(&mut d.hue, 0.0..=180.0).text("Hue").suffix("°"));
+        ui.add(percent_slider(&mut d.lightness, 0.0..=1.0, "Light"));
+        ui.add(percent_slider(&mut d.saturation, 0.0..=1.0, "Colour"))
+            .on_hover_text("Saturation: how strong the colour is");
+        if ui.button("No dynamics").clicked() {
+            *d = Dynamics::default();
+        }
+    });
 }
 
 /// The paint bucket's settings.

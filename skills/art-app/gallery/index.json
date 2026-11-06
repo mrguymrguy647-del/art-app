@@ -1,0 +1,10 @@
+{
+  "about": "Finished pieces made with Art App's scripts: each folder has script.json (the painting), final.png (as painted), process.png (one picture per stage, from --snapshots --sheet) and notes.md (what each tool did, and what's still weak). Include library parts with paths relative to the script.",
+  "pieces": [
+    { "folder": "sunset-pond", "title": "Sunset pond", "size": [1920, 1080], "animated": true,
+      "tags": ["landscape", "sunset", "water", "reflection", "noise", "clip", "glow", "shadow", "stamp", "library", "gradient_map", "loop"],
+      "before": "before.json", "loop": "loop.gif" },
+    { "folder": "duck-portrait", "title": "Duck portrait", "size": [1024, 1024], "animated": false,
+      "tags": ["character", "portrait", "noise", "clip", "outline", "rim", "stamp", "bristle", "bokeh", "gradient_map"] }
+  ]
+}

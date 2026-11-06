@@ -56,6 +56,16 @@ before opening any picture. Errors name the command: `command 8 (use "duck") > 2
 - Run backgrounds past the canvas edges; shapes that stop exactly at an edge leave slivers.
 - `gradient` without an `area` covers the whole layer.
 
+## Ready parts: the library (finished pieces, with scripts and notes, in `skills/art-app/gallery/`)
+
+`skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck,
+each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
+
+```json
+{ "cmd": "include", "file": "../skills/art-app/library/tree.json" }
+{ "cmd": "use", "name": "tree", "translate": [300, 700], "scale": 1.4, "with": { "seed": 3 } }
+```
+
 ## Draw once, place many times (no coordinate maths)
 
 Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around `origin`.
@@ -75,7 +85,7 @@ Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around
 
 - `define` only at the top level, before its first `use`, each name once. Symbols can use symbols.
 - Layer names inside a symbol are the picture's own layers; after a `use` or `group` the brush
-  and the selected layer are back as before.
+  and layer are back as before. A symbol starts from the plain brush (`"reset": true` resets).
 - Name your groups (`"name"`): `check` reports their boxes, and errors say where they are.
 
 ## Rows, rings and frames: `repeat`
@@ -160,15 +170,29 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - `--layers "Characters"` shows only some layers; `--hide "Background"` all but some.
 - `--snapshots --sheet` saves a picture at every `snapshot` command and layer change, and one
   sheet with all of them. Add `{ "cmd": "snapshot", "name": "blocked in" }` after big stages.
-- `--crop` may go past the canvas edges (outside shows as grey squares).
+- `--crop` may go past the canvas edges (outside shows as grey squares); `--scale 0.5` saves
+  `name-50pct.png`; `--pixels` prints a pixel canvas as rows of palette letters.
 - Previews make lines thinner than a pixel faint; check fine lines with `--crop`.
 
-## Look and quality
+## Making it beautiful (in this order, checking between moves)
 
 - Block in big shapes back to front first; details last, mostly at the focal point.
 - Shadows: a `multiply` layer in a dark cool colour; glows: `screen` or `add`.
-- `jitter` (2–6) on shapes gives a hand-made edge; give random commands a `seed` once you like them.
-- Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not detail.
+- Texture: `brush` with a `tip` (`chalk`, `bristle`, `leaf`, `grass`, `sparkle`, `square`) and
+  `dynamics` (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); `stroke`, `path`,
+  `hatch` and `scatter` all use it. `stamp` puts a symbol or tip along a path every `spacing`.
+- Clouds, water, rock, skin: a `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}`;
+  paper grain: `{"texture": "paper"}` on a `multiply` layer at 0.3.
+- Depth and light: `filter` with `blur` + `adjust` on far layers; `"filter": {"glow": ...}` on
+  a sun's group, `{"shadow": ...}` on a character's `use`; a `"from": "below"` layer with a
+  `gradient_map` at 0.3 to unify.
+- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use`
+  (no seams between parts), `"rim": {...}` inside it for rim light.
+- Shading inside a shape: a `"clip": true` layer above it; `"lock": true` recolours a layer
+  without changing its edges; a group's `mask` (an area, a symbol, a layer) limits its paint.
+- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it.
+- Judge the picture at thumbnail size: if it doesn't read small, fix values and shapes, not
+  detail. The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 

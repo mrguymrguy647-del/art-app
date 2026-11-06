@@ -15,6 +15,7 @@ use crate::brush::BrushMode;
 use crate::color::over_paper;
 use crate::document::{Background, Document};
 use crate::layer::LayerId;
+use crate::noise::{Noise, Texture};
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
@@ -126,6 +127,61 @@ impl Mask {
             cropped.values[start..start + width].copy_from_slice(self.row(y, r.left, r.right));
         }
         cropped
+    }
+
+    /// A mask of where `surface` has paint: each pixel's opacity, inside `rect`.
+    pub fn from_alpha(surface: &Surface, rect: PixelRect) -> Mask {
+        let mut mask = Mask::new(rect);
+        let r = mask.rect;
+        for coord in r.tiles() {
+            let Some(tile) = surface.tile(coord) else {
+                continue;
+            };
+            let (left, top) = coord.origin();
+            let size = TILE_SIZE as i32;
+            let area = r.intersect(&PixelRect::new(left, top, left + size, top + size));
+            for y in area.top..area.bottom {
+                for x in area.left..area.right {
+                    let alpha = tile.pixel((x - left) as usize, (y - top) as usize).a;
+                    mask.set(x, y, alpha);
+                }
+            }
+        }
+        mask
+    }
+
+    /// The opposite: everything inside `rect` that this mask doesn't cover.
+    pub fn inverted(&self, rect: PixelRect) -> Mask {
+        let mut inverted = Mask::new(rect);
+        let r = inverted.rect;
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                inverted.set(x, y, 255 - self.get(x, y));
+            }
+        }
+        inverted
+    }
+
+    /// Where both masks are: each pixel's coverage multiplied by the
+    /// other's. The result covers only where the rectangles overlap.
+    pub fn intersect(&self, other: &Mask) -> Mask {
+        let mut both = Mask::new(self.rect.intersect(&other.rect));
+        let r = both.rect;
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                let product = u32::from(self.get(x, y)) * u32::from(other.get(x, y));
+                both.set(x, y, ((product + 127) / 255) as u8);
+            }
+        }
+        both
+    }
+
+    /// Makes the edges hard: pixels at least half inside become
+    /// completely inside, the rest completely outside (for a pixel canvas).
+    pub fn threshold(&mut self) {
+        for value in &mut self.values {
+            *value = if *value >= 128 { 255 } else { 0 };
+        }
     }
 
     /// Grows the area by `pixels` in every direction (staying inside
@@ -329,11 +385,47 @@ fn sampled_pixels(
 
 // ---- What to paint with ----------------------------------------------------
 
-/// What fills an area: one colour, or a gradient.
+/// What fills an area: one colour, a gradient, noise or a texture.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Paint {
     Color(Rgba),
     Gradient(Gradient),
+    Noise(Noise),
+    Texture(Texture),
+}
+
+impl Paint {
+    /// The premultiplied colour (each 0..255) this paint has at a canvas
+    /// point. For many pixels, `Prepared` is quicker.
+    pub fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+        Prepared::new(self).color_at(x, y)
+    }
+}
+
+/// The colour at position `t` (0..1) through `stops` (sorted, at least
+/// one), premultiplied: the two nearest stops blended.
+pub fn color_through_stops(stops: &[GradientStop], t: f32) -> [f32; 4] {
+    let after = stops.partition_point(|stop| stop.position <= t);
+    if after == 0 {
+        return premultiplied(stops[0].color);
+    }
+    if after == stops.len() {
+        return premultiplied(stops[after - 1].color);
+    }
+    let (before, next) = (&stops[after - 1], &stops[after]);
+    let span = next.position - before.position;
+    let w = if span <= 0.0 {
+        1.0
+    } else {
+        ((t - before.position) / span).clamp(0.0, 1.0)
+    };
+    let (a, b) = (premultiplied(before.color), premultiplied(next.color));
+    [
+        a[0] + (b[0] - a[0]) * w,
+        a[1] + (b[1] - a[1]) * w,
+        a[2] + (b[2] - a[2]) * w,
+        a[3] + (b[3] - a[3]) * w,
+    ]
 }
 
 /// The shape of a gradient.
@@ -489,21 +581,20 @@ fn dither_offset(x: i32, y: i32) -> f32 {
 const GRADIENT_STEPS: usize = 4096;
 
 /// A paint, prepared for painting many pixels quickly.
-enum Prepared<'a> {
+pub(crate) enum Prepared {
     /// One colour, premultiplied (as floats and as a pixel).
     Color([f32; 4], Rgba8),
+    /// Noise, with its colours worked out in advance at `GRADIENT_STEPS`.
+    Noise(Noise, Vec<[f32; 4]>),
+    Texture(Texture, Option<Vec<[f32; 4]>>),
     /// The gradient's colours worked out in advance at `GRADIENT_STEPS`
     /// positions, so each pixel only has to look its colour up.
-    Gradient(
-        Positions,
-        Vec<[f32; 4]>,
-        std::marker::PhantomData<&'a Gradient>,
-    ),
+    Gradient(Positions, Vec<[f32; 4]>),
 }
 
 /// Works out positions along a gradient quickly: the sums that are the
 /// same for every pixel are done once, in advance.
-struct Positions {
+pub(crate) struct Positions {
     shape: GradientShape,
     start: (f32, f32),
     /// Linear: the direction divided by its length squared.
@@ -546,9 +637,18 @@ impl Positions {
     }
 }
 
-impl<'a> Prepared<'a> {
-    fn new(paint: &'a Paint) -> Self {
+impl Prepared {
+    pub(crate) fn new(paint: &Paint) -> Self {
+        let table = |stops: &[GradientStop]| -> Vec<[f32; 4]> {
+            (0..GRADIENT_STEPS)
+                .map(|i| color_through_stops(stops, i as f32 / (GRADIENT_STEPS - 1) as f32))
+                .collect()
+        };
         match paint {
+            Paint::Noise(noise) => Prepared::Noise(noise.clone(), table(&noise.stops)),
+            Paint::Texture(texture) => {
+                Prepared::Texture(texture.clone(), texture.tint.as_deref().map(table))
+            }
             Paint::Color(color) => {
                 let [r, g, b, a] = *color;
                 Prepared::Color(premultiplied(*color), Rgba8::from_straight(r, g, b, a))
@@ -557,17 +657,35 @@ impl<'a> Prepared<'a> {
                 let colors = (0..GRADIENT_STEPS)
                     .map(|i| gradient.color_at_position(i as f32 / (GRADIENT_STEPS - 1) as f32))
                     .collect();
-                Prepared::Gradient(Positions::new(gradient), colors, std::marker::PhantomData)
+                Prepared::Gradient(Positions::new(gradient), colors)
             }
         }
     }
 
-    fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+    pub(crate) fn color_at(&self, x: f32, y: f32) -> [f32; 4] {
+        let step = |t: f32| (t.clamp(0.0, 1.0) * (GRADIENT_STEPS - 1) as f32 + 0.5) as usize;
         match self {
             Prepared::Color(color, _) => *color,
-            Prepared::Gradient(positions, colors, _) => {
-                let t = positions.at(x, y);
-                colors[(t * (GRADIENT_STEPS - 1) as f32 + 0.5) as usize]
+            Prepared::Gradient(positions, colors) => colors[step(positions.at(x, y))],
+            Prepared::Noise(noise, colors) => colors[step(noise.value_at(x, y))],
+            Prepared::Texture(texture, tint) => {
+                let (u, v) = texture.texture_point(x, y);
+                let pixel = texture.image.sample(u, v);
+                match tint {
+                    None => pixel,
+                    Some(colors) => {
+                        // Its lightness picks the colour; its opacity stays.
+                        let alpha = pixel[3];
+                        if alpha <= 0.0 {
+                            return [0.0; 4];
+                        }
+                        let light =
+                            (pixel[0] * 0.2126 + pixel[1] * 0.7152 + pixel[2] * 0.0722) / alpha;
+                        let tinted = colors[step(light)];
+                        let a = alpha / 255.0;
+                        [tinted[0] * a, tinted[1] * a, tinted[2] * a, tinted[3] * a]
+                    }
+                }
             }
         }
     }
@@ -591,8 +709,33 @@ pub fn paint_mask(
     mode: BrushMode,
     limits: PixelRect,
 ) -> TilesBefore {
-    let rect = mask.rect().intersect(&limits);
-    paint_where(surface, rect, Coverage::Mask(mask), paint, opacity, mode)
+    paint_mask_within(surface, mask, paint, opacity, mode, limits, None)
+}
+
+/// Like [`paint_mask`], but also only inside `clip` (a group's mask) if
+/// one is given.
+pub fn paint_mask_within(
+    surface: &mut Surface,
+    mask: &Mask,
+    paint: &Paint,
+    opacity: f32,
+    mode: BrushMode,
+    limits: PixelRect,
+    clip: Option<&Mask>,
+) -> TilesBefore {
+    let mut rect = mask.rect().intersect(&limits);
+    if let Some(clip) = clip {
+        rect = rect.intersect(&clip.rect());
+    }
+    paint_where(
+        surface,
+        rect,
+        Coverage::Mask(mask),
+        paint,
+        opacity,
+        mode,
+        clip,
+    )
 }
 
 /// Paints (or rubs out) `paint` over the whole of `rect`, e.g. a gradient
@@ -604,7 +747,23 @@ pub fn paint_rect(
     opacity: f32,
     mode: BrushMode,
 ) -> TilesBefore {
-    paint_where(surface, rect, Coverage::Full, paint, opacity, mode)
+    paint_rect_within(surface, rect, paint, opacity, mode, None)
+}
+
+/// Like [`paint_rect`], but also only inside `clip` if one is given.
+pub fn paint_rect_within(
+    surface: &mut Surface,
+    rect: PixelRect,
+    paint: &Paint,
+    opacity: f32,
+    mode: BrushMode,
+    clip: Option<&Mask>,
+) -> TilesBefore {
+    let rect = match clip {
+        Some(clip) => rect.intersect(&clip.rect()),
+        None => rect,
+    };
+    paint_where(surface, rect, Coverage::Full, paint, opacity, mode, clip)
 }
 
 fn paint_where(
@@ -614,28 +773,35 @@ fn paint_where(
     paint: &Paint,
     opacity: f32,
     mode: BrushMode,
+    clip: Option<&Mask>,
 ) -> TilesBefore {
     let mut before = TilesBefore::new();
     let opacity = opacity.clamp(0.0, 1.0);
     if opacity <= 0.0 || rect.is_empty() {
         return before;
     }
+    // With the alpha lock on, the eraser can't change anything (opacity
+    // stays as it is), and paint only changes the colour of painted pixels.
+    let locked = surface.locked;
+    if locked && mode == BrushMode::Erase {
+        return before;
+    }
     let prepared = Prepared::new(paint);
     // Painting an opaque colour at full strength simply replaces pixels.
     let replace_with = match prepared {
         Prepared::Color(_, pixel)
-            if pixel.a == 255 && opacity >= 1.0 && mode == BrushMode::Paint =>
+            if pixel.a == 255 && opacity >= 1.0 && mode == BrushMode::Paint && !locked =>
         {
             Some(pixel)
         }
         _ => None,
     };
-    let dither = matches!(prepared, Prepared::Gradient(..));
+    let dither = !matches!(prepared, Prepared::Color(..));
 
     for coord in rect.tiles() {
         let existing = surface.tile(coord);
-        if mode == BrushMode::Erase && existing.is_none() {
-            continue; // nothing here to rub out
+        if (mode == BrushMode::Erase || locked) && existing.is_none() {
+            continue; // nothing here to rub out or recolour
         }
         let mut tile = existing.cloned().unwrap_or_default();
         let (left, top) = coord.origin();
@@ -650,9 +816,13 @@ fn paint_where(
                 Coverage::Full => None,
                 Coverage::Mask(mask) => Some(mask.row(y, area.left, area.right)),
             };
+            let row_clip = clip.map(|clip| clip.row(y, area.left, area.right));
             for (i, pixel) in row.iter_mut().enumerate() {
-                let covered = row_coverage.map_or(255, |c| c[i]);
-                if covered == 0 {
+                let mut covered = row_coverage.map_or(255, |c| c[i]);
+                if let Some(clip) = row_clip {
+                    covered = ((u32::from(covered) * u32::from(clip[i]) + 127) / 255) as u8;
+                }
+                if covered == 0 || (locked && pixel.a == 0) {
                     continue;
                 }
                 let new = match replace_with {
@@ -662,7 +832,11 @@ fn paint_where(
                         let strength = f32::from(covered) / 255.0 * opacity;
                         let color = prepared.color_at(x as f32 + 0.5, y as f32 + 0.5);
                         let offset = if dither { dither_offset(x, y) } else { 0.0 };
-                        mix(*pixel, color, strength, mode, offset)
+                        if locked {
+                            recolor(*pixel, color, strength)
+                        } else {
+                            mix(*pixel, color, strength, mode, offset)
+                        }
                     }
                 };
                 if new != *pixel {
@@ -704,6 +878,28 @@ fn mix(under: Rgba8, color: [f32; 4], strength: f32, mode: BrushMode, dither: f3
     )
 }
 
+/// One pixel under the alpha lock: its colour moves towards `color`
+/// (premultiplied, 0..255) by `strength` times the colour's opacity, and
+/// its own opacity stays exactly as it is.
+fn recolor(under: Rgba8, color: [f32; 4], strength: f32) -> Rgba8 {
+    if color[3] <= 0.0 || under.a == 0 {
+        return under;
+    }
+    let amount = strength * color[3] / 255.0;
+    // The paint colour, un-premultiplied and then premultiplied again by
+    // the pixel's own opacity, so it's as see-through as the pixel.
+    let scale = f32::from(under.a) / color[3];
+    let channel = |paint: f32, under: u8| {
+        (paint * scale * amount + f32::from(under) * (1.0 - amount) + 0.5) as u8
+    };
+    Rgba8::new(
+        channel(color[0], under.r).min(under.a),
+        channel(color[1], under.g).min(under.a),
+        channel(color[2], under.b).min(under.a),
+        under.a,
+    )
+}
+
 // ---- Whole operations on a document ------------------------------------------
 
 /// The paint bucket: fills the area around the starting point on
@@ -716,18 +912,32 @@ pub fn flood_fill(
     paint: &Paint,
     opacity: f32,
 ) -> TilesBefore {
+    flood_fill_within(document, layer, fill, paint, opacity, None)
+}
+
+/// Like [`flood_fill`], but the paint only lands inside `clip` if one is
+/// given (the bucket still spreads as far as the picture lets it).
+pub fn flood_fill_within(
+    document: &mut Document,
+    layer: LayerId,
+    fill: &FloodFill,
+    paint: &Paint,
+    opacity: f32,
+    clip: Option<&Mask>,
+) -> TilesBefore {
     let Some(mask) = flood_region(document, layer, fill) else {
         return TilesBefore::new();
     };
     let limits = document.bounds();
     match document.layer_mut(layer) {
-        Some(target) => paint_mask(
+        Some(target) => paint_mask_within(
             &mut target.surface,
             &mask,
             paint,
             opacity,
             BrushMode::Paint,
             limits,
+            clip,
         ),
         None => TilesBefore::new(),
     }
@@ -1091,5 +1301,97 @@ mod tests {
         assert_eq!(cropped.rect(), PixelRect::new(10, 20, 31, 26));
         assert_eq!(cropped.get(30, 25), 100);
         assert_eq!(cropped.get(0, 0), 0, "outside the mask");
+    }
+
+    #[test]
+    fn the_alpha_lock_recolours_paint_without_changing_its_opacity() {
+        let mut document = Document::new(100, 100);
+        let id = document.active_id();
+        let layer = document.active_layer_mut();
+        layer
+            .surface
+            .set_pixel(10, 10, Rgba8::from_straight(0, 0, 255, 255));
+        layer
+            .surface
+            .set_pixel(20, 20, Rgba8::from_straight(0, 0, 255, 128));
+        layer.surface.locked = true;
+        fill_layer(&mut document, id, &Paint::Color(RED), 1.0);
+        let layer = document.active_layer();
+        assert_eq!(layer.surface.pixel(10, 10), Rgba8::new(255, 0, 0, 255));
+        let half = layer.surface.pixel(20, 20);
+        assert_eq!(half.a, 128, "opacity stays: {half:?}");
+        assert!(half.r > 100 && half.b == 0, "but it's red now: {half:?}");
+        assert_eq!(
+            layer.surface.pixel(30, 30),
+            Rgba8::TRANSPARENT,
+            "nothing appears where there was nothing"
+        );
+        // Half-strength paint moves the colour half way.
+        fill_layer(&mut document, id, &Paint::Color(BLUE), 0.5);
+        let mixed = document.active_layer().surface.pixel(10, 10);
+        assert_eq!(mixed.a, 255);
+        assert!(
+            (120..=135).contains(&mixed.r) && (120..=135).contains(&mixed.b),
+            "{mixed:?}"
+        );
+        // The eraser can't get through the lock.
+        let before = paint_rect(
+            &mut document.active_layer_mut().surface,
+            PixelRect::new(0, 0, 100, 100),
+            &Paint::Color(RED),
+            1.0,
+            BrushMode::Erase,
+        );
+        assert!(before.is_empty());
+        assert_eq!(document.active_layer().surface.pixel(10, 10).a, 255);
+    }
+
+    #[test]
+    fn a_clip_mask_limits_where_paint_lands() {
+        let mut surface = Surface::new();
+        let mut clip = Mask::new(PixelRect::new(10, 10, 20, 20));
+        clip.set(12, 12, 255);
+        clip.set(13, 12, 128);
+        paint_rect_within(
+            &mut surface,
+            PixelRect::new(0, 0, 100, 100),
+            &Paint::Color(RED),
+            1.0,
+            BrushMode::Paint,
+            Some(&clip),
+        );
+        assert_eq!(surface.pixel(12, 12), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(surface.pixel(13, 12).a, 128, "half covered, half painted");
+        assert_eq!(surface.pixel(5, 5), Rgba8::TRANSPARENT);
+        assert_eq!(surface.pixel(15, 15), Rgba8::TRANSPARENT);
+        assert_eq!(surface.tile_count(), 1);
+    }
+
+    #[test]
+    fn masks_invert_intersect_and_threshold() {
+        let rect = PixelRect::new(0, 0, 4, 4);
+        let mut a = Mask::new(rect);
+        a.set(1, 1, 255);
+        a.set(2, 2, 100);
+        let inverted = a.inverted(rect);
+        assert_eq!(inverted.get(1, 1), 0);
+        assert_eq!(inverted.get(2, 2), 155);
+        assert_eq!(inverted.get(0, 0), 255);
+        let mut b = Mask::new(PixelRect::new(1, 1, 3, 3));
+        b.set(1, 1, 128);
+        b.set(2, 2, 255);
+        let both = a.intersect(&b);
+        assert_eq!(both.rect(), PixelRect::new(1, 1, 3, 3));
+        assert_eq!(both.get(1, 1), 128);
+        assert_eq!(both.get(2, 2), 100);
+        assert_eq!(both.get(0, 0), 0, "outside the overlap");
+        let mut hard = a.clone();
+        hard.threshold();
+        assert_eq!((hard.get(1, 1), hard.get(2, 2)), (255, 0));
+        // From a surface's paint.
+        let mut surface = Surface::new();
+        surface.set_pixel(3, 3, Rgba8::new(0, 0, 0, 77));
+        let painted = Mask::from_alpha(&surface, rect);
+        assert_eq!((painted.get(3, 3), painted.get(2, 3)), (77, 0));
     }
 }

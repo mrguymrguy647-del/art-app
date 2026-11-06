@@ -109,25 +109,30 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | Command | Use it for |
 |---|---|
 | `canvas` | First command: `width`, `height`, `paper`; or `open` an `.artapp` to continue a picture. |
-| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`. |
-| `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings. |
+| `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only), `from: "below"` (a flattened copy of everything below). |
+| `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings; `tip` (`round`, `square`, `bristle`, `chalk`, `leaf`, `grass`, `sparkle`, or a PNG file), `angle`, `dynamics` (`follow`, `size`, `angle`, `opacity`, `scatter`, `hue`, `lightness`, `saturation`). |
 | `stroke` / `erase` | Pen-like line through `points` (`[x, y]` or `[x, y, pressure]`). |
 | `line` | Straight line, `from` → `to`, tapered (default `taper` 0.25). |
 | `path` | Smooth curve through points; `closed` + `fill` for organic shapes; `line: false` to fill only. |
 | `rect`, `ellipse`, `polygon` | Shapes with `fill` (colour or gradient) and/or `outline`; `rotation`, `radius`, `erase`. |
-| `gradient` | `linear` or `radial`, `colors` or `stops`, whole layer or inside an `area`. |
+| `gradient` | `linear` or `radial`, `colors` or `stops`, whole layer or inside an `area`; or `fill` with any paint (noise, a texture). |
+| noise / texture | A `fill` (or brush `color`) of `{"noise": {"scale", "detail", "contrast", "colors"/"stops", "offset", "seed"}}` or `{"texture": "paper"}` / `{"texture": {"file", "scale", "colors"}}`. They move with the group they're written in. |
 | `fill` | Paint bucket at a point (`tolerance`, `grow`, `sample`). |
 | `hatch` | Parallel strokes filling an `area`: shading, texture, a drawn look. |
 | `scatter` | Many random dabs or short strokes in an `area`: stars, leaves, grass, sparkle, ripples. |
+| `stamp` | Copies of a `symbol` or dabs of a `tip` along a path, every `spacing`, turned to follow, varied in `size`, `angle` and `colors`. |
+| `filter` | On a layer: `blur`, `glow`, `shadow`, `adjust` (hue, saturation, brightness, contrast), `gradient_map`. On a `group`/`use` as `"filter": {...}`: applied to what it draws alone (a sun's glow, a duck's drop shadow). |
+| `outline` on `group`/`use` | One line around everything it draws (no seams between parts or layers): `{"color", "size", "rim": {"color", "size", "angle"}}`; `rim` is rim light along the inside edge facing the light. |
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
-| `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`). |
-| `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
+| `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
+| `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. A symbol starts from the plain brush (set its own inside); `{"cmd": "brush", "reset": true}` goes back to plain. |
+| `include` | `file` (relative to the script): that file's `define`s and palette. The library in `skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, with parameters; see its README. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
-| `animations` (top level) | Named animations: `frames`, `fps`, `loop`, and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
-| keyframes | Any number of a `group` or `use` as `{"keys": [[0, 0], [4, 20]], "ease": "in-out", "shift": 4}`. |
+| `animations` (top level) | Named animations (in the order written): `frames`, `fps`, `loop`, `time` (`"seconds"` to write keys in seconds), and `commands` played after the script's own, once per frame. Render with `--frame`, `--frames`, `--all-frames`. |
+| keyframes | Any number of a `group` or `use` as `{"keys": [[0, 0], [4, 20]], "ease": "in-out", "shift": 4}`; a key's time can be `"1.5s"`. A `seed` with keys holds until the next key. |
 | `params` / `with` / `"$name"` | A symbol's parameters with defaults; a `use` sets them (keyframes allowed); `"upright": true` keeps a foot flat. |
 | `"pixel"` on `canvas` | Pixel art: painted bigger, shrunk to whole pixels in the palette's colours; `{"supersample": 8, "outline": "ink"}`. |
 | `pixels` | Rows of characters, one canvas pixel each: `"rows": ["..kk.."]`, `"colors": {"k": "ink"}`. |
@@ -162,6 +167,23 @@ Drawing commands can change the brush just for themselves: `color`, `size`, `opa
 ```json
 { "cmd": "gradient", "from": [0, 0], "to": [0, 620],
   "stops": [[0, "#2A1E48"], [0.35, "#6B3A6E"], [0.7, "#E0704A"], [0.88, "#F7B25A"], [1, "#FFDCA0"]] }
+```
+
+**Shading that stays inside a shape:** paint the shape on its own layer, then put the shading
+on a clipping layer above it (`"clip": true`, usually `multiply`), and the light on another
+(`screen`). Paint across the whole shape without care; only the shape's part shows. To keep a
+group's paint inside something instead, give it a `mask`: an area, `{"symbol": "duck", ...}`
+(the duck's silhouette, placed like a `use`) or `{"layer": "Water"}` (a reflection only on the
+water).
+
+```json
+{ "cmd": "layer", "name": "Duck" },
+{ "cmd": "use", "name": "duck", "translate": [300, 400] },
+{ "cmd": "layer", "name": "Duck shade", "clip": true, "blend": "multiply", "opacity": 0.6 },
+{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] },
+{ "cmd": "layer", "name": "Water" },
+{ "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "opacity": 0.4, "commands": [
+  { "cmd": "use", "name": "duck", "translate": [300, 560], "mirror": "y" } ] }
 ```
 
 **A glow** (sun, moon, lamp): a radial gradient fading to transparent on a `screen` layer, under
@@ -208,7 +230,53 @@ bands), plus bright glints in a column under the light.
 ```
 
 **Grass:** `scatter` strokes pointing up: `"angle": [-100, -80]`, a few lighter ones where the
-light hits.
+light hits. Or `stamp` the `grass` tip along the ground line, which gives real blades:
+
+```json
+{ "cmd": "stamp", "tip": "grass", "points": [[0, 900], [800, 880], [1600, 900]], "spacing": 5,
+  "size": [30, 60], "angle": [-12, 12], "follow": false, "colors": ["grass1", "grass2", "grass3"] }
+```
+
+**One outline around a whole character:** put `"outline": {"color": "ink", "size": 3}` on the
+`use` instead of outlining each shape, so a head on a body shows no seam; add `"rim":
+{"color": "cream", "size": 2, "angle": -45}` for rim light from the top right.
+
+**Depth and light with filters:** far things get `blur` 2–4 and `adjust` with lower
+saturation and a little more brightness (haze); a sun or lamp is a `group` with a `glow`
+filter; a character is a `use` with a `shadow` filter (one shadow behind all its layers). To
+unify the whole picture at the end: `{"cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.4}`
+then a `filter` with a `gradient_map` from the shadow colour through a mid tone to the
+highlight colour.
+
+```json
+{ "cmd": "filter", "layer": "Far hills", "blur": 3, "adjust": { "saturation": -0.35, "brightness": 0.12 } },
+{ "cmd": "use", "name": "duck", "translate": [300, 400], "filter": { "shadow": { "offset": [8, 10], "blur": 8, "color": "#00000080" } } },
+{ "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.4 },
+{ "cmd": "filter", "gradient_map": { "stops": [[0, "#1B2433"], [0.5, "#C2651C"], [1, "#FFF3DC"]] } }
+```
+
+**Clouds, water, rock:** a noise fill. Sky: a `gradient` with an `area` and a noise `fill` whose
+stops are mostly sky with cloud at the top end (`[[0, "sky"], [0.6, "sky"], [1, "cloud"]]`),
+big `scale` (150–250), `detail` 4. Water: two blues, `scale` 40–80, `contrast` 1.2. Rock: two
+browns, small `scale` (15–25), `detail` 4, in the rock symbol itself so every rock's grain
+follows its size and turn. Paper: a `multiply` layer at 0.2–0.35 filled with
+`{"texture": "paper"}` on top of everything.
+
+```json
+{ "cmd": "gradient", "area": { "rect": [0, 0, 1600, 620] },
+  "fill": { "noise": { "scale": 220, "detail": 4, "contrast": 1.4, "stops": [[0, "sky"], [0.55, "sky"], [1, "cloud"]], "seed": 5 } } }
+```
+
+**Texture and a hand-made look:** give the brush a tip and dynamics once, then paint as usual.
+`chalk` with `size`/`opacity`/`lightness` dynamics for rock and bark; `bristle` with `follow`
+for painterly strokes; `leaf` with `follow` and `hue` for foliage along a `path`; `sparkle`
+with `scatter` for stars and glints.
+
+```json
+{ "cmd": "brush", "tip": "bristle", "size": 40, "color": "#8A6A4A", "flow": 0.7,
+  "dynamics": { "follow": true, "size": 0.2, "opacity": 0.3, "lightness": 0.1 } },
+{ "cmd": "path", "points": [[200, 600], [500, 560], [800, 600]], "seed": 2 }
+```
 
 **Soft light on the water or a soft cloud:** a very soft brush (`hardness` 0–0.1, `flow` 0.3–0.6)
 and a big `size`; `line` or `path` with `taper`.
@@ -248,6 +316,82 @@ group or symbol, so they move with it.
 
 **Rows and rings:** `repeat` with a `step`: fence posts (`translate`), petals or spokes (`rotate`
 around the centre as `origin`), shrinking copies (`scale`).
+
+## 5b. Making it beautiful: the five moves
+
+The phase 3 tools are for finish. Use them in this order, each on its own layers, checking
+with `--preview` between moves; a picture that doesn't read before move 2 won't be saved by
+moves 3 to 5.
+
+1. **Block in with living fills.** Big shapes back to front, and wherever a flat fill would
+   look dead, a `noise` fill: clouds in the sky, a two-blue water, grain in rock. Far things
+   get a `filter` with a little `blur` and `adjust` with less saturation (haze).
+2. **Shade inside shapes.** A clipping layer (`"clip": true`, `multiply` for shadow, `screen`
+   for light) above each big shape's layer; paint across it carelessly, only the shape shows.
+   A `mask` on a group keeps a reflection on the water or a highlight off a notch.
+3. **Texture with brushes.** A `tip` and `dynamics` on the brush, then the same `stroke`,
+   `path`, `hatch` and `scatter` as always; `stamp` for grass, leaves, pebbles and lights along
+   a line. Mostly near the focal point; far things stay smooth.
+4. **Light and depth.** A `glow` filter on the sun or a lamp, a `shadow` filter on each
+   character's `use`, one `outline` (with `rim` light) around a whole character.
+5. **Unify.** A `"from": "below"` layer with a `gradient_map` from the shadow colour through a
+   mid tone to the highlight, at 0.2 to 0.4; then `{"texture": "paper"}` on a `multiply` layer
+   at 0.2. Stop before it looks like a filter: the picture should still read as painted.
+
+All five on one small scene (26 commands):
+
+```json
+{
+  "title": "Making it beautiful: the four moves on one small scene",
+  "seed": 3,
+  "palette": { "sky": "#8EC1E6", "cloud": "#FFFFFF", "far": "#7A9AB0", "hill": "#4E7A4A", "hill_light": "#8CC25A",
+               "water_dark": "#2E5C8A", "water_light": "#6FA6D4", "yellow": "#F2C230", "wing": "#D9A21E", "beak": "#E8892B",
+               "ink": "#1A1410", "warm": "#FFF3DC", "mid": "#C2651C", "dark": "#1B2433" },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 400, "paper": "sky" },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "polygon", "points": [[-24, -8], [-44, -20], [-30, 4]], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [0, 0], "radius": [30, 20], "fill": "yellow" },
+      { "cmd": "ellipse", "center": [22, -28], "radius": 14, "fill": "yellow" },
+      { "cmd": "polygon", "points": [[33, -32], [50, -26], [33, -21]], "fill": "beak" },
+      { "cmd": "ellipse", "center": [-6, 0], "radius": [17, 9], "rotation": -12, "fill": "wing" },
+      { "cmd": "ellipse", "center": [27, -32], "radius": 2.5, "fill": "ink" } ] },
+
+    { "cmd": "layer", "name": "Sky", "note": "1. Block in, back to front: big shapes, noise where a flat fill would look dead" },
+    { "cmd": "gradient", "area": { "rect": [0, 0, 640, 240] },
+      "fill": { "noise": { "scale": 180, "detail": 4, "contrast": 1.4, "stops": [[0, "sky"], [0.55, "sky"], [1, "cloud"]], "seed": 5 } } },
+    { "cmd": "layer", "name": "Far hills" },
+    { "cmd": "ellipse", "center": [180, 300], "radius": [280, 110], "fill": "far" },
+    { "cmd": "ellipse", "center": [520, 310], "radius": [240, 100], "fill": "far" },
+    { "cmd": "filter", "blur": 4, "adjust": { "saturation": -0.3, "brightness": 0.1 }, "note": "haze: far things are soft and pale" },
+    { "cmd": "layer", "name": "Hill" },
+    { "cmd": "ellipse", "center": [320, 420], "radius": [420, 190], "fill": "hill" },
+    { "cmd": "layer", "name": "Hill light", "clip": true, "blend": "screen", "note": "2. Shading that stays inside: clipping layers" },
+    { "cmd": "gradient", "from": [320, 230], "to": [320, 330], "colors": ["hill_light", "transparent"], "opacity": 0.5 },
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "rect", "x": 0, "y": 300, "width": 640, "height": 100,
+      "fill": { "noise": { "scale": 70, "detail": 3, "contrast": 1.0, "colors": ["water_dark", "water_light"], "seed": 2 } } },
+
+    { "cmd": "layer", "name": "Grass", "note": "3. Texture with brushes: a tip and dynamics, stamps along a line" },
+    { "cmd": "stamp", "tip": "grass", "points": [[0, 302], [320, 296], [640, 302]], "spacing": 5, "size": [14, 26], "angle": [-12, 12], "follow": false, "colors": ["hill", "hill_light"] },
+
+    { "cmd": "layer", "name": "Duck", "note": "4. Light and depth with filters and outlines" },
+    { "cmd": "use", "name": "duck", "translate": [230, 340], "outline": { "color": "ink", "size": 2.5, "rim": { "color": "warm", "size": 2, "angle": -45 } },
+      "filter": { "shadow": { "offset": [0, 10], "blur": 8, "color": "#00000060" } } },
+    { "cmd": "layer", "name": "Reflection" },
+    { "cmd": "group", "mask": { "layer": "Water" }, "opacity": 0.3, "filter": { "blur": 2 }, "commands": [
+      { "cmd": "use", "name": "duck", "translate": [230, 364], "mirror": "y" } ] },
+    { "cmd": "layer", "name": "Sun" },
+    { "cmd": "group", "name": "sun", "filter": { "glow": { "radius": 40, "threshold": 0.6, "strength": 1.2 } }, "commands": [
+      { "cmd": "ellipse", "center": [540, 80], "radius": 30, "fill": "warm" } ] },
+
+    { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.22, "note": "5. Unify: one gradient map over everything, faint" },
+    { "cmd": "filter", "gradient_map": { "stops": [[0, "dark"], [0.5, "mid"], [1, "warm"]] } },
+    { "cmd": "layer", "name": "Paper", "blend": "multiply", "opacity": 0.2 },
+    { "cmd": "rect", "x": 0, "y": 0, "width": 640, "height": 400, "fill": { "texture": "paper" } }
+  ]
+}
+```
 
 ## 6. Light, colour and shapes: rules of thumb
 

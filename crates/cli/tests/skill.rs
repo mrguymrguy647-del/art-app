@@ -71,8 +71,10 @@ fn its_examples_play_without_mistakes() {
     let script = Script::parse(json[0]).unwrap_or_else(|e| panic!("{e}\n{}", json[0]));
     let mut text = json[0].trim().trim_end_matches('}').trim_end().to_owned();
     text = text.trim_end_matches(']').trim_end().to_owned();
+    // Played as a script in examples/, which is what the paths assume.
     let options = PlayOptions {
         dry_run: true,
+        folder: Some(root().join("examples")),
         ..PlayOptions::default()
     };
     for block in &json[1..] {
@@ -201,4 +203,84 @@ fn every_file_it_mentions_exists() {
         }
     }
     assert!(checked >= 4, "only {checked} files checked");
+}
+
+/// Every part in the library has a working example that paints without
+/// mistakes or warnings, a preview picture, and a row in the README.
+#[test]
+fn every_library_part_has_a_clean_example_and_a_preview() {
+    let library = root().join("skills/art-app/library");
+    let readme = std::fs::read_to_string(library.join("README.md")).unwrap();
+    let mut parts = 0;
+    for entry in std::fs::read_dir(&library).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        let Some(part) = name.strip_suffix("-example.json") else {
+            continue;
+        };
+        parts += 1;
+        assert!(
+            library.join(format!("{part}.png")).exists(),
+            "{part}.png is missing"
+        );
+        assert!(
+            part == "pond" || readme.contains(&format!("`{part}.json`")),
+            "{part} isn't in the README"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let script =
+            art_engine::script::Script::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let options = art_engine::script::PlayOptions {
+            folder: Some(library.clone()),
+            ..art_engine::script::PlayOptions::default()
+        };
+        let mut player = art_engine::script::Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player
+            .run(&mut document, |_, _| {})
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let report = player.report();
+        let mut warnings = report.warnings.clone();
+        warnings.extend(art_engine::script::unused_warnings(&[&report]));
+        assert!(warnings.is_empty(), "{name}: {warnings:?}");
+    }
+    assert!(parts >= 8, "{parts} examples");
+}
+
+/// Every gallery piece has its script, pictures and notes, is listed in
+/// the index, and paints without mistakes or warnings.
+#[test]
+fn every_gallery_piece_is_complete_and_paints_cleanly() {
+    let gallery = root().join("skills/art-app/gallery");
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
+            .unwrap();
+    let pieces = index["pieces"].as_array().unwrap();
+    assert!(pieces.len() >= 2);
+    for piece in pieces {
+        let folder = gallery.join(piece["folder"].as_str().unwrap());
+        for file in ["script.json", "final.png", "process.png", "notes.md"] {
+            assert!(
+                folder.join(file).exists(),
+                "{} is missing {file}",
+                folder.display()
+            );
+        }
+        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
+        let script = art_engine::script::Script::parse(&text).unwrap();
+        let options = art_engine::script::PlayOptions {
+            folder: Some(folder.clone()),
+            scale: 0.25,
+            ..art_engine::script::PlayOptions::default()
+        };
+        let mut player = art_engine::script::Player::new(script, options).unwrap();
+        let mut document = player.create_document().unwrap();
+        player
+            .run(&mut document, |_, _| {})
+            .unwrap_or_else(|e| panic!("{}: {e}", folder.display()));
+        let report = player.report();
+        let mut warnings = report.warnings.clone();
+        warnings.extend(art_engine::script::unused_warnings(&[&report]));
+        assert!(warnings.is_empty(), "{}: {warnings:?}", folder.display());
+    }
 }

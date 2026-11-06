@@ -282,18 +282,15 @@ impl Document {
         background: Background,
         show: impl Fn(&Layer) -> bool,
     ) -> Option<Tile> {
-        let mut showing = self
-            .layers
-            .iter()
-            .filter(|layer| show(layer) && layer.opacity() > 0.0)
-            .filter_map(|layer| layer.surface.tile(coord).map(|tile| (layer, tile)))
-            .peekable();
-        let (first_layer, first_tile) = *showing.peek()?;
+        let mut showing = self.showing_tiles(coord, show).into_iter().peekable();
+        let (first_layer, first_tile, first_base) = *showing.peek()?;
 
         let mut result = match background {
             // Quickest case: the lowest tile simply covers nothing.
             Background::Transparent
-                if first_layer.opacity() >= 1.0 && first_layer.blend() == BlendMode::Normal =>
+                if first_layer.opacity() >= 1.0
+                    && first_layer.blend() == BlendMode::Normal
+                    && first_base.is_none() =>
             {
                 showing.next();
                 first_tile.clone()
@@ -301,10 +298,43 @@ impl Document {
             Background::Transparent => Tile::new(),
             Background::Paper => self.paper_tile(coord),
         };
-        for (layer, tile) in showing {
-            combine(&mut result, tile, layer);
+        for (layer, tile, base) in showing {
+            combine(&mut result, tile, layer, base);
         }
         Some(result)
+    }
+
+    /// The layers `show` picks that have something in this tile, bottom
+    /// to top, each with the tile it's clipped to (a clipping layer shows
+    /// only where the nearest unclipped layer below it, its base, has
+    /// paint). A clipping layer whose base is hidden, or has nothing
+    /// here, is left out: it shows nothing.
+    fn showing_tiles(
+        &self,
+        coord: TileCoord,
+        show: impl Fn(&Layer) -> bool,
+    ) -> Vec<(&Layer, &Tile, Option<&Tile>)> {
+        let mut tiles = Vec::new();
+        // The base below the layer being looked at: its tile here, if it's shown.
+        let mut base: Option<Option<&Tile>> = None;
+        for layer in &self.layers {
+            let shown = show(layer);
+            if !layer.clip() {
+                base = shown.then(|| layer.surface.tile(coord));
+            }
+            if !shown || layer.opacity() <= 0.0 {
+                continue;
+            }
+            let Some(tile) = layer.surface.tile(coord) else {
+                continue;
+            };
+            if !layer.clip() {
+                tiles.push((layer, tile, None));
+            } else if let Some(Some(base_tile)) = base {
+                tiles.push((layer, tile, Some(base_tile)));
+            } // else: no base to show it on
+        }
+        tiles
     }
 
     /// The layers `show` picks, laid over `base` (a tile already holding
@@ -315,13 +345,8 @@ impl Document {
         mut base: Tile,
         show: impl Fn(&Layer) -> bool,
     ) -> Tile {
-        for layer in &self.layers {
-            if show(layer)
-                && layer.opacity() > 0.0
-                && let Some(tile) = layer.surface.tile(coord)
-            {
-                combine(&mut base, tile, layer);
-            }
+        for (layer, tile, clip_to) in self.showing_tiles(coord, show) {
+            combine(&mut base, tile, layer, clip_to);
         }
         base
     }
@@ -349,17 +374,27 @@ impl Document {
             Background::Paper if inside => self.paper,
             _ => Rgba8::TRANSPARENT,
         };
-        self.layers
-            .iter()
-            .filter(|layer| layer.visible())
-            .fold(start, |below, layer| {
-                blend_over(
-                    below,
-                    layer.surface.pixel(x, y),
-                    layer.opacity(),
-                    layer.blend(),
-                )
-            })
+        let mut result = start;
+        // The opacity of the nearest visible unclipped layer below (255 if
+        // it's not clipped at all), or `None` while there's no such layer.
+        let mut base_alpha: Option<u8> = None;
+        for layer in &self.layers {
+            if !layer.clip() {
+                base_alpha = layer.visible().then(|| layer.surface.pixel(x, y).a);
+            }
+            if !layer.visible() {
+                continue;
+            }
+            let mut pixel = layer.surface.pixel(x, y);
+            if layer.clip() {
+                match base_alpha {
+                    Some(alpha) => pixel = clipped(pixel, alpha),
+                    None => continue,
+                }
+            }
+            result = blend_over(result, pixel, layer.opacity(), layer.blend());
+        }
+        result
     }
 
     /// The colour you see at canvas position (x, y): all visible layers on
@@ -382,11 +417,43 @@ pub enum Background {
     Transparent,
 }
 
-/// Lays `top` (a tile of `layer`) over `result`, pixel by pixel.
-fn combine(result: &mut Tile, top: &Tile, layer: &Layer) {
+/// Lays `top` (a tile of `layer`) over `result`, pixel by pixel. With
+/// `clip_to`, each pixel is first made as see-through as that tile's.
+fn combine(result: &mut Tile, top: &Tile, layer: &Layer, clip_to: Option<&Tile>) {
     let (opacity, blend) = (layer.opacity(), layer.blend());
-    for (below, &pixel) in result.pixels_mut().iter_mut().zip(top.pixels()) {
-        *below = blend_over(*below, pixel, opacity, blend);
+    match clip_to {
+        None => {
+            for (below, &pixel) in result.pixels_mut().iter_mut().zip(top.pixels()) {
+                *below = blend_over(*below, pixel, opacity, blend);
+            }
+        }
+        Some(base) => {
+            let pixels = result.pixels_mut().iter_mut().zip(top.pixels());
+            for ((below, &pixel), base) in pixels.zip(base.pixels()) {
+                if base.a == 0 {
+                    continue;
+                }
+                *below = blend_over(*below, clipped(pixel, base.a), opacity, blend);
+            }
+        }
+    }
+}
+
+/// `pixel` made as see-through as a base pixel with opacity `alpha`
+/// (both premultiplied, so every channel is scaled).
+fn clipped(pixel: Rgba8, alpha: u8) -> Rgba8 {
+    match alpha {
+        255 => pixel,
+        0 => Rgba8::TRANSPARENT,
+        _ => {
+            let scale = |v: u8| ((u32::from(v) * u32::from(alpha) + 127) / 255) as u8;
+            Rgba8::new(
+                scale(pixel.r),
+                scale(pixel.g),
+                scale(pixel.b),
+                scale(pixel.a),
+            )
+        }
     }
 }
 
@@ -583,5 +650,91 @@ mod tests {
         assert!(doc.contains_tile(TileCoord::new(15, 11)));
         assert!(!doc.contains_tile(TileCoord::new(16, 0)));
         assert!(!doc.contains_tile(TileCoord::new(0, -1)));
+    }
+
+    #[test]
+    fn a_clipping_layer_shows_only_where_its_base_has_paint() {
+        let (mut doc, bottom, top) = red_under_blue();
+        // Blue is painted at (10, 10) only? Make the base small and the
+        // clipped layer wide, so the difference shows.
+        doc.layer_mut(top).unwrap().surface.set_pixel(50, 50, BLUE);
+        doc.layer_mut(bottom)
+            .unwrap()
+            .surface
+            .set_pixel(60, 60, Rgba8::new(128, 0, 0, 128));
+        let clipped = LayerProps {
+            clip: true,
+            ..doc.layer(top).unwrap().props()
+        };
+        doc.layer_mut(top).unwrap().set_props(clipped);
+        assert!(doc.layer(top).unwrap().clip());
+        // On the base: shown. Off it: not.
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), BLUE);
+        assert_eq!(
+            doc.composite_pixel(50, 50, Background::Transparent),
+            Rgba8::TRANSPARENT
+        );
+        let tile = doc
+            .composite_tile(TileCoord::new(0, 0), Background::Transparent)
+            .unwrap();
+        assert_eq!(tile.pixel(10, 10), BLUE);
+        assert_eq!(tile.pixel(50, 50), Rgba8::TRANSPARENT);
+        // A half-transparent base makes the clipped paint half-transparent.
+        doc.layer_mut(top).unwrap().surface.set_pixel(60, 60, BLUE);
+        let half = doc.composite_pixel(60, 60, Background::Transparent);
+        assert_eq!(half, Rgba8::new(64, 0, 128, 192), "half blue over the base");
+        // Hiding the base hides the clipped layer with it.
+        doc.layer_mut(bottom).unwrap().set_visible(false);
+        assert_eq!(
+            doc.composite_pixel(10, 10, Background::Transparent),
+            Rgba8::TRANSPARENT
+        );
+        assert!(
+            doc.composite_tile(TileCoord::new(0, 0), Background::Transparent)
+                .is_none_or(|tile| tile.pixel(10, 10) == Rgba8::TRANSPARENT)
+        );
+        // Turning clipping on changes how it looks, so tiles are redrawn.
+        doc.layer_mut(top).unwrap().surface.take_dirty_tiles();
+        let unclipped = LayerProps {
+            clip: false,
+            ..doc.layer(top).unwrap().props()
+        };
+        doc.layer_mut(top).unwrap().set_props(unclipped);
+        assert!(
+            !doc.layer_mut(top)
+                .unwrap()
+                .surface
+                .take_dirty_tiles()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn several_clipping_layers_share_the_nearest_unclipped_base() {
+        let mut doc = Document::new(100, 100);
+        let base = doc.active_id();
+        doc.active_layer_mut().surface.set_pixel(10, 10, RED);
+        let mut first = doc.new_layer();
+        first.surface.set_pixel(10, 10, BLUE);
+        first.surface.set_pixel(20, 20, BLUE);
+        first.set_props(LayerProps {
+            clip: true,
+            ..first.props()
+        });
+        let mut second = doc.new_layer();
+        second.surface.set_pixel(20, 20, Rgba8::new(0, 255, 0, 255));
+        second.set_props(LayerProps {
+            clip: true,
+            ..second.props()
+        });
+        doc.insert_layer(1, first);
+        doc.insert_layer(2, second);
+        assert_eq!(doc.composite_pixel(10, 10, Background::Transparent), BLUE);
+        // Both clipped layers are clipped to the base, not to each other.
+        assert_eq!(
+            doc.composite_pixel(20, 20, Background::Transparent),
+            Rgba8::TRANSPARENT
+        );
+        let _ = base;
     }
 }

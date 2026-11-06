@@ -1,0 +1,7 @@
+{ "title": "Library: lily pad", "notes": "A lily pad around [0, 0], about 90 wide, with a notch towards the right. Params: color, light, notch (degrees, where the notch points). Put it on the water layer or above.",
+  "palette": { "pad": "#3F8A3A", "pad_light": "#8CC25A", "pad_ink": "#1E3A1A" },
+  "commands": [
+    { "cmd": "define", "name": "lilypad", "params": { "color": "pad", "light": "pad_light", "notch": 20 }, "commands": [
+      { "cmd": "group", "rotate": "$notch", "outline": { "color": "pad_ink", "size": 1.5 }, "mask": { "not": { "polygon": [[0, 0], [60, -14], [60, 8]] } }, "commands": [
+        { "cmd": "ellipse", "center": [0, 0], "radius": [45, 30], "fill": "$color" },
+        { "cmd": "gradient", "kind": "radial", "area": { "ellipse": [0, 0, 45, 30] }, "from": [-14, -10], "to": [30, 20], "colors": ["$light", "transparent"] } ] } ] } ] }

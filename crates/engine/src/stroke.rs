@@ -16,8 +16,12 @@
 //! over the original pixels it makes them more transparent.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::brush::{BrushMode, BrushSettings, dab_coverage};
+use crate::brush::{BrushMode, BrushSettings, TipShape, dab_coverage};
+use crate::color::Hsv;
+use crate::fill::{Mask, Paint, Prepared};
+use crate::random::Random;
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_PIXELS, TILE_SIZE, Tile};
 
@@ -52,8 +56,23 @@ pub struct Stroke {
     brush: BrushSettings,
     /// Never paint outside this rectangle (the canvas).
     limits: PixelRect,
+    /// A group's mask: paint only lands inside it, as much as it covers.
+    clip: Option<Arc<Mask>>,
+    /// The shape of each dab, unless it's simply round.
+    tip: Option<Arc<TipShape>>,
+    /// A pattern (noise, a texture) painted instead of the brush colour.
+    source: Option<Prepared>,
+    /// Where the dynamics get their variation from.
+    random: Random,
+    /// The centre of the last dab, and the direction the stroke was going
+    /// there (degrees clockwise, 0 = right), for `follow`.
+    last_dab: Option<(f32, f32)>,
+    heading: f32,
     /// How strongly this stroke covers each pixel so far (0..1), per tile.
     coverage: HashMap<TileCoord, Box<[f32]>>,
+    /// The colour painted at each pixel, per tile, when the colour varies
+    /// from dab to dab (otherwise it's the brush colour everywhere).
+    colors: HashMap<TileCoord, Box<[[u8; 3]]>>,
     before: TilesBefore,
     /// The last few points we were given (at most 4), to shape the curve.
     recent: Vec<StrokePoint>,
@@ -68,9 +87,16 @@ impl Stroke {
     /// canvas, `Document::bounds`).
     pub fn new(brush: BrushSettings, limits: PixelRect) -> Self {
         Self {
+            tip: brush.tip.shape(),
+            source: None,
             brush,
             limits,
+            clip: None,
+            random: Random::new(0),
+            last_dab: None,
+            heading: 0.0,
             coverage: HashMap::new(),
+            colors: HashMap::new(),
             before: HashMap::new(),
             recent: Vec::with_capacity(5),
             path_end: None,
@@ -174,30 +200,75 @@ impl Stroke {
         self.brush.dab_distance(self.brush.dab(pressure).radius)
     }
 
+    /// The stroke will only paint inside `mask` (a group's mask), as
+    /// strongly as the mask covers each pixel.
+    pub fn clipped(mut self, mask: Arc<Mask>) -> Self {
+        self.limits = self.limits.intersect(&mask.rect());
+        self.clip = Some(mask);
+        self
+    }
+
+    /// Where the brush's dynamics get their randomness: the same seed
+    /// always gives the same stroke.
+    pub fn seeded(mut self, seed: u64) -> Self {
+        self.random = Random::new(seed);
+        self
+    }
+
+    /// Stamps this shape instead of the brush's own tip (for a tip
+    /// loaded from a file, which the brush only knows by number).
+    pub fn with_tip(mut self, shape: Arc<TipShape>) -> Self {
+        self.tip = Some(shape);
+        self
+    }
+
+    /// Paints with this pattern (noise, a texture, a gradient) instead of
+    /// the brush colour: each pixel gets the pattern's colour there.
+    pub fn with_source(mut self, paint: &Paint) -> Self {
+        self.source = Some(Prepared::new(paint));
+        self
+    }
+
     /// Stamps one dab centred on `at`.
     fn stamp(&mut self, layer: &mut Surface, at: StrokePoint) {
         let dab = self.brush.dab(at.pressure);
         if dab.opacity <= 0.0 || dab.flow <= 0.0 {
             return;
         }
-        let reach = dab.radius + 1.0; // the soft edge can go half a pixel further
+        // With the alpha lock on, the eraser can't change anything, and
+        // paint only recolours pixels that have paint.
+        let locked = layer.locked;
+        if locked && self.brush.mode == BrushMode::Erase {
+            return;
+        }
+        let dab = self.vary(dab, at);
+        let (cx, cy) = dab.centre;
+        let reach = match &self.tip {
+            // The soft edge can go half a pixel further.
+            None => dab.radius + 1.0,
+            // A turned shape reaches into the dab's corners.
+            Some(_) => dab.radius * std::f32::consts::SQRT_2 + 1.0,
+        };
         let rect = PixelRect::new(
-            (at.x - reach).floor() as i32,
-            (at.y - reach).floor() as i32,
-            (at.x + reach).ceil() as i32,
-            (at.y + reach).ceil() as i32,
+            (cx - reach).floor() as i32,
+            (cy - reach).floor() as i32,
+            (cx + reach).ceil() as i32,
+            (cy + reach).ceil() as i32,
         )
         .intersect(&self.limits);
+        let centre = StrokePoint::new(cx, cy, at.pressure);
+        let (sin, cos) = dab.angle.to_radians().sin_cos();
+        let varies_color = self.brush.dynamics.varies_color();
 
         for coord in rect.tiles() {
             let (left, top) = coord.origin();
             let size = TILE_SIZE as i32;
             let area = rect.intersect(&PixelRect::new(left, top, left + size, top + size));
-            if !circle_touches(&area, at, reach) {
+            if !circle_touches(&area, centre, reach) {
                 continue; // a corner of the dab's box that the round dab misses
             }
-            if self.brush.mode == BrushMode::Erase && layer.tile(coord).is_none() {
-                continue; // nothing painted here, so nothing to erase
+            if (self.brush.mode == BrushMode::Erase || locked) && layer.tile(coord).is_none() {
+                continue; // nothing painted here, so nothing to erase or recolour
             }
 
             // 1. Raise this stroke's coverage where the dab is stronger.
@@ -205,18 +276,37 @@ impl Stroke {
                 .coverage
                 .entry(coord)
                 .or_insert_with(|| vec![0.0; TILE_PIXELS].into_boxed_slice());
+            let mut colors = varies_color.then(|| {
+                self.colors
+                    .entry(coord)
+                    .or_insert_with(|| vec![self.brush.color; TILE_PIXELS].into_boxed_slice())
+            });
             let mut changed = false;
             for y in area.top..area.bottom {
                 for x in area.left..area.right {
                     // Measure from the pixel's centre, hence + 0.5.
-                    let distance = (x as f32 + 0.5 - at.x).hypot(y as f32 + 0.5 - at.y);
-                    let target =
-                        dab.opacity * dab_coverage(distance, dab.radius, self.brush.hardness);
+                    let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                    let distance = dx.hypot(dy);
+                    let shape = match &self.tip {
+                        None => dab_coverage(distance, dab.radius, self.brush.hardness),
+                        Some(tip) => {
+                            // Into the tip's own square: turned back, and
+                            // scaled so the dab's radius is 1.
+                            let u = (dx * cos + dy * sin) / dab.radius;
+                            let v = (dy * cos - dx * sin) / dab.radius;
+                            tip.sample(u, v, 2.0 * dab.radius)
+                                * dab_coverage(distance, reach - 0.5, self.brush.hardness)
+                        }
+                    };
+                    let target = dab.opacity * shape;
                     let i = tile_index(x - left, y - top);
                     if target > coverage[i] {
                         // Flow 1: jump straight to the target. Lower flow:
                         // move part of the way, so paint builds up.
                         coverage[i] += (target - coverage[i]) * dab.flow;
+                        if let Some(colors) = &mut colors {
+                            colors[i] = dab.color;
+                        }
                         changed = true;
                     }
                 }
@@ -224,6 +314,7 @@ impl Stroke {
             if !changed {
                 continue;
             }
+            let colors = colors.map(|c| &**c);
 
             // 2. Remember the tile as it was before the stroke (first time only).
             let before = self
@@ -234,21 +325,105 @@ impl Stroke {
 
             // 3. Change the original pixels, as strongly as the coverage says:
             //    lay the colour over them, or erase them.
+            let clip = self.clip.as_deref();
             let tile = layer.tile_mut(coord);
             for y in area.top..area.bottom {
                 for x in area.left..area.right {
                     let (tile_x, tile_y) = ((x - left) as usize, (y - top) as usize);
                     let original = before.map_or(Rgba8::TRANSPARENT, |t| t.pixel(tile_x, tile_y));
-                    let strength = coverage[tile_index(x - left, y - top)];
-                    let pixel = match self.brush.mode {
-                        BrushMode::Paint => paint_over(original, self.brush.color, strength),
-                        BrushMode::Erase => erase(original, strength),
+                    let i = tile_index(x - left, y - top);
+                    let mut strength = coverage[i];
+                    if let Some(clip) = clip {
+                        strength *= f32::from(clip.get(x, y)) / 255.0;
+                    }
+                    let color = colors.map_or(self.brush.color, |c| c[i]);
+                    let pixel = match (self.brush.mode, &self.source) {
+                        (BrushMode::Erase, _) => erase(original, strength),
+                        (BrushMode::Paint, Some(source)) => {
+                            let sampled = source.color_at(x as f32 + 0.5, y as f32 + 0.5);
+                            if locked {
+                                recolor(original, straight(sampled), strength * sampled[3] / 255.0)
+                            } else {
+                                paint_source_over(original, sampled, strength)
+                            }
+                        }
+                        (BrushMode::Paint, None) if locked => recolor(original, color, strength),
+                        (BrushMode::Paint, None) => paint_over(original, color, strength),
                     };
                     tile.set_pixel(tile_x, tile_y, pixel);
                 }
             }
         }
     }
+
+    /// This dab with the brush's dynamics applied: turned to follow the
+    /// stroke, and varied in size, angle, opacity, place and colour by
+    /// the stroke's random numbers. A plain brush gets the dab as it is.
+    fn vary(&mut self, dab: crate::brush::Dab, at: StrokePoint) -> VariedDab {
+        let dynamics = self.brush.dynamics;
+        let mut varied = VariedDab {
+            centre: (at.x, at.y),
+            radius: dab.radius,
+            opacity: dab.opacity,
+            flow: dab.flow,
+            angle: self.brush.angle,
+            color: self.brush.color,
+        };
+        if dynamics.is_off() {
+            return varied;
+        }
+        if dynamics.follow {
+            if let Some((px, py)) = self.last_dab {
+                let (dx, dy) = (at.x - px, at.y - py);
+                if dx.hypot(dy) > 1e-3 {
+                    self.heading = dy.atan2(dx).to_degrees();
+                }
+            }
+            varied.angle += self.heading;
+        }
+        self.last_dab = Some((at.x, at.y));
+        let random = &mut self.random;
+        if dynamics.size > 0.0 {
+            varied.radius = (dab.radius * (1.0 + dynamics.size * random.range(-1.0, 1.0))).max(0.5);
+        }
+        if dynamics.angle > 0.0 {
+            varied.angle += dynamics.angle * random.range(-1.0, 1.0);
+        }
+        if dynamics.opacity > 0.0 {
+            varied.opacity =
+                (dab.opacity * (1.0 + dynamics.opacity * random.range(-1.0, 1.0))).clamp(0.0, 1.0);
+        }
+        if dynamics.scatter > 0.0 {
+            let distance = random.range(0.0, dynamics.scatter);
+            let (sin, cos) = random.range(0.0, std::f32::consts::TAU).sin_cos();
+            varied.centre = (at.x + cos * distance, at.y + sin * distance);
+        }
+        if dynamics.varies_color() {
+            let mut hsv = Hsv::from_rgb(self.brush.color);
+            if dynamics.hue > 0.0 {
+                hsv.h += dynamics.hue / 360.0 * random.range(-1.0, 1.0);
+            }
+            if dynamics.saturation > 0.0 {
+                hsv.s *= 1.0 + dynamics.saturation * random.range(-1.0, 1.0);
+            }
+            if dynamics.lightness > 0.0 {
+                hsv.v *= 1.0 + dynamics.lightness * random.range(-1.0, 1.0);
+            }
+            varied.color = hsv.to_rgb();
+        }
+        varied
+    }
+}
+
+/// One dab, with the dynamics applied.
+struct VariedDab {
+    centre: (f32, f32),
+    radius: f32,
+    opacity: f32,
+    flow: f32,
+    /// Degrees clockwise.
+    angle: f32,
+    color: [u8; 3],
 }
 
 /// A point on the smooth curve from `b` to `c` (`t` from 0 to 1), shaped by
@@ -313,6 +488,49 @@ fn paint_over(under: Rgba8, color: [u8; 3], strength: f32) -> Rgba8 {
         mix(f32::from(color[1]), under.g),
         mix(f32::from(color[2]), under.b),
         mix(255.0, under.a),
+    )
+}
+
+/// A premultiplied pattern colour (each 0..255) laid over `under` with
+/// the given strength: like `paint_over`, with the colour's own opacity.
+fn paint_source_over(under: Rgba8, color: [f32; 4], strength: f32) -> Rgba8 {
+    let keep = 1.0 - strength * color[3] / 255.0;
+    let mix = |paint: f32, under: u8| (paint * strength + f32::from(under) * keep).round() as u8;
+    let a = mix(color[3], under.a);
+    Rgba8::new(
+        mix(color[0], under.r).min(a),
+        mix(color[1], under.g).min(a),
+        mix(color[2], under.b).min(a),
+        a,
+    )
+}
+
+/// The plain colour of a premultiplied one (each 0..255).
+fn straight(color: [f32; 4]) -> [u8; 3] {
+    if color[3] <= 0.0 {
+        return [0, 0, 0];
+    }
+    let un = |c: f32| (c / color[3] * 255.0).round().clamp(0.0, 255.0) as u8;
+    [un(color[0]), un(color[1]), un(color[2])]
+}
+
+/// `under` recoloured towards `color` by `strength` (0..1), keeping its
+/// opacity exactly as it is (the alpha lock).
+fn recolor(under: Rgba8, color: [u8; 3], strength: f32) -> Rgba8 {
+    if under.a == 0 {
+        return under;
+    }
+    // Premultiplied: the paint colour is scaled by the pixel's opacity.
+    let scale = f32::from(under.a) / 255.0;
+    let keep = 1.0 - strength;
+    let mix = |paint: u8, under: u8| {
+        (f32::from(paint) * scale * strength + f32::from(under) * keep).round() as u8
+    };
+    Rgba8::new(
+        mix(color[0], under.r).min(under.a),
+        mix(color[1], under.g).min(under.a),
+        mix(color[2], under.b).min(under.a),
+        under.a,
     )
 }
 
@@ -621,5 +839,50 @@ mod tests {
         // Tile (1,0) didn't exist before the stroke.
         assert_eq!(before[&TileCoord::new(1, 0)], None);
         assert_eq!(before.len(), 2);
+    }
+
+    #[test]
+    fn the_alpha_lock_keeps_a_strokes_opacity_where_it_was() {
+        let mut layer = Surface::new();
+        layer.set_pixel(50, 50, Rgba8::new(0, 0, 255, 255));
+        layer.set_pixel(51, 50, Rgba8::new(0, 0, 128, 128));
+        layer.locked = true;
+        let red = BrushSettings {
+            color: [255, 0, 0],
+            ..hard_brush(10.0)
+        };
+        paint(red, &mut layer, &[point(50.0, 50.0)]);
+        assert_eq!(layer.pixel(50, 50), Rgba8::new(255, 0, 0, 255));
+        let half = layer.pixel(51, 50);
+        assert_eq!(half.a, 128, "{half:?}");
+        assert_eq!((half.r, half.b), (128, 0), "red, as see-through as before");
+        assert_eq!(layer.pixel(52, 52), Rgba8::TRANSPARENT, "no new paint");
+        // The eraser does nothing under the lock.
+        let before = paint(eraser(10.0), &mut layer, &[point(50.0, 50.0)]);
+        assert!(before.is_empty());
+        assert_eq!(layer.pixel(50, 50).a, 255);
+    }
+
+    #[test]
+    fn a_clipped_stroke_paints_only_inside_its_mask() {
+        let mut layer = Surface::new();
+        let mut mask = Mask::new(PixelRect::new(40, 40, 60, 60));
+        for y in 40..60 {
+            for x in 40..50 {
+                mask.set(x, y, 255);
+            }
+        }
+        mask.set(50, 50, 128);
+        let mut stroke = Stroke::new(hard_brush(20.0), CANVAS).clipped(Arc::new(mask));
+        stroke.add_point(&mut layer, point(50.0, 50.0));
+        stroke.finish(&mut layer);
+        assert_eq!(layer.pixel(45, 50), Rgba8::new(0, 0, 0, 255));
+        assert_eq!(layer.pixel(50, 50).a, 128, "half covered");
+        assert_eq!(layer.pixel(55, 50), Rgba8::TRANSPARENT);
+        assert_eq!(
+            layer.pixel(45, 30),
+            Rgba8::TRANSPARENT,
+            "outside the mask's box"
+        );
     }
 }

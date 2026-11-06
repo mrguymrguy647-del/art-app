@@ -1,0 +1,6 @@
+{ "palette": { "water": "#4A78B8" }, "commands": [
+    { "cmd": "canvas", "width": 320, "height": 200, "paper": "water" },
+    { "cmd": "include", "file": "lilypad.json" },
+    { "cmd": "use", "name": "lilypad", "translate": [100, 100], "scale": 1.3 },
+    { "cmd": "use", "name": "lilypad", "translate": [220, 70], "with": { "notch": 150 } },
+    { "cmd": "use", "name": "lilypad", "translate": [230, 150], "scale": 0.7, "with": { "notch": -60 } } ] }

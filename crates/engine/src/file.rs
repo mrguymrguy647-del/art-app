@@ -62,6 +62,11 @@ struct LayerDescription {
     visible: bool,
     opacity: f32,
     blend: String,
+    /// Added after version 1 files were first written: missing means off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    clip: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lock: bool,
 }
 
 /// Something went wrong while saving, opening or exporting.
@@ -140,6 +145,8 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
                 visible: layer.visible(),
                 opacity: layer.opacity(),
                 blend: layer.blend().name().to_owned(),
+                clip: layer.clip(),
+                lock: layer.lock(),
             })
             .collect(),
     };
@@ -248,6 +255,8 @@ pub fn read_document<R: Read + Seek>(reader: R) -> Result<Document, FileError> {
                 opacity: saved.opacity,
                 // Checked by `check_description`.
                 blend: BlendMode::from_name(&saved.blend).unwrap_or_default(),
+                clip: saved.clip,
+                lock: saved.lock,
             };
             Layer::from_saved(LayerId(index as u64 + 1), props, surface)
         })
@@ -403,6 +412,8 @@ mod tests {
         let renamed = LayerProps {
             name: "Sketch ✏".into(),
             blend: BlendMode::Multiply,
+            clip: true,
+            lock: true,
             ..doc.active_layer().props()
         };
         doc.active_layer_mut().set_props(renamed);
@@ -437,6 +448,9 @@ mod tests {
                 );
             }
         }
+        let sketch = &opened.layers()[2];
+        assert!(sketch.clip() && sketch.lock(), "clip and lock are saved");
+        assert!(!opened.layers()[0].clip() && !opened.layers()[0].lock());
         // New layers keep counting up instead of repeating names.
         let mut opened = opened;
         assert_eq!(opened.new_layer().name(), "Layer 4");

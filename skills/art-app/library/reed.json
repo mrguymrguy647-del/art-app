@@ -1,0 +1,8 @@
+{ "title": "Library: reed", "notes": "One reed: a stem from [0, 0] up to about y = -120 with a brown head. Params: lean (pixels the top leans right), stem, head. Stamp or repeat several with different leans.",
+  "palette": { "reed_stem": "#5E8A3A", "reed_head": "#6B4A2B" },
+  "commands": [
+    { "cmd": "define", "name": "reed", "params": { "lean": 6, "stem": "reed_stem", "head": "reed_head" }, "commands": [
+      { "cmd": "group", "translate": ["$lean", 0], "commands": [
+        { "cmd": "path", "points": [[0, -120], [-2, -60], [0, 0]], "size": 3, "color": "$stem", "taper": [0.5, 0] },
+        { "cmd": "path", "points": [[0, -124], [-1, -112], [-1, -100]], "size": 7, "color": "$head", "hardness": 0.9 } ] },
+      { "cmd": "path", "points": [[0, -100], [-14, -40], [-8, 0]], "size": 2.5, "color": "$stem", "taper": [0.6, 0] } ] } ] }

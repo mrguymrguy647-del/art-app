@@ -133,18 +133,55 @@ impl LayersPanel {
     /// One row per layer, top layer first (like the stack itself).
     fn layer_list(&mut self, ui: &mut egui::Ui, document: &mut Document, history: &mut History) {
         // Copy what we show first, so we can change the document while drawing.
-        let rows: Vec<(LayerId, String, bool)> = document
+        let rows: Vec<(LayerId, String, bool, bool, bool)> = document
             .layers()
             .iter()
             .rev()
-            .map(|layer| (layer.id(), layer.name().to_owned(), layer.visible()))
+            .map(|layer| {
+                (
+                    layer.id(),
+                    layer.name().to_owned(),
+                    layer.visible(),
+                    layer.clip(),
+                    layer.lock(),
+                )
+            })
             .collect();
         let active = document.active_id();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for (id, name, visible) in rows {
+            for (id, name, visible, clip, lock) in rows {
                 ui.horizontal(|ui| {
                     ui.set_min_height(ROW_HEIGHT);
+
+                    // Clip to the layer below, and the alpha lock: small
+                    // toggles, each one undo step.
+                    let mut clipped = clip;
+                    let mut locked = lock;
+                    let clip_tip = "Clip: show this layer only where the layer below has paint";
+                    let lock_tip = "Lock: painting only recolours what's already on this layer";
+                    let clip_changed = ui
+                        .toggle_value(&mut clipped, "⤵")
+                        .on_hover_text(clip_tip)
+                        .changed();
+                    let lock_changed = ui
+                        .toggle_value(&mut locked, "🔒")
+                        .on_hover_text(lock_tip)
+                        .changed();
+                    if (clip_changed || lock_changed)
+                        && let Some(layer) = document.layer(id)
+                    {
+                        let before = layer.props();
+                        let after = LayerProps {
+                            clip: clipped,
+                            lock: locked,
+                            ..before.clone()
+                        };
+                        let script = record::layer_changes(&before, &after);
+                        if let Some(command) = LayerPropsCommand::apply(document, id, after) {
+                            history.push_recorded(Box::new(command), script);
+                        }
+                    }
 
                     // Show / hide.
                     let mut shown = visible;

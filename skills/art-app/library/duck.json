@@ -1,0 +1,11 @@
+{ "title": "Library: duck", "notes": "The duck, facing right, around [0, 0] (the body's middle), about 90 wide and 70 tall, one outline around the whole bird. Params: color, color2 (the wing), beak, ink. Mirror with the use's \"mirror\": \"x\".",
+  "palette": { "duck_yellow": "#F2C230", "duck_wing": "#D9A21E", "duck_beak": "#E8892B", "duck_ink": "#1A1410" },
+  "commands": [
+    { "cmd": "define", "name": "duck", "params": { "color": "duck_yellow", "color2": "duck_wing", "beak": "duck_beak", "ink": "duck_ink" }, "commands": [
+      { "cmd": "group", "name": "bird", "outline": { "color": "$ink", "size": 2.5 }, "commands": [
+        { "cmd": "polygon", "points": [[-24, -8], [-44, -20], [-30, 4]], "fill": "$color" },
+        { "cmd": "ellipse", "center": [0, 0], "radius": [30, 20], "fill": "$color" },
+        { "cmd": "ellipse", "center": [22, -28], "radius": 14, "fill": "$color" },
+        { "cmd": "polygon", "points": [[33, -32], [50, -26], [33, -21]], "fill": "$beak" },
+        { "cmd": "ellipse", "center": [-6, 0], "radius": [17, 9], "rotation": -12, "fill": "$color2", "outline": "$ink", "outline_size": 1.5 },
+        { "cmd": "ellipse", "center": [27, -32], "radius": 2.5, "fill": "$ink" } ] } ] } ] }

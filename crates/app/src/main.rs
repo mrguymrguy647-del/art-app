@@ -11,6 +11,7 @@ mod brush_panel;
 mod canvas_view;
 mod color_panel;
 mod files;
+mod filter_tool;
 mod layers_panel;
 mod paint_tool;
 mod pen_input;
@@ -26,6 +27,7 @@ use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};
 use animation_view::{AnimationView, PanelAction};
 use canvas_view::CanvasView;
 use files::{AnimationExport, DEFAULT_SIZE, Files};
+use filter_tool::FilterTool;
 use pen_input::PenInput;
 use pen_test::PenTestScreen;
 use playback::{BarAction, Playback};
@@ -81,6 +83,8 @@ struct ArtApp {
     /// New, open, save, export, and the window title.
     files: Files,
     canvas: CanvasView,
+    /// The Filters menu and its window.
+    filters: FilterTool,
     pen_test: PenTestScreen,
     screen: Screen,
     /// A painting script being played on the canvas ("Play strokes").
@@ -153,12 +157,15 @@ impl ArtApp {
             None => None,
         }
         .unwrap_or_else(|| Document::new(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
+        let mut canvas = CanvasView::default();
+        canvas.fit_text_size(document.height());
         Self {
             pen_input,
             document,
             history: History::default(),
             files,
-            canvas: CanvasView::default(),
+            canvas,
+            filters: FilterTool::default(),
             pen_test: PenTestScreen::default(),
             screen: Screen::Canvas,
             playback,
@@ -302,18 +309,20 @@ impl eframe::App for ArtApp {
 
         // While a small window like "Save changes?" is open, or a script
         // is playing, shortcuts would act on the picture, so they're ignored.
-        let (mut undo, mut redo, mut file_action) = if self.files.dialog_open() || busy {
-            (false, false, None)
-        } else {
-            let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
-            (undo, redo, self.files.shortcuts(ui.ctx()))
-        };
+        let (mut undo, mut redo, mut file_action) =
+            if self.files.dialog_open() || self.filters.dialog_open() || busy {
+                (false, false, None)
+            } else {
+                let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
+                (undo, redo, self.files.shortcuts(ui.ctx()))
+            };
 
         let mut layer_action = None;
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 file_action = file_action.or(self.files.menu(ui, busy));
                 layer_action = layer_menu(ui, busy || self.screen != Screen::Canvas);
+                self.filters.menu(ui, busy || self.screen != Screen::Canvas);
                 ui.separator();
                 ui.selectable_value(&mut self.screen, Screen::Canvas, "Canvas");
                 ui.selectable_value(&mut self.screen, Screen::PenTest, "Pen test");
@@ -369,6 +378,15 @@ impl eframe::App for ArtApp {
             }
         }
 
+        // The Filters window, if one is open.
+        if !self.canvas.is_painting() {
+            self.filters
+                .update(ui.ctx(), &mut self.document, &mut self.history);
+            if let Some(text) = self.filters.take_notice() {
+                self.canvas.show_notice(text);
+            }
+        }
+
         // New, open, save, export; asks "Save changes?" when needed.
         let animation_name = self.animation.as_ref().map(|v| v.current().name.clone());
         let new_document = self.files.update(
@@ -383,6 +401,7 @@ impl eframe::App for ArtApp {
             self.document = document;
             self.history = History::default();
             self.canvas.reset();
+            self.canvas.fit_text_size(self.document.height());
             self.animation = None;
             self.frame_shown = None;
         }

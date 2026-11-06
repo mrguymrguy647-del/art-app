@@ -1,0 +1,5 @@
+{ "palette": { "sky": "#8EC1E6" }, "commands": [
+    { "cmd": "canvas", "width": 320, "height": 200, "paper": "sky" },
+    { "cmd": "include", "file": "cloud.json" },
+    { "cmd": "use", "name": "cloud", "translate": [110, 70] },
+    { "cmd": "use", "name": "cloud", "translate": [240, 120], "with": { "puff": 0.6 } } ] }
