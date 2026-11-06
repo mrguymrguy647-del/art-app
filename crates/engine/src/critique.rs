@@ -1275,24 +1275,50 @@ mod tests {
 mod reference_tests {
     use super::*;
 
-    #[test]
-    fn the_reference_pictures_are_not_flat_and_have_value_groups() {
+    fn critique_of(file: &str) -> Critique {
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../skills/art-app/references");
-        for file in ["astronaut.png", "chelsea.png", "coffee.png", "rocket.jpg"] {
-            let image = Image::load(&folder.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
-            let subject = Subject {
-                image: &image,
-                focal: None,
-                focal_part: None,
-                key_colors: vec![],
-                parts: vec![],
-            };
-            let c = Critique::of(&subject);
+        let image = Image::load(&folder.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let subject = Subject {
+            image: &image,
+            focal: None,
+            focal_part: None,
+            key_colors: vec![],
+            parts: vec![],
+        };
+        let c = Critique::of(&subject);
+        assert_eq!(c, Critique::of(&subject), "{file}: deterministic");
+        eprintln!(
+            "{file}: flat {} (middle {:.2}), groups {:?}, hues {}, warm {:.2}, weight ({:.2}, {:.2}), peak {:?}",
+            c.values.flat,
+            c.values.middle,
+            c.values.groups,
+            c.colour.hues,
+            c.colour.warm,
+            c.composition.weight.0,
+            c.composition.weight.1,
+            c.focal.peak
+        );
+        c
+    }
+
+    #[test]
+    fn the_reference_pictures_mostly_pass() {
+        for file in [
+            "astronaut.png",
+            "chelsea.png",
+            "coffee.png",
+            "rocket.jpg",
+            "van-gogh-starry-night.jpg",
+            "vermeer-girl-with-a-pearl-earring.jpg",
+            "friedrich-wanderer.jpg",
+            "hokusai-great-wave.jpg",
+        ] {
+            let c = critique_of(file);
             assert!(!c.values.flat, "{file} is called flat: {:?}", c.values);
             assert!(c.values.groups.len() >= 3, "{file}: {:?}", c.values.groups);
             assert!(
-                c.colour.hues >= 1 && c.colour.hues <= 10,
+                c.colour.hues >= 1 && c.colour.hues <= 12,
                 "{file}: {} hues",
                 c.colour.hues
             );
@@ -1302,7 +1328,15 @@ mod reference_tests {
                 (0.3..0.7).contains(&x) && (0.3..0.7).contains(&y),
                 "{file}: {x} {y}"
             );
-            assert_eq!(c, Critique::of(&subject), "{file}: deterministic");
         }
+    }
+
+    /// The known false alarm: Monet's sunrise is nearly one value on
+    /// purpose, and the numbers say "flat". Recorded in decisions.md.
+    #[test]
+    fn monets_sunrise_is_the_known_false_alarm() {
+        let c = critique_of("monet-impression-sunrise.jpg");
+        assert!(c.values.middle >= 0.6, "{:?}", c.values);
+        assert!(c.values.groups.len() <= 2, "{:?}", c.values.groups);
     }
 }

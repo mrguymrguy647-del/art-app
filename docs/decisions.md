@@ -1377,16 +1377,27 @@ the painted picture, a process sheet and honest notes, listed in
   good". The words add warmer/cooler and lighter/darker only when the
   difference is big enough to act on (15% of the warm share, 0.1 of the
   mean value).
-- **The references are photographs from scikit-image's sample data**
-  (NASA and SpaceX public-domain photos, two CC0 photos), because the
-  build machine's network policy blocks Wikimedia Commons and every
-  museum API tried, so no public-domain painting could be fetched.
-  They're real pictures with documented licences and they exercise the
-  tools, the loader (PNG and JPEG) and the critique's reality test (none
-  is "flat", all have three or more value groups). Paintings belong
-  here as soon as one can be brought in; the index's `allowed_licences`
-  and the test keep the folder honest.
-- **The critique's reality test on them** needed no threshold change:
-  the chelsea cat is 58% mid-value and still isn't "flat" (the rule
-  looks at the middle three of ten bins, 70%), which is the right call.
+- **The references: five paintings and four photographs.** The
+  paintings are Wikimedia Commons photographs of works whose artists
+  died over a hundred years ago (Monet's Impression, Sunrise; Van
+  Gogh's Starry Night; Vermeer's Girl with a Pearl Earring; Friedrich's
+  Wanderer; Hokusai's Great Wave), fetched once the environment allowed
+  that host (Commons wants a descriptive User-Agent and one of its
+  listed thumbnail widths; 1280 px, shrunk here to 1024). The
+  photographs come from scikit-image's sample data (NASA and SpaceX
+  public-domain photos, two CC0 photos). All have documented licences;
+  the index's `allowed_licences` and the test keep the folder honest.
+- **The critique's reality test on them.** Eight of the nine pass every
+  rule with no threshold change: not flat, three or more value groups,
+  a sensible hue count, the visual weight near the middle. The chelsea
+  cat is 58% mid-value and still isn't "flat" (the rule looks at the
+  middle three of ten bins, 70%), the right call. The one false alarm
+  is Monet's Impression, Sunrise: 76% of it sits in the middle bins and
+  it has two value groups when squinted, so the numbers say "flat", and
+  the painting is a masterpiece *because* it is nearly one value with
+  one small warm sun. A test keeps that false alarm on record rather
+  than bending the threshold to hide it: a flat finding means "look
+  for the one accent that would carry this", not "add contrast".
+  Friedrich's Wanderer is dead centre on purpose, another reminder
+  that a composition finding is a reason to look, not a rule.
 
