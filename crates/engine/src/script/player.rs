@@ -9101,4 +9101,28 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn a_shadow_layer_past_the_edge_stays_out_of_a_transparent_export() {
+        // A character, and a multiply shadow painted a bit too big: with no
+        // paper, the shadow mustn't leave a dark band beside the character.
+        let document = play(
+            r##"{ "commands": [
+                { "cmd": "canvas", "width": 60, "height": 40 },
+                { "cmd": "layer", "name": "Body" },
+                { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "#E0C060" },
+                { "cmd": "layer", "name": "Shade", "blend": "multiply", "opacity": 0.6 },
+                { "cmd": "rect", "x": 20, "y": 5, "width": 30, "height": 30, "fill": "#403060" }
+            ] }"##,
+        );
+        let transparent = |x, y| document.composite_pixel(x, y, Background::Transparent);
+        assert_eq!(transparent(40, 20).a, 0, "beside the body: still empty");
+        assert_eq!(transparent(15, 20).a, 255, "the body, unshaded");
+        let shaded = transparent(25, 20);
+        assert_eq!(shaded.a, 255);
+        assert!(shaded.r < transparent(15, 20).r, "the body, shaded");
+        // On paper, the shadow darkens the paper as it always did.
+        let paper = |x, y| document.composite_pixel(x, y, Background::Paper);
+        assert!(paper(40, 20).r < 255);
+    }
 }

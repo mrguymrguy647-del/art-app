@@ -254,6 +254,17 @@ fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
 /// colours with the mode's formula, but only as much as `below` is
 /// actually there (over a transparent area the layer looks normal), then
 /// lay the result over `below` as strongly as `top` is opaque.
+impl BlendMode {
+    /// The modes that can only make what's below darker (Multiply, Darken,
+    /// Color Burn): over nothing they have nothing to darken.
+    pub fn only_darkens(self) -> bool {
+        matches!(
+            self,
+            BlendMode::Multiply | BlendMode::Darken | BlendMode::ColorBurn
+        )
+    }
+}
+
 pub fn blend(below: Rgba8, top: Rgba8, opacity: f32, mode: BlendMode) -> Rgba8 {
     if top.a == 0 || opacity <= 0.0 {
         return below;
@@ -288,12 +299,27 @@ pub fn blend(below: Rgba8, top: Rgba8, opacity: f32, mode: BlendMode) -> Rgba8 {
     let (b, t) = (straight(below, below_alpha), straight(top, top_alpha));
     let mixed = mode.mix(b, t);
     let strength = top_alpha * opacity;
+    let to_byte = |v: f32| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+    if mode.only_darkens() {
+        // A shadow layer darkens what's there and nothing else: over an
+        // empty pixel (a transparent export) it stays empty, and it never
+        // makes a half-see-through edge more solid. Over paper (always
+        // solid) this is exactly the usual formula.
+        let channel = |i: usize| {
+            below_alpha * ((1.0 - strength) * b[i] + strength * mixed[i].clamp(0.0, 1.0))
+        };
+        return Rgba8::new(
+            to_byte(channel(0)).min(below.a),
+            to_byte(channel(1)).min(below.a),
+            to_byte(channel(2)).min(below.a),
+            below.a,
+        );
+    }
     let out_alpha = strength + below_alpha * (1.0 - strength);
     let channel = |i: usize| {
         let top_color = (1.0 - below_alpha) * t[i] + below_alpha * mixed[i].clamp(0.0, 1.0);
         strength * top_color + (1.0 - strength) * below_alpha * b[i]
     };
-    let to_byte = |v: f32| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
     let a = to_byte(out_alpha);
     Rgba8::new(
         to_byte(channel(0)).min(a),
@@ -391,9 +417,18 @@ mod tests {
     }
 
     #[test]
-    fn over_a_transparent_area_every_mode_looks_normal() {
+    fn over_a_transparent_area_every_mode_looks_normal_except_the_darkening_ones() {
         for mode in BlendMode::ALL {
-            assert_eq!(blend(Rgba8::TRANSPARENT, RED, 1.0, mode), RED, "{mode:?}");
+            let expected = if mode.only_darkens() {
+                Rgba8::TRANSPARENT // nothing there to darken
+            } else {
+                RED
+            };
+            assert_eq!(
+                blend(Rgba8::TRANSPARENT, RED, 1.0, mode),
+                expected,
+                "{mode:?}"
+            );
         }
     }
 
@@ -431,5 +466,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn darkening_layers_leave_empty_pixels_empty_and_edges_as_they_were() {
+        let shadow = Rgba8::new(40, 30, 80, 255);
+        let half_red = Rgba8::new(128, 0, 0, 128); // premultiplied
+        for mode in [BlendMode::Multiply, BlendMode::Darken, BlendMode::ColorBurn] {
+            assert_eq!(
+                blend(Rgba8::TRANSPARENT, shadow, 1.0, mode),
+                Rgba8::TRANSPARENT,
+                "{mode:?}"
+            );
+            let edge = blend(half_red, shadow, 0.7, mode);
+            assert_eq!(edge.a, 128, "{mode:?}: an edge stays as see-through");
+            assert!(edge.r <= half_red.r, "{mode:?}: and only gets darker");
+            // Over something solid, as before: darker, still solid.
+            let solid = blend(RED, shadow, 0.5, mode);
+            assert_eq!(solid.a, 255);
+        }
+        // Over solid pixels Multiply is still the usual multiply.
+        assert_eq!(blend(WHITE, GREY, 1.0, BlendMode::Multiply), GREY);
+        // Normal and Screen over nothing still paint (they add light or paint).
+        assert_eq!(
+            blend(Rgba8::TRANSPARENT, shadow, 1.0, BlendMode::Normal),
+            shadow
+        );
     }
 }

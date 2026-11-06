@@ -143,7 +143,7 @@ another layer). Then applies any settings given:
 | Field | |
 |---|---|
 | `opacity` | 0 to 1. |
-| `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. |
+| `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. The darkening ones (`multiply`, `darken`, `color-burn`) only darken what's below: where nothing is below, a transparent export stays transparent (no dark band beside a sprite). |
 | `visible` | `true` / `false`. |
 | `clip` | `true`: a clipping layer, shown only where the nearest unclipped layer below it has paint. See [Clipping and masks](#clipping-and-masks). |
 | `lock` | `true`: the alpha lock. Painting only recolours what's already on the layer; the eraser does nothing. |

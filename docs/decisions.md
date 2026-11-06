@@ -1947,3 +1947,16 @@ two false alarms. Every finding, before and after:
   the defaults; unknown fields are ignored.
 - **The shortcut sheet** is one table in `shortcut_sheet.rs`; a test
   checks every tool key and the main shortcuts are on it once.
+
+## 87. Fixes from the game tests (phase 5, step 7b)
+
+- **Darkening layers in transparent exports.** Multiply, Darken and
+  Color Burn now only darken what's below them: over an empty pixel
+  they leave it empty, and over a half-see-through edge they keep it as
+  see-through. The usual compositing rule paints a multiply layer's own
+  colour where there's nothing below, which left a dark band beside
+  sprites whose shadow layer was painted a little too big. Over paper
+  (always solid) the formula is exactly the old one, so every picture
+  rendered on paper is unchanged; only the transparent reference of the
+  all-commands script changed, where a multiply texture used to show
+  over empty sky.
