@@ -91,6 +91,7 @@ pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
         )),
         angle: Some(round(settings.angle, 2)),
         dynamics: Some(dynamics(&settings.dynamics)),
+        reset: None,
     })
 }
 
@@ -530,6 +531,7 @@ fn changed_brush_settings(known: &mut BrushCmd, new: BrushCmd) -> BrushCmd {
         tip: keep(&mut known.tip, new.tip),
         angle: keep(&mut known.angle, new.angle),
         dynamics: keep(&mut known.dynamics, new.dynamics),
+        reset: new.reset,
     }
 }
 

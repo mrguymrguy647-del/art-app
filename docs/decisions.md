@@ -1082,3 +1082,25 @@ put it:
   layer on every frame: 1.5 s for all the frames. Blur is the costliest
   thing in phase 3 so far and still well under the painting itself.
 
+## 63. Two review fixes after phase 3, step 4
+
+- **A symbol starts from the plain brush.** Before, a `use` inherited
+  the brush as it was (tip, dynamics, pattern and all), so a bristle
+  brush set for a texture stroke made every symbol after it hairy, and
+  leftover dynamics made outlines blobby. Now `push_frame` sets the
+  plain brush for a symbol's frame (the frame's `restore` already put
+  the old brush back afterwards), and a symbol that needs a brush sets
+  its own. Groups never reset: a group is a way to place commands, and
+  it already kept its brush changes to itself. `"reset": true` on
+  `brush` is the explicit way back. No reference picture changed: none
+  relied on a symbol picking up the brush from outside.
+- **"Painted most of the canvas" warning.** Every frame already kept
+  the box of everything it drew; it now also keeps the box of its
+  *shapes* (jobs with an outline or points: not a whole-layer fill or
+  gradient, not the bucket). When a named group or use ends with its
+  drawn box over half the canvas and its shapes under a tenth, the
+  report warns and guesses the cause (a gradient or fill without an
+  `area` inside a `not` mask). A group with no shapes at all (a sky
+  gradient) doesn't warn: nothing there is misleading. Percentages are
+  of the boxes, which is what an agent needs to find the command.
+

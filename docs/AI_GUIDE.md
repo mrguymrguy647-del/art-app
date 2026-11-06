@@ -125,7 +125,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `text` | Letters in the built-in font: `text` (`\n` for lines), `at` (top of the first line), `size`, `color`, `align`, `outline`, `outline_size`, `rotate`. |
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
-| `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. |
+| `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. A symbol starts from the plain brush (set its own inside); `{"cmd": "brush", "reset": true}` goes back to plain. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |

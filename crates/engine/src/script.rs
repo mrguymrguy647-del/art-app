@@ -322,6 +322,9 @@ pub struct TransformLayerCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrushCmd {
+    /// `true`: back to the plain brush first (then any settings given).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset: Option<bool>,
     /// A colour, or a pattern to paint with: `{"noise": {...}}` or
     /// `{"texture": ...}` (see `fill`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -165,6 +165,7 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 | `hardness` | 1 = crisp edge, 0 = very soft edge. |
 | `spacing` | Distance between dabs as a fraction of the size (0.01 to 5). Default 0.1. |
 | `pressure_size`, `pressure_opacity`, `pressure_flow` | Which settings point pressure changes (`true`/`false`). |
+| `reset` | `true`: back to the plain brush first (round, 24 wide, dark grey, no dynamics), then any settings given. |
 | `tip` | The dab's shape: `"round"` (default), `"square"`, `"bristle"`, `"chalk"`, `"leaf"`, `"grass"`, `"sparkle"`, or `{ "file": "tips/splat.png" }`. See [Brushes with character](#brushes-with-character). |
 | `angle` | How far the tip is turned, degrees clockwise. |
 | `dynamics` | How dabs vary along a stroke (see below). Replaces the dynamics as a whole: `{}` turns them all off. |
@@ -433,6 +434,9 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
   `Shadow` layers (created if missing). A symbol without `layer` commands paints on the layer
   selected when it's used. After a `use`, the brush and the selected layer are back to what they
   were before it.
+- **A symbol starts from the plain brush**, whatever the brush was before the `use` (so it looks
+  the same wherever it's used); set its own `brush` inside if it needs one. After the `use` the
+  brush from before is back. Brush changes inside a `group` stay inside it too.
 - **Random patterns** (jitter, scatter, hatch) in a symbol are the same every time it's used.
 - Mistakes inside a symbol name the `use` and the symbol's command:
   `command 9 (use "duck") > 2 (ellipse): unknown colour "yelow"`.
@@ -628,6 +632,9 @@ fill and dab inside is multiplied by the mask. A mask is one of:
 - On a pixel canvas, a mask has hard edges (a pixel is in or out).
 - A mask that covers nothing (off the canvas, an empty layer) is a warning: the group paints
   nothing.
+- A named group or `use` whose shapes are small but which painted most of the canvas is a
+  warning too (`painted 100% of the canvas, but its shapes cover 1%`): usually a `gradient` or
+  `fill` without an `area` inside a `not` mask. Give it an `area`.
 
 ## Filters
 

@@ -75,7 +75,8 @@ Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around
 
 - `define` only at the top level, before its first `use`, each name once. Symbols can use symbols.
 - Layer names inside a symbol are the picture's own layers; after a `use` or `group` the brush
-  and the selected layer are back as before.
+  and the selected layer are back as before. A symbol starts from the plain brush: give it its
+  own `brush` inside if it needs one (`"reset": true` on `brush` goes back to plain).
 - Name your groups (`"name"`): `check` reports their boxes, and errors say where they are.
 
 ## Rows, rings and frames: `repeat`

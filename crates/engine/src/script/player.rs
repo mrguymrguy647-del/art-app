@@ -287,6 +287,10 @@ struct Frame {
     path: Option<String>,
     /// The box around everything drawn in this frame so far.
     drawn: Option<Extent>,
+    /// The same, counting only shapes and strokes (not fills or
+    /// gradients over the whole layer): for the "painted most of the
+    /// canvas" warning.
+    shaped: Option<Extent>,
     /// Warnings about drawing outside the canvas from inside this frame,
     /// kept until it ends: if all of it was outside, one warning about
     /// the whole frame replaces them.
@@ -728,6 +732,7 @@ impl Player {
             copies: None,
             path: None,
             drawn: None,
+            shaped: None,
             outside: Vec::new(),
             part: None,
             animation: None,
@@ -794,6 +799,7 @@ impl Player {
                     copies: None,
                     path: None,
                     drawn: None,
+                    shaped: None,
                     outside: Vec::new(),
                     part: None,
                     animation: name,
@@ -936,6 +942,7 @@ impl Player {
             Some(_) => None,
             None => parent.mask.clone(),
         };
+        let symbol_starts = new.symbol.is_some();
         let frame = Frame {
             commands: new.commands,
             next: 0,
@@ -959,6 +966,7 @@ impl Player {
             copies: None,
             path: Some(path),
             drawn: None,
+            shaped: None,
             outside: Vec::new(),
             part,
             animation: None,
@@ -968,6 +976,12 @@ impl Player {
             effect: None,
         };
         self.frames.push(frame);
+        // A symbol looks the same wherever it's used: it starts from the
+        // plain brush (the brush from before comes back after it).
+        if symbol_starts {
+            self.brush = BrushSettings::default();
+            self.brush_alpha = 255;
+        }
         if let Some(filter) = &new.filter {
             let filters = self
                 .read_filters(filter)
@@ -1228,10 +1242,29 @@ impl Player {
         {
             outside = vec![self.outside_warning(path, drawn)];
         }
+        // A named part whose shapes are small but which painted most of
+        // the canvas: a fill or gradient without an area, probably.
+        if let (Some(_), Some(drawn), Some(shaped), Some(path)) =
+            (frame.part, frame.drawn, frame.shaped, &frame.path)
+        {
+            let canvas = document.bounds();
+            let (painted, shapes) = (covered(drawn, canvas), covered(shaped, canvas));
+            if painted >= 0.5 && shapes <= 0.1 {
+                outside.push(format!(
+                    "{path} painted {:.0}% of the canvas, but its shapes cover {:.0}%: a gradient \
+                     or fill without an area, inside a mask with \"not\"?",
+                    painted * 100.0,
+                    shapes * 100.0
+                ));
+            }
+        }
         match self.frames.last_mut() {
             Some(parent) => {
                 if let Some(drawn) = frame.drawn {
                     parent.drawn = Some(union(parent.drawn, drawn));
+                }
+                if let Some(shaped) = frame.shaped {
+                    parent.shaped = Some(union(parent.shaped, shaped));
                 }
                 parent.outside.append(&mut outside);
             }
@@ -1334,8 +1367,13 @@ impl Player {
         // The number of the script's own command this is part of.
         let top = self.frames.first().map_or(0, |script| script.next);
         let on_scratch = self.on_scratch();
+        let mut shaped = None;
         for job in self.jobs.iter().skip(queued) {
-            drawn = Some(union(drawn, job_extent(job, document)));
+            let extent = job_extent(job, document);
+            drawn = Some(union(drawn, extent));
+            if !matches!(job, Job::Area { shape: None, .. } | Job::Bucket { .. }) {
+                shaped = Some(union(shaped, extent));
+            }
             if !on_scratch {
                 self.painted_by.entry(job.layer()).or_default().insert(top);
             }
@@ -1343,6 +1381,10 @@ impl Player {
         let Some(drawn) = drawn else {
             return;
         };
+        if let Some(shaped) = shaped {
+            let frame = self.frames.last_mut().expect("a command runs in a frame");
+            frame.shaped = Some(union(frame.shaped, shaped));
+        }
         let warning = (!overlaps(drawn, document.bounds()))
             .then(|| self.outside_warning(&self.path_to(index, &command.label()), drawn));
         let frame = self.frames.last_mut().expect("a command runs in a frame");
@@ -2560,6 +2602,10 @@ impl Player {
     }
 
     fn set_brush(&mut self, command: &BrushCmd) -> Result<(), String> {
+        if command.reset.unwrap_or(false) {
+            self.brush = BrushSettings::default();
+            self.brush_alpha = 255;
+        }
         let mut brush = self.brush;
         match &command.color {
             Some(Value::String(color)) => {
@@ -4422,6 +4468,18 @@ fn union(a: Option<Extent>, b: Extent) -> Extent {
 }
 
 /// True if any of `area` is inside `canvas`.
+/// How much of the canvas a box covers, 0 to 1.
+fn covered((left, top, right, bottom): Extent, canvas: PixelRect) -> f32 {
+    let w = (right.min(canvas.right as f32) - left.max(canvas.left as f32)).max(0.0);
+    let h = (bottom.min(canvas.bottom as f32) - top.max(canvas.top as f32)).max(0.0);
+    let area = (canvas.right - canvas.left) as f32 * (canvas.bottom - canvas.top) as f32;
+    if area <= 0.0 {
+        0.0
+    } else {
+        (w * h / area).min(1.0)
+    }
+}
+
 fn overlaps((left, top, right, bottom): Extent, canvas: PixelRect) -> bool {
     left < canvas.right as f32
         && right > canvas.left as f32
@@ -7191,5 +7249,146 @@ mod tests {
             .replace("CANVAS", r##", "pixel": { "supersample": 1 }"##)
             .replace("FILTER", r##"{ "cmd": "filter", "shadow": { "offset": [2, 2], "blur": 0, "color": "k" }, "adjust": { "brightness": 0.1 } }"##);
         play(&ok);
+    }
+
+    // ---- Review fixes after phase 3, step 4 -----------------------------------
+
+    #[test]
+    fn a_symbol_looks_the_same_whatever_the_brush_was() {
+        let script = |before: &str| {
+            format!(
+                r##"{{ "seed": 3, "commands": [
+                {{ "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "define", "name": "coin", "commands": [
+                  {{ "cmd": "ellipse", "center": [0, 0], "radius": 20, "fill": "#F2C230", "outline": "#1A1410", "outline_size": 3 }},
+                  {{ "cmd": "line", "from": [-10, 0], "to": [10, 0] }},
+                  {{ "cmd": "stroke", "points": [[-8, 8], [8, 8]] }} ] }},
+                {before}
+                {{ "cmd": "use", "name": "coin", "translate": [60, 60] }} ] }}"##
+            )
+        };
+        let plain = play(&script(""));
+        let hairy = play(&script(
+            r##"{ "cmd": "brush", "tip": "bristle", "size": 40, "color": "#FF0000", "opacity": 0.3,
+                 "dynamics": { "follow": true, "size": 0.5, "scatter": 10, "hue": 90 } },"##,
+        ));
+        assert_eq!(
+            png(&plain),
+            png(&hairy),
+            "the brush before a use doesn't reach into it"
+        );
+        let patterned = play(&script(
+            r##"{ "cmd": "brush", "color": { "noise": { "scale": 5, "colors": ["#FF0000", "#0000FF"] } }, "hardness": 0 },"##,
+        ));
+        assert_eq!(png(&plain), png(&patterned));
+        // A stamp's copies too.
+        let stamped = |before: &str| {
+            play(&format!(
+                r##"{{ "commands": [
+                {{ "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "define", "name": "coin", "commands": [
+                  {{ "cmd": "ellipse", "center": [0, 0], "radius": 10, "fill": "#F2C230", "outline": "#1A1410", "outline_size": 2 }} ] }},
+                {before}
+                {{ "cmd": "stamp", "symbol": "coin", "points": [[20, 60], [100, 60]], "spacing": 40 }} ] }}"##
+            ))
+        };
+        assert_eq!(
+            png(&stamped("")),
+            png(&stamped(
+                r##"{ "cmd": "brush", "tip": "chalk", "size": 30, "dynamics": { "scatter": 8 } },"##
+            ))
+        );
+        // After the use, the brush from before is back.
+        let after = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "dot", "commands": [
+              { "cmd": "brush", "size": 2, "color": "#00FF00" },
+              { "cmd": "stroke", "points": [[0, 0]] } ] },
+            { "cmd": "brush", "size": 30, "color": "#FF0000" },
+            { "cmd": "use", "name": "dot", "translate": [30, 30] },
+            { "cmd": "stroke", "points": [[90, 90]] } ] }"##,
+        );
+        assert_eq!(seen(&after, 90, 90), Rgba8::new(255, 0, 0, 255));
+        assert_eq!(
+            seen(&after, 100, 90),
+            Rgba8::new(255, 0, 0, 255),
+            "30 wide again"
+        );
+        let own = seen(&after, 30, 30);
+        assert!(
+            own.g == 255 && own.r < 80,
+            "the symbol's own brush: {own:?}"
+        );
+    }
+
+    #[test]
+    fn brush_changes_stay_inside_a_group_and_reset_goes_back_to_the_plain_brush() {
+        let document = play(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "brush", "size": 10, "color": "#FF0000" },
+            { "cmd": "group", "commands": [
+              { "cmd": "brush", "size": 40, "color": "#0000FF", "tip": "square" },
+              { "cmd": "stroke", "points": [[30, 30]] } ] },
+            { "cmd": "stroke", "points": [[90, 30]] },
+            { "cmd": "brush", "reset": true, "color": "#00FF00" },
+            { "cmd": "stroke", "points": [[60, 90]] } ] }"##,
+        );
+        assert_eq!(seen(&document, 30, 30), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(
+            seen(&document, 90, 30),
+            Rgba8::new(255, 0, 0, 255),
+            "red and small again"
+        );
+        assert_eq!(seen(&document, 98, 30), Rgba8::WHITE);
+        // Reset: the plain brush (24 wide), then green.
+        assert_eq!(seen(&document, 60, 90), Rgba8::new(0, 255, 0, 255));
+        assert_eq!(
+            seen(&document, 68, 90),
+            Rgba8::new(0, 255, 0, 255),
+            "24 wide"
+        );
+        assert_eq!(seen(&document, 74, 90), Rgba8::WHITE);
+    }
+
+    #[test]
+    fn a_part_that_paints_most_of_the_canvas_with_small_shapes_is_a_warning() {
+        let warnings_of = |text: &str| {
+            let script = Script::parse(text).unwrap();
+            let mut player = Player::new(script, PlayOptions::default()).unwrap();
+            let mut document = player.create_document().unwrap();
+            player.run(&mut document, |_, _| {}).unwrap();
+            player.report().warnings
+        };
+        let warnings = warnings_of(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 400, "height": 400, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "pad", "commands": [
+              { "cmd": "ellipse", "center": [0, 0], "radius": 12, "fill": "#308030" },
+              { "cmd": "group", "mask": { "not": { "circle": [8, 0, 4] } }, "commands": [
+                { "cmd": "gradient", "from": [-12, -12], "to": [12, 12], "colors": ["#FFFFFF60", "transparent"] } ] } ] },
+            { "cmd": "use", "name": "pad", "translate": [200, 200] } ] }"##,
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.starts_with(
+                    "command 3 (use \"pad\") painted 100% of the canvas, but its shapes cover 0%"
+                ) && w.contains("without an area, inside a mask with \"not\"?")),
+            "{warnings:?}"
+        );
+        // A whole-canvas gradient in a named group is fine (no small shapes
+        // to mislead), and so is a part whose shapes are big.
+        let fine = warnings_of(
+            r##"{ "commands": [
+            { "cmd": "canvas", "width": 400, "height": 400, "paper": "#FFFFFF" },
+            { "cmd": "group", "name": "sky", "commands": [
+              { "cmd": "gradient", "from": [0, 0], "to": [0, 400], "colors": ["#2040A0", "#FFFFFF"] } ] },
+            { "cmd": "group", "name": "ground", "commands": [
+              { "cmd": "rect", "x": 0, "y": 200, "width": 400, "height": 200, "fill": "#308030" },
+              { "cmd": "gradient", "from": [0, 200], "to": [0, 400], "colors": ["#00000040", "transparent"] } ] } ] }"##,
+        );
+        assert!(fine.iter().all(|w| !w.contains("painted")), "{fine:?}");
     }
 }
