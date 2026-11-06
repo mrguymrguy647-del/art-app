@@ -269,6 +269,7 @@ impl Files {
     /// A picture restored after a crash: it belongs to `original` (if it
     /// had a file), so Save writes there, but it counts as unsaved.
     pub fn restored(&mut self, original: Option<PathBuf>) {
+        let original = original.as_deref().map(crate::settings::full_path);
         self.opened_from = original.as_deref().map(file_name);
         self.path = original;
     }
@@ -978,6 +979,8 @@ impl Files {
     /// Opens the picture at `path`. If that fails, the error is shown
     /// and `None` returned.
     pub fn open_path(&mut self, path: PathBuf) -> Option<Document> {
+        // A full path, so Save finds the same file whatever the working folder.
+        let path = crate::settings::full_path(&path);
         match file::open(&path) {
             Ok(document) => {
                 self.opened_from = Some(file_name(&path));

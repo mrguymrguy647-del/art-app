@@ -25,6 +25,8 @@ use quill_engine::file;
 use quill_engine::history::History;
 use serde::{Deserialize, Serialize};
 
+use crate::settings::full_path;
+
 /// At most this often.
 pub const EVERY: Duration = Duration::from_secs(120);
 /// Only after this long without input.
@@ -83,6 +85,11 @@ impl Autosave {
             file.try_lock().ok()?;
             Some(file)
         });
+        if lock.is_some()
+            && let Some(folder) = &folder
+        {
+            tidy_locks(folder);
+        }
         Autosave {
             folder: lock.is_some().then_some(folder).flatten(),
             session,
@@ -190,7 +197,9 @@ impl Autosave {
         let copy = document.clone();
         let note = Note {
             name: name.to_owned(),
-            original: original.map(Path::to_path_buf),
+            // A full path, so Save after a restore finds the same file
+            // whatever folder the next Duck Quill starts in.
+            original: original.map(full_path),
             copied: seconds(now),
         };
         let (sender, receiver) = channel();
@@ -222,6 +231,24 @@ impl Autosave {
             let _ = std::fs::remove_file(picture);
             let _ = std::fs::remove_file(&note);
             let _ = std::fs::remove_file(note.with_extension("lock"));
+        }
+    }
+}
+
+/// Deletes the lock files of Duck Quills that stopped with nothing
+/// unsaved (a crash with no copy): they'd otherwise stay forever. A lock
+/// with a copy beside it is kept: that copy is offered back.
+fn tidy_locks(folder: &Path) {
+    let Ok(listing) = std::fs::read_dir(folder) else {
+        return;
+    };
+    for lock in listing.filter_map(|entry| entry.ok().map(|e| e.path())) {
+        if lock.extension().is_some_and(|e| e == "lock")
+            && !lock.with_extension(file::FILE_EXTENSION).exists()
+            && stopped(&lock)
+        {
+            let _ = std::fs::remove_file(&lock);
+            let _ = std::fs::remove_file(lock.with_extension("json"));
         }
     }
 }
@@ -405,6 +432,51 @@ mod tests {
                 .left_behind()
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_note_keeps_the_original_as_a_full_path() {
+        let folder = folder("full");
+        let now = SystemTime::now();
+        let mut autosave = Autosave::new(Some(folder.clone()), now);
+        let mut document = Document::new(16, 16);
+        let mut history = History::default();
+        paint(&mut document, &mut history, 1);
+        // As given on the command line, from some working folder.
+        let given = Path::new("../r/pen.quill");
+        autosave.tick(&document, &history, "pen.quill", Some(given), true, now);
+        autosave.wait();
+        let (_, note_path) = autosave.files().unwrap();
+        let note: Note =
+            serde_json::from_str(&std::fs::read_to_string(note_path).unwrap()).unwrap();
+        let original = note.original.unwrap();
+        assert!(original.is_absolute(), "{}", original.display());
+        assert_eq!(original, std::path::absolute(given).unwrap());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn lock_files_of_stopped_runs_with_nothing_unsaved_are_tidied_away() {
+        let folder = folder("locks");
+        std::fs::create_dir_all(&folder).unwrap();
+        let now = SystemTime::now();
+        // A run that crashed with nothing unsaved: only its lock is left.
+        let empty = folder.join("session-1-1-0.lock");
+        std::fs::write(&empty, "").unwrap();
+        // One that crashed with a copy: that's kept (it's offered back).
+        let with_copy = folder.join("session-2-2-0.lock");
+        std::fs::write(&with_copy, "").unwrap();
+        std::fs::write(with_copy.with_extension(file::FILE_EXTENSION), "copy").unwrap();
+        // One still running, with nothing unsaved: its lock is in use.
+        let running = Autosave::new(Some(folder.clone()), now);
+        let running_lock = folder.join(format!("{}.lock", running.session));
+        assert!(!empty.exists(), "the stopped run's lock is gone");
+        assert!(with_copy.exists(), "kept beside its copy");
+        // Starting another one leaves the running one's lock alone.
+        let _another = Autosave::new(Some(folder.clone()), now);
+        assert!(running_lock.exists(), "a running Duck Quill keeps its lock");
+        drop(running);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

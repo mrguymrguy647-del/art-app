@@ -61,10 +61,16 @@ impl Settings {
     }
 }
 
+/// `path` as a full path (from the drive or the root), so it still
+/// points at the same file whatever folder Duck Quill was started from.
+pub fn full_path(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Puts `path` at the front of `recent` (once), keeping at most
 /// `MAX_RECENT_FILES`.
 pub fn add_recent(recent: &mut Vec<PathBuf>, path: &Path) {
-    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = full_path(path);
     recent.retain(|p| p != &path);
     recent.insert(0, path);
     recent.truncate(MAX_RECENT_FILES);

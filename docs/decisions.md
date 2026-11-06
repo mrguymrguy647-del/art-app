@@ -1931,7 +1931,13 @@ two false alarms. Every finding, before and after:
   minutes before its copy was offered.)
 - **Restoring** opens the copy as unsaved (`History::mark_unsaved`), tied
   to the file it came from, so Save writes there; the copy becomes the
-  new run's own, so it stays safe until then.
+  new run's own, so it stays safe until then. Every remembered file
+  (the note, the open picture, the recent list) is kept as a full path,
+  so "../r/pen.quill" from a command line still means the same file
+  when Duck Quill starts in another folder.
+- **Tidying:** a run that crashes with nothing unsaved leaves only its
+  lock file. On start, locks that nobody holds and that have no copy
+  beside them are deleted.
 - **Settings** are one readable `settings.json`: the window's size, the
   brush and eraser (stored as presets, so they're checked like any
   preset), colours, theme, the Presets section and Hide reference
