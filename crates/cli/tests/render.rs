@@ -1285,11 +1285,12 @@ fn art_cli_is_still_there_and_paints_the_same() {
     );
     let picture = |which: &str| std::fs::read(out.join(which).join("old-script.png")).unwrap();
     assert_eq!(picture("old"), picture("new"));
-    // Only the folder names differ in what's printed.
+    // Only the folder names differ in what's printed (with \ on Windows).
+    let (old_dir, new_dir) = (out.join("old"), out.join("new"));
     let text = |o: &std::process::Output| {
         String::from_utf8_lossy(&o.stdout)
-            .replace("/old", "")
-            .replace("/new", "")
+            .replace(&old_dir.display().to_string(), "OUT")
+            .replace(&new_dir.display().to_string(), "OUT")
     };
     let strip_time = |t: String| {
         t.lines()

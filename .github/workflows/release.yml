@@ -68,6 +68,23 @@ jobs:
           ls -l "$name.zip"
           echo "ZIP=$name.zip" >> "$GITHUB_ENV"
 
+      - name: Check what's in the zip
+        shell: bash
+        run: |
+          7z l -slt "$ZIP" | sed -n 's/^Path = //p' > contents.txt
+          echo "$(wc -l < contents.txt) entries; the top of the folder:"
+          grep -E '^Duck Quill(/|\\)[^/\\]+$' contents.txt
+          for wanted in DuckQuill.exe quill.exe art-cli.exe "READ ME FIRST.txt" "Create desktop shortcut.bat" \
+                        brand/duck-quill-icon-256.png skills/duck-quill/SKILL.md; do
+            grep -qxF "Duck Quill/$wanted" <(tr '\\' / < contents.txt) || { echo "missing: $wanted"; exit 1; }
+          done
+          if grep -qi sketchbook contents.txt; then echo "the sketchbook must not be shipped"; exit 1; fi
+          # The programs start and know their version.
+          ver=$("dist/Duck Quill/quill.exe" --version)
+          echo "$ver"
+          [[ "$ver" == "quill ${{ steps.version.outputs.version }}" ]]
+          "dist/Duck Quill/art-cli.exe" --version
+
       - name: Keep the zip on this run's page
         uses: actions/upload-artifact@v4
         with:
