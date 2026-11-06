@@ -1732,3 +1732,22 @@ two false alarms. Every finding, before and after:
   dialog duck yellow: the canvas stays the star.
 - **The version** (0.5.0) is written once, in the workspace
   `Cargo.toml`; About and `quill --version` read it.
+
+## 80. Download and run (phase 5, step 2)
+
+- **CI** (`.github/workflows/ci.yml`) builds, tests and runs clippy with
+  warnings as errors on Windows and Linux for every push and pull request,
+  with the Rust version pinned (1.97.0) so a new Rust can't turn it red
+  on its own.
+- **The release** (`release.yml`) runs on a `v*` tag: it checks the tag
+  matches the version in `Cargo.toml`, builds on Windows and publishes
+  `DuckQuill-<version>-windows.zip` with `gh release create` (no
+  third-party release action). A push that changes the release files
+  builds the same zip as a run artifact without publishing, so the zip
+  can be checked before any tag.
+- **The sketchbook stays out of the zip.** The zip carries
+  `skills/duck-quill/` for agents, minus `references/sketchbook/`: those
+  are the owner's own drawings, kept in the repository to study but not
+  shipped in an app.
+- **Unsigned for now:** `READ ME FIRST.txt` explains SmartScreen's "Run
+  anyway".

@@ -1,0 +1,41 @@
+DUCK QUILL
+Draw, paint and animate, with a pen or with a script.
+
+
+TO START
+  Double-click DuckQuill.exe.
+
+  The first time, Windows may say "Windows protected your PC". That's
+  because the program isn't signed with a (paid) certificate yet, not
+  because something is wrong. Click "More info", then "Run anyway".
+  Windows only asks once.
+
+  For a desktop icon, double-click "Create desktop shortcut.bat".
+  Keep this folder where it is afterwards: the shortcut points into it.
+
+
+WITH A PEN TABLET
+  Duck Quill reads pressure and tilt through Windows Ink. If your
+  tablet's driver (Wacom, XP-Pen, Huion...) has a "Use Windows Ink"
+  option, keep it switched on. The "Pen test" screen in the top bar shows
+  what your pen sends.
+
+
+WHAT'S IN THIS FOLDER
+  DuckQuill.exe    the app
+  quill.exe        Duck Quill on the command line: paints scripts into
+                   pictures without a window (for AI agents, or for you)
+  art-cli.exe      quill's old name, for scripts written before the rename
+  skills\          what an AI agent reads to paint with quill
+                   (start with skills\duck-quill\SKILL.md)
+  brand\           the Duck Quill icon
+
+
+A NEW VERSION
+  Download the new zip, unzip it, and replace this folder with it. Your
+  pictures are wherever you saved them, never in this folder, so they
+  are safe. Run "Create desktop shortcut.bat" again if you moved it.
+
+
+Pictures made with Art App (the old name, .artapp files) open in Duck
+Quill as they are.

@@ -1,0 +1,85 @@
+# Makes the Windows download: DuckQuill-<version>-windows.zip.
+#
+# Pushing a tag like v0.5.0 builds the zip and publishes it as a GitHub
+# Release. Changing this file (or the release/ folder) on a branch only
+# builds the zip and keeps it as a downloadable "artifact" on the run's
+# page, so it can be checked before any release is made.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+    # Branch pushes only run when the release itself changed (tags always run).
+    paths: [".github/workflows/release.yml", "release/**"]
+  pull_request:
+    paths: [".github/workflows/release.yml", "release/**"]
+
+env:
+  RUST_VERSION: "1.97.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write # to publish the release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read the version
+        id: version
+        shell: bash
+        run: |
+          # The one place it's written: the workspace Cargo.toml.
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          echo "Version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "The tag $GITHUB_REF_NAME doesn't match the version $version in Cargo.toml."
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Put the zip together
+        shell: bash
+        run: |
+          name="DuckQuill-${{ steps.version.outputs.version }}-windows"
+          folder="dist/Duck Quill"
+          mkdir -p "$folder/skills" "$folder/brand"
+          cp target/release/DuckQuill.exe target/release/quill.exe target/release/art-cli.exe "$folder/"
+          cp -r skills/duck-quill "$folder/skills/"
+          # The sketchbook is the owner's own drawings: kept in the
+          # repository for agents to study, but not shipped in the app.
+          rm -rf "$folder/skills/duck-quill/references/sketchbook"
+          cp brand/duck-quill-icon-256.png "$folder/brand/"
+          cp "release/READ ME FIRST.txt" "release/Create desktop shortcut.bat" "$folder/"
+          cd dist
+          7z a -tzip "../$name.zip" "Duck Quill" > /dev/null
+          cd ..
+          ls -l "$name.zip"
+          echo "ZIP=$name.zip" >> "$GITHUB_ENV"
+
+      - name: Keep the zip on this run's page
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "Duck Quill ${{ steps.version.outputs.version }}" \
+            --notes "Download $ZIP below, unzip it, and double-click DuckQuill.exe. READ ME FIRST.txt inside says the rest."

@@ -14,7 +14,19 @@ and opacity) on layers, pick colours from a colour wheel or the canvas, undo and
 and rotate the canvas, and save, open and export your pictures. The pen test is under
 **Pen test** in the top bar.
 
-## Run it on Windows (no terminal needed)
+## Download
+
+1. Go to [the Releases page](https://github.com/mrguymrguy647-del/duck-quill/releases/latest) and
+   download `DuckQuill-<version>-windows.zip`.
+2. Unzip it (right-click → **Extract All**).
+3. Double-click `DuckQuill.exe`. The first time, Windows may say "Windows protected your PC": click
+   **More info**, then **Run anyway** (the program isn't signed with a paid certificate yet).
+
+`Create desktop shortcut.bat` in the same folder puts a Duck Quill icon on your desktop, and
+`READ ME FIRST.txt` says the rest. To update, download the new zip and replace the folder: your
+pictures are wherever you saved them.
+
+## Build it yourself on Windows (no terminal needed)
 
 ### One-time setup
 
@@ -134,6 +146,8 @@ Build it with `cargo build --release -p quill_cli`; the program is `target/relea
 duck-quill/
 ├── Cargo.toml            workspace: the three crates below, and the version number
 ├── brand/                the Duck Quill icon, mascot and logos (see brand/README.md)
+├── release/              what goes in the download zip besides the programs
+├── .github/workflows/    CI (build and test on every push) and the release zip
 ├── run.bat / test.bat / create-shortcut.bat / render-script.bat
 ├── examples/             example scripts: paintings, duck sheets, animated and pixel ducks, a video title
 ├── docs/QUICKSTART.md    start here: a first script and how to render it, on one page

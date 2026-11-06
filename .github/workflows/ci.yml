@@ -1,0 +1,43 @@
+# Builds and tests Duck Quill on Windows and Linux for every push and pull
+# request, and runs clippy (Rust's checker for common mistakes). A red
+# cross on GitHub means one of these steps failed: click it to see which.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch replaces a run that's still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The same Rust as the one the project is developed with, so a new Rust
+  # release can't suddenly turn the build red.
+  RUST_VERSION: "1.97.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy
+          rustup default "$RUST_VERSION"
+      # Keeps the compiled libraries between runs: minutes faster.
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings

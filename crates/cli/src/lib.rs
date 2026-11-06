@@ -57,52 +57,53 @@ const HELP: &str = "\
 quill: render Duck Quill painting scripts, without a window.
 
 USAGE
-  quill render <script.json> [options]   paint the script, save the picture
-  quill check <script.json> [--detail]   paint without saving: where everything
+  quill render <script.json> [options]     paint the script, save the picture
+  quill check <script.json> [--detail]     paint without saving: where everything
                                            went, and what looks like a mistake
                                            (--detail: every group and use, also
                                            the ones inside others; --animation
                                            and --frame choose the frame shown)
-  quill export <script.json> [options]   an animated script as a sprite sheet
+  quill export <script.json> [options]     an animated script as a sprite sheet
                                            with its JSON, frames, a GIF or an MP4
-  quill info <picture.quill>            describe a saved picture: its layers
-  quill info <script.json>               the same for the picture a script
+  quill info <picture.quill>               describe a saved picture: its layers
+  quill info <script.json>                 the same for the picture a script
                                            paints, with the commands that
                                            painted on each layer
-  quill measure \"some text\" [--size n]  how wide and high a text would be
+  quill measure \"some text\" [--size n]     how wide and high a text would be
                                            (and the size that fits --fit width)
-  quill views <script.json> [options]    the picture seven ways on one sheet
+  quill views <script.json> [options]      the picture seven ways on one sheet
                                            (<name>-views.png): as painted, gray,
                                            squinted, a thumbnail, flipped, the
                                            named parts' silhouettes, and a heat
                                            map of where the eye goes, with the
                                            intent's focal point ringed
-  quill critique <script.json> [options] about fifteen findings in numbers:
+  quill critique <script.json> [options]   about fifteen findings in numbers:
                                            values, focal point, colour and key,
                                            texture, readability at thumbnail
                                            size, composition (warnings to look
                                            at, never goals)
-  quill palette <picture> [--colors n]   the main colours of a PNG, JPEG or
+  quill palette <picture> [--colors n]     the main colours of a PNG, JPEG or
                                            script, as swatches (<name>-palette.png)
                                            and a palette block to paste
-  quill values <picture>                 the picture in five greys
+  quill values <picture>                   the picture in five greys
                                            (<name>-values.png) with their shares
-  quill compare <mine> <reference>       both side by side with their greys
+  quill compare <mine> <reference>         both side by side with their greys
                                            (compare.png), and how alike they are
                                            in value structure and colour, 0-100
-  quill gallery add <script> --name <n>  a finished piece into the gallery:
+  quill gallery add <script> --name <n>    a finished piece into the gallery:
                                            its folder with the picture, process
                                            and views sheets, critique.md, a
                                            blind-read skeleton, notes and an
                                            index entry with tags
-  quill gallery rate <name> <1-5> \"why\"  the person's rating into index.json
-  quill blind-read <script.json>         the leak-proof blind-read test: a packet
+  quill gallery rate <name> <1-5> \"why\"    the person's rating into index.json
+  quill blind-read <script.json>           the leak-proof blind-read test: a packet
                                            (the picture under a neutral name and
                                            the three questions, nothing else) for
                                            a reader who wasn't told the intent;
                                            --record answers.txt --verdict \"reads\"
                                            writes blind-read.md next to the script
-  quill help                             show this
+  quill --version                          the version number
+  quill help                               show this
 
 RENDER OPTIONS
   --out <folder>     where to save (default: out)
@@ -183,17 +184,17 @@ EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
   --animation <name> only this animation
 
 EXAMPLES
-  quill render examples/sunset.json --preview --sheet
-  quill render examples/sunset.json --out render --snapshots
-  quill render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
-  quill render examples/sunset.json --preview --layers \"Sky,Sun\"
-  quill export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
-  quill views examples/sunset.json
-  quill critique examples/sunset.json
-  quill palette skills/duck-quill/references/coffee.png --colors 6
-  quill compare out/study.png skills/duck-quill/references/coffee.png
-  quill gallery add out/forest.json --name forest-at-dawn
-  quill blind-read out/forest.json
+  quill render                             examples/sunset.json --preview --sheet
+  quill render                             examples/sunset.json --out render --snapshots
+  quill render                             examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
+  quill render                             examples/sunset.json --preview --layers \"Sky,Sun\"
+  quill export                             examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
+  quill views                              examples/sunset.json
+  quill critique                           examples/sunset.json
+  quill palette                            skills/duck-quill/references/coffee.png --colors 6
+  quill compare                            out/study.png skills/duck-quill/references/coffee.png
+  quill gallery add                        out/forest.json --name forest-at-dawn
+  quill blind-read                         out/forest.json
 
 The script format is described in docs/script-format.md.";
 
