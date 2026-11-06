@@ -202,11 +202,12 @@ impl CanvasView {
                 }
             });
         self.brush_panel_rect = Some(brush_panel.response.rect);
+        let painting = self.tools.is_painting();
         egui::Panel::left("layers_panel")
-            .exact_size(210.0)
+            .exact_size(260.0)
             .show(ui, |ui| {
                 ui.add_enabled_ui(panels_enabled, |ui| {
-                    self.layers.ui(ui, document, history);
+                    self.layers.ui(ui, document, history, painting);
                 });
             });
         egui::CentralPanel::no_frame()

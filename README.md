@@ -80,7 +80,7 @@ double-click `run.bat` once. Your desktop shortcut then opens the new version.
 | Move, resize, turn a layer | **Layer → Transform…**: drag inside the box to move, a corner to resize (the opposite corner stays put; hold `Shift` to keep the proportions), the round handle to turn. **Apply** (`Enter`) or **Cancel** (`Esc`), in the bar at the bottom. One undo step | Drag with the pen |
 | Pick a colour from the canvas | Hold `Alt` and click, or press `I` (or the **Pick** button) and click. The pen's side button works too | Tap **Pick**, then tap the canvas |
 | Brush / eraser size | `[` smaller, `]` bigger, or the Size slider | |
-| Layers | **Layers** panel on the left: click a layer to paint on it, the checkbox shows/hides it, **Add** / **Delete** / **Up** / **Down**, opacity slider, **Blend mode** (Multiply for shadows, Screen for light, …), double-click a name to rename | Same, by tapping |
+| Layers | **Layers** panel on the left: each row has a picture of the layer, the eye to show or hide it, the padlock (alpha lock: painting only recolours what's there) and ⤵ (clip to the layer below). Click a layer to paint on it, drag the dots at the start of a row to move it up or down, double-click a name to rename it. **Add** / **Delete** / **Up** / **Down**, opacity slider, **Blend mode** (Multiply for shadows, Screen for light, …). All undoable | Same, by tapping |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`), or the **Undo** / **Redo** buttons | Tap the buttons |
 | Zoom | Mouse wheel (zooms where the pointer is), `+` / `-` | Pinch |
 | Pan (move) | Hold **Space** and drag, or drag with the middle mouse button | Two-finger drag (touchscreen) |

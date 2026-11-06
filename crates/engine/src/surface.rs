@@ -117,6 +117,9 @@ impl PixelRect {
 pub struct Surface<P: Pixel = Rgba8> {
     tiles: HashMap<TileCoord, Box<Tile<P>>>,
     dirty: HashSet<TileCoord>,
+    /// The same, kept apart for the Layers panel's thumbnails: the canvas
+    /// takes its list every frame, the thumbnails only after a stroke.
+    thumbnail_dirty: HashSet<TileCoord>,
     /// Alpha lock: painting only changes pixels that already have paint
     /// (new paint is weakened by how see-through a pixel is).
     pub locked: bool,
@@ -128,6 +131,7 @@ impl<P: Pixel> Surface<P> {
         Self {
             tiles: HashMap::new(),
             dirty: HashSet::new(),
+            thumbnail_dirty: HashSet::new(),
             locked: false,
         }
     }
@@ -187,7 +191,7 @@ impl<P: Pixel> Surface<P> {
                 self.tiles.insert(coord, tile);
             }
             if changed {
-                self.dirty.insert(coord);
+                self.mark(coord);
             }
         }
     }
@@ -200,7 +204,7 @@ impl<P: Pixel> Surface<P> {
     /// The tile at `coord` for changing, created (transparent) if it doesn't
     /// exist yet. It is marked dirty, since the caller is about to change it.
     pub fn tile_mut(&mut self, coord: TileCoord) -> &mut Tile<P> {
-        self.dirty.insert(coord);
+        self.mark(coord);
         self.tiles
             .entry(coord)
             .or_insert_with(|| Box::new(Tile::new()))
@@ -209,14 +213,14 @@ impl<P: Pixel> Surface<P> {
     /// Removes one tile (its area becomes transparent) and returns it.
     pub fn remove_tile(&mut self, coord: TileCoord) -> Option<Tile<P>> {
         let tile = self.tiles.remove(&coord)?;
-        self.dirty.insert(coord);
+        self.mark(coord);
         Some(*tile)
     }
 
     /// Puts `tile` at `coord` (or, if `tile` is `None`, makes that area
     /// empty), and returns the tile that was there. Used by undo and redo.
     pub fn replace_tile(&mut self, coord: TileCoord, tile: Option<Tile<P>>) -> Option<Tile<P>> {
-        self.dirty.insert(coord);
+        self.mark(coord);
         let old = match tile {
             Some(tile) => self.tiles.insert(coord, Box::new(tile)),
             None => self.tiles.remove(&coord),
@@ -228,7 +232,10 @@ impl<P: Pixel> Surface<P> {
     /// Returns the removed tiles (so clearing can be undone).
     pub fn clear(&mut self) -> HashMap<TileCoord, Tile<P>> {
         // The removed tiles count as changed, so the screen updates.
-        self.dirty.extend(self.tiles.keys().copied());
+        let all: Vec<TileCoord> = self.tiles.keys().copied().collect();
+        for coord in all {
+            self.mark(coord);
+        }
         self.tiles
             .drain()
             .map(|(coord, tile)| (coord, *tile))
@@ -248,7 +255,22 @@ impl<P: Pixel> Surface<P> {
     /// Marks every tile as changed (e.g. when the whole layer is shown,
     /// hidden or moved, so the screen must update all of it).
     pub fn mark_all_dirty(&mut self) {
-        self.dirty.extend(self.tiles.keys().copied());
+        let all: Vec<TileCoord> = self.tiles.keys().copied().collect();
+        for coord in all {
+            self.mark(coord);
+        }
+    }
+
+    /// Notes that a tile changed, for the screen and for the thumbnails.
+    fn mark(&mut self, coord: TileCoord) {
+        self.dirty.insert(coord);
+        self.thumbnail_dirty.insert(coord);
+    }
+
+    /// The tiles that changed since the thumbnails last asked. Clears
+    /// that list (not the screen's).
+    pub fn take_thumbnail_tiles(&mut self) -> Vec<TileCoord> {
+        self.thumbnail_dirty.drain().collect()
     }
 
     /// The tiles that changed since the last call. Clears the list.
@@ -443,5 +465,15 @@ mod tests {
         let tiles: Vec<_> = PixelRect::new(-10, -10, 10, 10).tiles().collect();
         assert_eq!(tiles.len(), 4);
         assert!(tiles.contains(&TileCoord::new(-1, -1)));
+    }
+
+    #[test]
+    fn thumbnails_have_their_own_list_of_changed_tiles() {
+        let mut surface: Surface = Surface::new();
+        surface.tile_mut(TileCoord::new(1, 1));
+        // The screen takes its list: the thumbnails still have theirs.
+        assert_eq!(surface.take_dirty_tiles(), vec![TileCoord::new(1, 1)]);
+        assert_eq!(surface.take_thumbnail_tiles(), vec![TileCoord::new(1, 1)]);
+        assert!(surface.take_thumbnail_tiles().is_empty());
     }
 }

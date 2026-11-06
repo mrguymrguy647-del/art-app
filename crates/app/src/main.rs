@@ -22,6 +22,7 @@ mod playback;
 mod select_tool;
 mod text_tool;
 mod theme;
+mod thumbnails;
 mod transform_tool;
 
 use eframe::egui::{self, Button, Key, KeyboardShortcut, Modifiers};

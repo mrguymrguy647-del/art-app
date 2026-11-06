@@ -1797,3 +1797,20 @@ two false alarms. Every finding, before and after:
   inside a selection (the mixing pass); making a canvas-sized ellipse
   selection 190 ms, feathering it 150 ms, its outline 48 ms: once per
   change, not per stroke.
+
+## 82. Layers you can see (phase 5, step 4)
+
+- **Thumbnails from changed tiles only.** A surface keeps a second list
+  of changed tiles for the thumbnails, apart from the screen's (which the
+  canvas empties every frame). The Layers panel redoes only the
+  thumbnail pixels over those tiles, and only when no stroke is in
+  progress. A thumbnail fits 44 x 32 points; on a 4000-pixel-wide canvas
+  a tile is about three thumbnail pixels, each the average of 16
+  samples, so a whole thumbnail is about 22,000 lookups.
+- **Drag by a handle.** Each row starts with a grip of dots to drag;
+  dragging the whole row would fight with click-to-select and
+  double-click-to-rename. A line in night indigo shows where it will
+  land; the move is `MoveLayerCommand`, undoable and recorded.
+- **Drawn icons.** The eye and the padlock are drawn with lines, not
+  emoji or font symbols, so they look the same on every machine. The
+  Layers panel is 50 points wider for them.
