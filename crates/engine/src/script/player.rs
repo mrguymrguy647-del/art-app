@@ -125,6 +125,45 @@ pub struct Report {
 /// Warnings about symbols defined but never used and palette colours
 /// never used, counted over all of `reports` (every frame of every
 /// animation): a symbol swapped in at frame 9 is used.
+/// Where the intent's focal point is on the canvas: the point as given,
+/// or the middle of the named part's box (the first part whose label is
+/// `group "name"` or `use "name"`, outermost first). `Err` names a part
+/// that isn't in the report.
+pub fn focal_point(
+    intent: &super::Intent,
+    report: &Report,
+    canvas: (u32, u32),
+) -> Result<Option<(f32, f32)>, String> {
+    match intent.focal()? {
+        None => Ok(None),
+        Some(super::Focal::Point([x, y])) => Ok(Some((x, y))),
+        Some(super::Focal::Part(name)) => {
+            let wanted = [format!("(group \"{name}\")"), format!("(use \"{name}\")")];
+            let part = report.parts.iter().find(|p| {
+                wanted.iter().any(|w| {
+                    p.path.ends_with(w)
+                        || p.path.contains(&format!("{w} "))
+                        || p.path.contains(&format!("{w}>"))
+                })
+            });
+            match part {
+                Some(part) => match part.area {
+                    Some(a) => {
+                        let (w, h) = (canvas.0 as f32, canvas.1 as f32);
+                        let x = ((a.left + a.right) as f32 / 2.0).clamp(0.0, w);
+                        let y = ((a.top + a.bottom) as f32 / 2.0).clamp(0.0, h);
+                        Ok(Some((x, y)))
+                    }
+                    None => Err(format!("the focal part \"{name}\" drew nothing")),
+                },
+                None => Err(format!(
+                    "the intent's focal point names \"{name}\", but no group or use is called that"
+                )),
+            }
+        }
+    }
+}
+
 pub fn unused_warnings(reports: &[&Report]) -> Vec<String> {
     let mut warnings = Vec::new();
     let Some(first) = reports.first() else {
@@ -8027,5 +8066,40 @@ mod tests {
             { "cmd": "scatter", "area": { "rect": [0, 0, 100, 100] }, "count": 30, "size": [2, 4], "color": "#000000", "seed": 2 } ] }"##,
         );
         assert_eq!(frames[4], png(&by_hand));
+    }
+
+    #[test]
+    fn the_focal_point_is_found_from_the_named_part() {
+        let text = r##"{ "intent": { "focal": "duck" }, "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100 },
+            { "cmd": "group", "name": "duck", "translate": [100, 50], "commands": [
+              { "cmd": "rect", "x": -20, "y": -10, "width": 40, "height": 20, "fill": "#000000" } ] } ] }"##;
+        let script = Script::parse(text).unwrap();
+        let mut player = Player::new(script.clone(), PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let intent = script.intent.as_ref().unwrap();
+        assert_eq!(
+            focal_point(intent, &report, (200, 100)).unwrap(),
+            Some((100.0, 50.0))
+        );
+        let missing = super::super::Intent {
+            focal: Some(serde_json::json!("goose")),
+            ..Default::default()
+        };
+        let e = focal_point(&missing, &report, (200, 100)).unwrap_err();
+        assert!(
+            e.contains("names \"goose\", but no group or use is called that"),
+            "{e}"
+        );
+        let point = super::super::Intent {
+            focal: Some(serde_json::json!([5, 6])),
+            ..Default::default()
+        };
+        assert_eq!(
+            focal_point(&point, &report, (200, 100)).unwrap(),
+            Some((5.0, 6.0))
+        );
     }
 }

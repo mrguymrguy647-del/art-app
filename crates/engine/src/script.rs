@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use player::{
-    Event, Part, PlayOptions, Player, Progress, Report, layer_named, unused_warnings,
+    Event, Part, PlayOptions, Player, Progress, Report, focal_point, layer_named, unused_warnings,
 };
 
 /// Written at the top of every script, so it can be recognised.
@@ -55,6 +55,198 @@ pub struct Script {
     /// The character's anchor point in canvas pixels, for sprite sheets.
     /// Default: the bottom centre of the canvas.
     pub pivot: Option<[f32; 2]>,
+    /// What the painter means (see `Intent`). Paints nothing.
+    pub intent: Option<Intent>,
+}
+
+/// What the painter means: an optional block at the top of a script
+/// that paints nothing, read by `check`, `views` and `critique`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Intent {
+    /// What the picture is of, in a short sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Where the eye should go: `[x, y]`, or the name of a named group
+    /// or `use` (the middle of its box).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focal: Option<Value>,
+    /// Where the light comes from: a direction word (`"top right"`),
+    /// degrees clockwise (0 = right), `[x, y]` (a sun, a lamp),
+    /// `"behind"` or `"front"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<Value>,
+    /// A few words, for people and for the blind-read comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mood: Option<String>,
+    /// Palette names (2 to 6) that set the picture's key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_colors: Vec<String>,
+}
+
+/// Where the eye should go, as the intent says it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Focal {
+    Point([f32; 2]),
+    /// A named group or `use`.
+    Part(String),
+}
+
+/// Where the light comes from, as the intent says it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Light {
+    /// Degrees clockwise, 0 = from the right, 270 = from above.
+    Direction(f32),
+    /// A point on the canvas (a sun, a lamp).
+    Point([f32; 2]),
+    /// From behind the subject (backlit) or from the viewer.
+    Behind,
+    Front,
+}
+
+impl Light {
+    /// The direction words a script may use, and their degrees.
+    pub const WORDS: [(&'static str, f32); 10] = [
+        ("right", 0.0),
+        ("bottom right", 45.0),
+        ("bottom", 90.0),
+        ("below", 90.0),
+        ("bottom left", 135.0),
+        ("left", 180.0),
+        ("top left", 225.0),
+        ("top", 270.0),
+        ("above", 270.0),
+        ("top right", 315.0),
+    ];
+
+    /// Degrees clockwise the light comes from, if it has a direction.
+    pub fn degrees(&self) -> Option<f32> {
+        match self {
+            Light::Direction(d) => Some(*d),
+            Light::Point(_) | Light::Behind | Light::Front => None,
+        }
+    }
+
+    /// In words, for reports.
+    pub fn describe(&self) -> String {
+        match self {
+            Light::Direction(d) => {
+                let d = d.rem_euclid(360.0);
+                let word = Light::WORDS
+                    .iter()
+                    .filter(|(w, _)| !matches!(*w, "below" | "above"))
+                    .min_by(|(_, a), (_, b)| {
+                        let da = (a - d).abs().min(360.0 - (a - d).abs());
+                        let db = (b - d).abs().min(360.0 - (b - d).abs());
+                        da.total_cmp(&db)
+                    })
+                    .map_or("?", |(w, _)| *w);
+                format!("from the {word} ({d:.0} degrees)")
+            }
+            Light::Point([x, y]) => format!("from the point ({x:.0}, {y:.0})"),
+            Light::Behind => "from behind the subject".to_owned(),
+            Light::Front => "from the front".to_owned(),
+        }
+    }
+}
+
+impl Intent {
+    /// The focal point as written, checked.
+    pub fn focal(&self) -> Result<Option<Focal>, String> {
+        match &self.focal {
+            None => Ok(None),
+            Some(Value::String(name)) if !name.trim().is_empty() => {
+                Ok(Some(Focal::Part(name.clone())))
+            }
+            Some(Value::Array(pair)) if pair.len() == 2 && pair.iter().all(Value::is_number) => {
+                let n = |i: usize| pair[i].as_f64().unwrap_or(0.0) as f32;
+                Ok(Some(Focal::Point([n(0), n(1)])))
+            }
+            Some(other) => Err(format!(
+                "`focal` is [x, y] or the name of a named group or use, not {other}"
+            )),
+        }
+    }
+
+    /// The light as written, checked.
+    pub fn light(&self) -> Result<Option<Light>, String> {
+        let help = || {
+            let words: Vec<&str> = Light::WORDS.iter().map(|(w, _)| *w).collect();
+            format!(
+                "`light` is a direction ({}), degrees clockwise (0 = right), [x, y] (a sun, a \
+                 lamp), \"behind\" or \"front\"",
+                words.join(", ")
+            )
+        };
+        match &self.light {
+            None => Ok(None),
+            Some(Value::Number(n)) => Ok(Some(Light::Direction(n.as_f64().unwrap_or(0.0) as f32))),
+            Some(Value::Array(pair)) if pair.len() == 2 && pair.iter().all(Value::is_number) => {
+                let n = |i: usize| pair[i].as_f64().unwrap_or(0.0) as f32;
+                Ok(Some(Light::Point([n(0), n(1)])))
+            }
+            Some(Value::String(word)) => {
+                let word = word.trim().to_lowercase().replace('-', " ");
+                let word = word.split_whitespace().collect::<Vec<_>>().join(" ");
+                match word.as_str() {
+                    "behind" | "backlit" => Ok(Some(Light::Behind)),
+                    "front" => Ok(Some(Light::Front)),
+                    _ => Light::WORDS
+                        .iter()
+                        .find(|(w, _)| *w == word)
+                        .map(|(_, d)| Some(Light::Direction(*d)))
+                        .ok_or_else(|| format!("unknown light \"{word}\"; {}", help())),
+                }
+            }
+            Some(_) => Err(help()),
+        }
+    }
+
+    /// Checks every field against the palette: used when the script is read.
+    fn check(&self, palette: &BTreeMap<String, String>) -> Result<(), String> {
+        self.focal()?;
+        self.light()?;
+        if !self.key_colors.is_empty() && !(2..=6).contains(&self.key_colors.len()) {
+            return Err(format!(
+                "`key_colors` names 2 to 6 palette colours, not {}",
+                self.key_colors.len()
+            ));
+        }
+        for name in &self.key_colors {
+            if !palette.contains_key(name) {
+                return Err(format!("`key_colors`: \"{name}\" isn't in the palette"));
+            }
+        }
+        if let Some(subject) = &self.subject
+            && subject.trim().is_empty()
+        {
+            return Err("`subject` is empty: say what the picture is of".into());
+        }
+        Ok(())
+    }
+
+    /// The intent in a few lines, for `check` and the gallery.
+    pub fn describe(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(subject) = &self.subject {
+            lines.push(format!("subject: {subject}"));
+        }
+        match self.focal() {
+            Ok(Some(Focal::Part(name))) => lines.push(format!("focal point: \"{name}\"")),
+            Ok(Some(Focal::Point([x, y]))) => lines.push(format!("focal point: ({x:.0}, {y:.0})")),
+            _ => {}
+        }
+        if let Ok(Some(light)) = self.light() {
+            lines.push(format!("light: {}", light.describe()));
+        }
+        if let Some(mood) = &self.mood {
+            lines.push(format!("mood: {mood}"));
+        }
+        if !self.key_colors.is_empty() {
+            lines.push(format!("key colours: {}", self.key_colors.join(", ")));
+        }
+        lines
+    }
 }
 
 /// One animation: `frames` frames at `fps`, looping or not, made of the
@@ -1165,6 +1357,8 @@ struct RawScript {
     animations: Vec<(String, RawAnimation)>,
     #[serde(default)]
     pivot: Option<[f32; 2]>,
+    #[serde(default)]
+    intent: Option<Intent>,
 }
 
 /// An animation as written.
@@ -1321,6 +1515,11 @@ impl Script {
             return Err(ScriptError::general("`pivot` must be [x, y] in pixels"));
         }
 
+        if let Some(intent) = &raw.intent {
+            intent
+                .check(&raw.palette)
+                .map_err(|message| ScriptError::general(format!("intent: {message}")))?;
+        }
         Ok(Script {
             title: raw.title,
             notes: raw.notes,
@@ -1329,6 +1528,7 @@ impl Script {
             commands,
             animations,
             pivot: raw.pivot,
+            intent: raw.intent,
         })
     }
 
@@ -1347,6 +1547,9 @@ impl Script {
         out += &format!("  \"palette\": {},\n", json(&self.palette));
         if let Some(pivot) = &self.pivot {
             out += &format!("  \"pivot\": {},\n", json(pivot));
+        }
+        if let Some(intent) = &self.intent {
+            out += &format!("  \"intent\": {},\n", json(intent));
         }
         out += "  \"commands\": [\n";
         for (i, command) in self.commands.iter().enumerate() {
@@ -1693,5 +1896,71 @@ mod tests {
             }
         }
         assert!(checked >= 30, "only {checked} examples found");
+    }
+
+    #[test]
+    fn the_intent_is_read_checked_and_written_back() {
+        let script = parse(
+            r##"{ "palette": { "sky": "#8EC1E6", "sun": "#FFF1C0" },
+              "intent": { "subject": "a duck at sunset", "focal": "duck", "light": "top right",
+                          "mood": "calm", "key_colors": ["sky", "sun"] },
+              "commands": [ { "cmd": "canvas", "width": 10, "height": 10 } ] }"##,
+        )
+        .unwrap();
+        let intent = script.intent.as_ref().unwrap();
+        assert_eq!(intent.focal().unwrap(), Some(Focal::Part("duck".into())));
+        assert_eq!(intent.light().unwrap(), Some(Light::Direction(315.0)));
+        assert_eq!(
+            intent.describe(),
+            [
+                "subject: a duck at sunset",
+                "focal point: \"duck\"",
+                "light: from the top right (315 degrees)",
+                "mood: calm",
+                "key colours: sky, sun"
+            ]
+        );
+        assert_eq!(
+            parse(&script.to_json()).unwrap(),
+            script,
+            "written back the same"
+        );
+        // Other ways to say the light and the focal point.
+        let other = parse(
+            r##"{ "intent": { "focal": [30, 40], "light": [100, 0] },
+              "commands": [ { "cmd": "canvas", "width": 10, "height": 10 } ] }"##,
+        )
+        .unwrap();
+        let intent = other.intent.unwrap();
+        assert_eq!(intent.focal().unwrap(), Some(Focal::Point([30.0, 40.0])));
+        assert_eq!(intent.light().unwrap(), Some(Light::Point([100.0, 0.0])));
+        let behind = parse(
+            r##"{ "intent": { "light": "behind" }, "commands": [ { "cmd": "canvas", "width": 10, "height": 10 } ] }"##,
+        )
+        .unwrap();
+        assert_eq!(behind.intent.unwrap().light().unwrap(), Some(Light::Behind));
+        assert_eq!(
+            Light::Direction(100.0).describe(),
+            "from the bottom (100 degrees)"
+        );
+        // Mistakes.
+        let bad = |intent: &str| {
+            parse(&format!(
+                r##"{{ "palette": {{ "sky": "#8EC1E6" }}, "intent": {intent},
+                  "commands": [ {{ "cmd": "canvas", "width": 10, "height": 10 }} ] }}"##
+            ))
+            .unwrap_err()
+            .to_string()
+        };
+        let e = bad(r##"{ "light": "sideways" }"##);
+        assert!(e.contains("intent: unknown light \"sideways\""), "{e}");
+        let e = bad(r##"{ "key_colors": ["sky", "sea"] }"##);
+        assert!(e.contains("\"sea\" isn't in the palette"), "{e}");
+        let e = bad(r##"{ "key_colors": ["sky"] }"##);
+        assert!(e.contains("2 to 6 palette colours"), "{e}");
+        let e = bad(r##"{ "focal": true }"##);
+        assert!(e.contains("`focal` is [x, y] or the name"), "{e}");
+        let e = bad(r##"{ "topic": "ducks" }"##);
+        assert!(e.contains("unknown field `topic`"), "{e}");
     }
 }

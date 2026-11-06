@@ -1242,3 +1242,20 @@ the painted picture, a process sheet and honest notes, listed in
   script's commands move; the motion summary covers only the animation's
   own commands.
 
+## 69. The intent block (phase 4, step 1)
+
+- **A block, not commands.** `intent` sits at the top of the script next
+  to `palette`, so a reader sees what the picture means before how it's
+  made, and nothing in the command list depends on it. It's checked
+  when the script is read (light words, key colours in the palette,
+  2 to 6 of them) and resolved when the script is played: a `focal`
+  name is looked up in the report's parts, so it's the middle of what
+  that part actually painted, not where the painter thought it was.
+- **Light as words, degrees or a point.** Eight direction words map to
+  degrees clockwise (0 = from the right, like every other angle here);
+  a point is for a visible light source; `behind` and `front` have no
+  direction. Reports turn degrees back into the nearest word.
+- `check` prints the intent and the focal point's canvas position, and
+  warns (not fails) when the focal part doesn't exist: the picture
+  still paints, the painter just learns the name is wrong.
+

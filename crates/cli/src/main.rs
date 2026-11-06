@@ -1685,6 +1685,17 @@ fn check(options: &CheckOptions) -> Result<(), Problem> {
         document.width(),
         document.height()
     );
+    if let Some(intent) = &script.intent {
+        say!("  intent:");
+        for line in intent.describe() {
+            say!("    {line}");
+        }
+        match art_engine::script::focal_point(intent, &report, canvas) {
+            Ok(Some((x, y))) => say!("    focal point on the canvas: ({x:.0}, {y:.0})"),
+            Ok(None) => {}
+            Err(problem) => warnings.push(problem),
+        }
+    }
     if !snapshots.is_empty() {
         say!("  snapshots: {}", snapshots.join(", "));
     }

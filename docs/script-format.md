@@ -51,9 +51,37 @@ Render scripts with `art-cli` (see the README), or watch them being painted in t
 | `notes` | no | Anything for people (text, a list, …). Ignored. |
 | `seed` | no | Where randomness starts. Default `1`. Change it to get a different random pattern. |
 | `palette` | no | Colour names, defined once: `{"sky": "#88BBFF", "shadow": "#1A1A3080"}`. |
+| `intent` | no | What the painter means (next section). Paints nothing. |
 
 Every command is an object with a `"cmd"` field. Any command may also have a `"note"` field: a
 comment for people, ignored when playing. Misspelt fields are errors (not silently ignored).
+
+## Intent: what the painter means
+
+```json
+"intent": {
+  "subject": "a duck on a pond at sunset",
+  "focal": "duck",
+  "light": "top right",
+  "mood": "calm, warm, end of the day",
+  "key_colors": ["sky_low", "sun", "water_dark"]
+}
+```
+
+An optional block at the top of the script. It paints nothing: `check` prints it back, `views`
+marks the focal point, `critique` compares the picture with it, and the blind-read test is
+judged against it. Write it first; it's the measure of whether the picture reads.
+
+| Field | |
+|---|---|
+| `subject` | A short sentence: what the picture is of. |
+| `focal` | Where the eye should go: `[x, y]`, or the name of a named group or `use` (the middle of its box, worked out when the script is played). |
+| `light` | Where the light comes from: `"top right"`, `"left"`, `"above"`... (eight directions), degrees clockwise (0 = from the right), `[x, y]` (a sun, a lamp), `"behind"` or `"front"`. |
+| `mood` | A few words. |
+| `key_colors` | 2 to 6 palette names that set the picture's key; colours far from them count as out of key. |
+
+A `focal` name that no group or `use` has is a warning from `check`; a key colour that isn't in
+the palette is an error.
 
 ## The basics
 

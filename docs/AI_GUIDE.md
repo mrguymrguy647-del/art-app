@@ -92,6 +92,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 {
   "format": "artapp-script", "version": 1, "title": "…", "seed": 1,
   "palette": { "sky": "#5080D0", "shadow": "#1A1A3080" },
+  "intent": { "subject": "a hill under a cold sky", "focal": [800, 600], "light": "top left", "mood": "still", "key_colors": ["sky", "shadow"] },
   "commands": [
     { "cmd": "canvas", "width": 1600, "height": 1000, "paper": "#FFFFFF" },
     { "cmd": "layer", "name": "Sky" },
@@ -101,6 +102,8 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 }
 ```
 
+- `intent` says what you mean (subject, `focal` point or part, `light`, `mood`, `key_colors`);
+  it paints nothing, and `check`, `views` and `critique` hold the picture to it. Write it first.
 - Positions are pixels; **y grows downwards**. Angles are degrees, clockwise (0 = right, 90 = down).
 - Colours: `"#RRGGBB"`, `"#RRGGBBAA"` (last pair = opacity), a palette name, or `"transparent"`.
 - 0-to-1 values: opacity, flow, hardness, tolerance, pressure.
@@ -148,7 +151,9 @@ Drawing commands can change the brush just for themselves: `color`, `size`, `opa
 1. **Plan before painting.** Choose the canvas size and the composition: where's the horizon,
    where's the main subject (a third of the way across often works better than the middle),
    where does the light come from? Write a **palette of 8–15 colours** with names that say what
-   they're for (`sky_top`, `shadow`, `rim`). A small palette looks deliberate.
+   they're for (`sky_top`, `shadow`, `rim`), and the **intent block** (subject, focal point,
+   light, mood, key colours): the measure the senses hold the picture to. A small palette looks
+   deliberate.
 2. **Block in, back to front**, each part on its own layer: sky → far things → middle → near
    things. Big shapes only: gradients, `polygon`, closed `path`s, `ellipse`s. `snapshot`.
 3. **Check:** `--preview --sheet`. Does the picture read at a glance? Are the darks and lights in

@@ -852,3 +852,42 @@ fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
     );
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn check_prints_the_intent_and_warns_about_a_focal_part_that_is_not_there() {
+    let out = folder("intent");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("intent.json");
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "sky": "#8EC1E6", "sun": "#FFF1C0" },
+          "intent": { "subject": "a duck at sunset", "focal": "duck", "light": "top right", "mood": "calm", "key_colors": ["sky", "sun"] },
+          "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "sky" },
+            { "cmd": "group", "name": "duck", "commands": [
+              { "cmd": "ellipse", "center": [100, 50], "radius": 20, "fill": "sun" } ] } ] }"##,
+    )
+    .unwrap();
+    let output = art_cli()
+        .args(["check", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("  intent:\n    subject: a duck at sunset\n    focal point: \"duck\"\n    light: from the top right (315 degrees)\n    mood: calm\n    key colours: sky, sun\n    focal point on the canvas: (100, 50)"), "{text}");
+    assert!(!text.contains("warning"), "{text}");
+    let text2 = std::fs::read_to_string(&script)
+        .unwrap()
+        .replace("\"focal\": \"duck\"", "\"focal\": \"goose\"");
+    std::fs::write(&script, text2).unwrap();
+    let output = art_cli()
+        .args(["check", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("names \"goose\", but no group or use is called that"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(out).ok();
+}

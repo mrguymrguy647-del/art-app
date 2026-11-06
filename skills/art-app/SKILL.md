@@ -31,17 +31,19 @@ Then use `target/release/art-cli` (below just `art-cli`). Start new scripts from
 Boxes read `x left..right, y top..bottom` in canvas pixels: compare them with what you meant
 before opening any picture. Errors name the command: `command 8 (use "duck") > 2 (ellipse): ...`.
 
-## Skeleton
+## Skeleton (write the `intent` first: `check` prints it back, the senses hold the picture to it)
 
 ```json
 {
   "palette": { "ink": "#202020", "body": "#F2C230", "sky": "#8EC5E8" },
+  "intent": { "subject": "a duck under a blue sky", "focal": "duck", "light": "top left", "mood": "cheerful", "key_colors": ["sky", "body"] },
   "commands": [
     { "cmd": "canvas", "width": 512, "height": 256, "paper": "sky" },
     { "cmd": "layer", "name": "Background" },
     { "cmd": "gradient", "from": [0, 0], "to": [0, 256], "colors": ["#5A9BD0", "sky"] },
     { "cmd": "layer", "name": "Characters" },
-    { "cmd": "ellipse", "center": [256, 150], "radius": [40, 28], "fill": "body", "outline": "ink", "outline_size": 3 }
+    { "cmd": "group", "name": "duck", "commands": [
+      { "cmd": "ellipse", "center": [256, 150], "radius": [40, 28], "fill": "body", "outline": "ink", "outline_size": 3 } ] }
   ]
 }
 ```
@@ -50,11 +52,9 @@ before opening any picture. Errors name the command: `command 8 (use "duck") > 2
 
 - x right, y **down**; `[0, 0]` is the top-left. `rect` takes `x`, `y` (top-left), `width`, `height`.
 - Commands paint on the layer selected last; a new layer goes on top. Misspelt layer names make
-  new layers: read the layer list from `check`.
-- Colours: palette names, `#RRGGBB`, `#RRGGBBAA`. Symbols should use palette names so `colors`
-  swaps work.
-- Run backgrounds past the canvas edges; shapes that stop exactly at an edge leave slivers.
-- `gradient` without an `area` covers the whole layer.
+  new layers: read the layer list from `check`. `gradient` without an `area` covers the layer.
+- Colours: palette names, `#RRGGBB`, `#RRGGBBAA`; symbols use palette names so `colors` swaps work.
+- Run backgrounds past the canvas edges; shapes that stop at an edge leave slivers.
 
 ## Ready parts: the library (finished pieces, with scripts and notes, in `skills/art-app/gallery/`)
 
@@ -106,9 +106,8 @@ Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `o
 { "cmd": "text", "text": "Player 1", "at": [256, 20], "size": 32, "color": "ink", "align": "center", "outline": "#FFFFFF", "outline_size": 3 }
 ```
 
-`at` is the **top** of the first line (left end, middle or right end by `align`). A line is
-1.21 × `size` high; capitals run from 0.24 × `size` to 0.97 × `size` below the top. `\n` starts
-a new line; `rotate` turns it around `at`. The font is built in.
+`at` is the **top** of the first line (by `align`); a line is 1.21 × `size` high; `\n` starts a
+new line; `rotate` turns it around `at`.
 
 ## Animation: frames, keyframes, parameters
 

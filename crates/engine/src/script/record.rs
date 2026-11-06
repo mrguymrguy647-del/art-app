@@ -656,6 +656,7 @@ pub fn script(
         commands,
         animations: Animations::default(),
         pivot: None,
+        intent: None,
     }
 }
 
