@@ -1,0 +1,26 @@
+{
+  "title": "Study: Friedrich, Wanderer above the Sea of Fog (big shapes and palette only)",
+  "palette": { "sky": "#C3C7D6", "fog": "#A7ACB7", "fog_far": "#8D95A1", "ridge": "#737E89", "rock_dark": "#2F2F34", "rock": "#4A4C50", "figure": "#161419" },
+  "intent": { "subject": "a man on a dark rock seen from behind, above a sea of fog and mountain ridges", "focal": "figure", "light": "above", "mood": "solemn, vast", "key_colors": ["fog", "rock"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 655, "paper": "sky" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 655], "colors": ["fog_far", "sky", "fog"] },
+    { "cmd": "layer", "name": "Ridges" },
+    { "cmd": "group", "name": "far ridges", "commands": [
+      { "cmd": "polygon", "points": [[-10, 330], [80, 290], [160, 320], [240, 280], [330, 310], [420, 270], [522, 300], [522, 400], [-10, 400]], "fill": "fog_far", "opacity": 0.7, "jitter": 4 },
+      { "cmd": "polygon", "points": [[-10, 400], [90, 370], [200, 395], [522, 380], [522, 450], [-10, 450]], "fill": "ridge", "opacity": 0.6, "jitter": 4 } ] },
+    { "cmd": "layer", "name": "Fog" },
+    { "cmd": "gradient", "from": [0, 340], "to": [0, 655], "colors": ["#A7ACB700", "fog"] },
+    { "cmd": "layer", "name": "Rock" },
+    { "cmd": "group", "name": "rock", "commands": [
+      { "cmd": "polygon", "points": [[-10, 655], [40, 520], [160, 470], [260, 440], [330, 470], [430, 520], [522, 480], [522, 655]], "fill": "rock_dark", "jitter": 6 },
+      { "cmd": "polygon", "points": [[60, 540], [160, 500], [240, 470], [280, 500], [200, 560], [100, 600]], "fill": "rock", "jitter": 5 } ] },
+    { "cmd": "layer", "name": "Figure" },
+    { "cmd": "group", "name": "figure", "commands": [
+      { "cmd": "ellipse", "center": [262, 190], "radius": [16, 18], "fill": "figure" },
+      { "cmd": "polygon", "points": [[224, 215], [300, 215], [310, 340], [280, 440], [246, 440], [214, 340]], "fill": "figure", "jitter": 3 },
+      { "cmd": "line", "from": [300, 240], "to": [340, 330], "size": 10, "color": "figure", "taper": 0.3 },
+      { "cmd": "line", "from": [224, 240], "to": [204, 320], "size": 10, "color": "figure", "taper": 0.3 } ] }
+  ]
+}

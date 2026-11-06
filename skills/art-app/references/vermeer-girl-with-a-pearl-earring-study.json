@@ -1,0 +1,26 @@
+{
+  "title": "Study: Vermeer, Girl with a Pearl Earring (big shapes and palette only)",
+  "palette": { "black": "#241C11", "umber": "#2F2B22", "skin": "#967F5C", "skin_light": "#CFAD83", "ochre": "#584C35", "blue": "#43535E", "blue_light": "#98A1A4", "cream": "#E7D4BF" },
+  "intent": { "subject": "a girl in a blue and yellow turban turning towards us against a black background", "focal": "face", "light": "top left", "mood": "still, intimate", "key_colors": ["skin", "blue", "ochre"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 606, "paper": "black" },
+    { "cmd": "layer", "name": "Figure" },
+    { "cmd": "group", "name": "jacket", "commands": [
+      { "cmd": "polygon", "points": [[120, 606], [170, 420], [300, 380], [430, 440], [460, 606]], "fill": "ochre", "jitter": 5 },
+      { "cmd": "polygon", "points": [[200, 430], [250, 380], [300, 400], [290, 460], [240, 470]], "fill": "cream", "jitter": 4 } ] },
+    { "cmd": "group", "name": "face", "commands": [
+      { "cmd": "ellipse", "center": [260, 300], "radius": [78, 98], "fill": "skin" },
+      { "cmd": "ellipse", "center": [240, 290], "radius": [50, 70], "fill": "skin_light", "opacity": 0.8 },
+      { "cmd": "ellipse", "center": [236, 280], "radius": [9, 6], "fill": "umber" },
+      { "cmd": "ellipse", "center": [284, 282], "radius": [9, 6], "fill": "umber" },
+      { "cmd": "ellipse", "center": [262, 350], "radius": [16, 7], "fill": "#8E4F3E" } ] },
+    { "cmd": "group", "name": "turban", "commands": [
+      { "cmd": "ellipse", "center": [250, 200], "radius": [92, 54], "fill": "blue" },
+      { "cmd": "ellipse", "center": [230, 190], "radius": [60, 36], "fill": "blue_light", "opacity": 0.6 },
+      { "cmd": "polygon", "points": [[320, 200], [360, 260], [380, 380], [340, 400], [330, 300]], "fill": "ochre", "jitter": 4 },
+      { "cmd": "polygon", "points": [[330, 210], [350, 260], [364, 370], [345, 380]], "fill": "cream", "opacity": 0.7 } ] },
+    { "cmd": "group", "name": "pearl", "commands": [
+      { "cmd": "ellipse", "center": [296, 362], "radius": [8, 10], "fill": "blue_light" },
+      { "cmd": "ellipse", "center": [293, 358], "radius": 3, "fill": "cream" } ] }
+  ]
+}

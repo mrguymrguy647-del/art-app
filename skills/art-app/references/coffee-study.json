@@ -1,0 +1,27 @@
+{
+  "title": "Study: the coffee cup (big shapes and palette only)",
+  "palette": { "wood": "#A63414", "wood_light": "#AC5B2E", "dark": "#240A05", "saucer": "#CB7538", "cup_shade": "#C98756", "deep": "#66180A", "cup_light": "#DDAD83", "rim": "#F4E4D2" },
+  "intent": { "subject": "an espresso cup on a saucer on a wooden table, seen from above at an angle", "focal": "cup", "light": "top left", "mood": "warm, close", "key_colors": ["wood", "saucer"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 341, "paper": "wood" },
+    { "cmd": "layer", "name": "Table" },
+    { "cmd": "gradient", "from": [0, 0], "to": [512, 341], "colors": ["wood_light", "wood", "dark"] },
+    { "cmd": "brush", "size": 6, "color": "dark", "opacity": 0.3 },
+    { "cmd": "repeat", "count": 6, "step": { "translate": [0, 56] }, "commands": [
+      { "cmd": "line", "from": [0, 20], "to": [512, 60], "size": 6, "color": "dark", "opacity": 0.3 } ] },
+    { "cmd": "brush", "reset": true },
+    { "cmd": "layer", "name": "Cup" },
+    { "cmd": "group", "name": "saucer", "commands": [
+      { "cmd": "ellipse", "center": [250, 220], "radius": [170, 80], "fill": "dark", "opacity": 0.6 },
+      { "cmd": "ellipse", "center": [240, 205], "radius": [160, 72], "fill": "saucer" } ] },
+    { "cmd": "group", "name": "cup", "commands": [
+      { "cmd": "ellipse", "center": [240, 170], "radius": [90, 70], "fill": "deep" },
+      { "cmd": "ellipse", "center": [240, 130], "radius": [92, 48], "fill": "rim" },
+      { "cmd": "ellipse", "center": [240, 134], "radius": [72, 36], "fill": "cup_light" },
+      { "cmd": "ellipse", "center": [244, 138], "radius": [60, 28], "fill": "wood_light" },
+      { "cmd": "ellipse", "center": [200, 180], "radius": [30, 40], "fill": "cup_shade", "opacity": 0.5 } ] },
+    { "cmd": "group", "name": "spoon", "commands": [
+      { "cmd": "ellipse", "center": [330, 240], "radius": [22, 16], "fill": "rim" },
+      { "cmd": "line", "from": [340, 232], "to": [390, 196], "size": 6, "color": "cup_light" } ] }
+  ]
+}

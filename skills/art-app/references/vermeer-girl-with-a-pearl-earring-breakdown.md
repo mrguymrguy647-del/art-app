@@ -17,3 +17,5 @@ blue against yellow, in a dark key.
 and the pearl as the two sharpest small marks. The background is flat on purpose (a flat part
 is a finding only when the part should have life). A character portrait can copy the stack
 exactly: dark field, one lit face, two accents.
+
+**Study.** `vermeer-girl-with-a-pearl-earring-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare vermeer-girl-with-a-pearl-earring-study.json vermeer-girl-with-a-pearl-earring.*`: values similar: 86; colours somewhat alike: 66. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

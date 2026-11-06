@@ -24,6 +24,7 @@ macro_rules! complain {
 mod critique;
 mod export;
 mod font;
+mod gallery;
 mod grid;
 mod sheet;
 mod study;
@@ -85,6 +86,12 @@ USAGE
   art-cli compare <mine> <reference>       both side by side with their greys
                                            (compare.png), and how alike they are
                                            in value structure and colour, 0-100
+  art-cli gallery add <script> --name <n>  a finished piece into the gallery:
+                                           its folder with the picture, process
+                                           and views sheets, critique.md, a
+                                           blind-read skeleton, notes and an
+                                           index entry with tags
+  art-cli gallery rate <name> <1-5> \"why\"  the person's rating into index.json
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -134,6 +141,12 @@ PALETTE, VALUES AND COMPARE OPTIONS
   --out <folder>     where to save (default: out)
   --colors <n>       for palette: this many colours (default 8)
 
+GALLERY OPTIONS
+  --out <folder>     the gallery (default: skills/art-app/gallery)
+  --title \"...\"      for add: the piece's title (default: the script's)
+  --tags a,b         for add: tags besides the ones found in the intent and
+                     the tools used
+
 CRITIQUE OPTIONS
   --detail           also every named part's numbers (texture, thumbnail size)
   --frame <n>        for a script with animations: critique frame n (from 0)
@@ -163,6 +176,7 @@ EXAMPLES
   art-cli critique examples/sunset.json
   art-cli palette skills/art-app/references/coffee.png --colors 6
   art-cli compare out/study.png skills/art-app/references/coffee.png
+  art-cli gallery add out/forest.json --name forest-at-dawn
 
 The script format is described in docs/script-format.md.";
 
@@ -188,6 +202,7 @@ fn main() -> ExitCode {
         Some("critique") => {
             critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
         }
+        Some("gallery") => gallery::gallery(&args[1..]),
         Some("palette") => study::palette(&args[1..]),
         Some("values") => study::values(&args[1..]),
         Some("compare") => study::compare(&args[1..]),

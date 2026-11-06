@@ -1,0 +1,42 @@
+{
+  "title": "Exercise: five kinds of clouds",
+  "palette": { "sky_top": "#3F74B8", "sky_low": "#A9CBEA", "cloud": "#F6F3EC", "cloud_shade": "#AEB4C4", "storm": "#4A4E5C", "storm_rim": "#D9D4C8", "sunset": "#F7C78A", "sunset_shade": "#8E6A86", "ink": "#223044" },
+  "intent": { "subject": "five kinds of clouds in a row: cumulus, stratus, cirrus, a storm front, a sunset cloud", "focal": "cumulus", "light": "top right", "mood": "clear, airy", "key_colors": ["sky_top", "cloud", "sunset"] },
+  "commands": [
+    { "cmd": "canvas", "width": 960, "height": 400, "paper": "sky_low" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 400], "colors": ["sky_top", "sky_low"] },
+    { "cmd": "layer", "name": "Clouds" },
+    { "cmd": "define", "name": "puff", "params": { "top": "cloud", "under": "cloud_shade" }, "commands": [
+      { "cmd": "ellipse", "center": [0, 0], "radius": [52, 34], "fill": "$under" },
+      { "cmd": "ellipse", "center": [-4, -10], "radius": [50, 30], "fill": "$top" } ] },
+    { "cmd": "group", "name": "cumulus", "translate": [110, 150], "commands": [
+      { "cmd": "use", "name": "puff", "translate": [-40, 20], "scale": 0.9 },
+      { "cmd": "use", "name": "puff", "translate": [40, 24], "scale": 0.85 },
+      { "cmd": "use", "name": "puff", "translate": [0, -14], "scale": 1.1 },
+      { "cmd": "ellipse", "center": [0, 42], "radius": [86, 14], "fill": "cloud_shade" } ] },
+    { "cmd": "group", "name": "stratus", "translate": [300, 170], "commands": [
+      { "cmd": "ellipse", "center": [0, 0], "radius": [90, 10], "fill": "cloud", "jitter": 3 },
+      { "cmd": "ellipse", "center": [12, 26], "radius": [70, 7], "fill": "cloud", "opacity": 0.8, "jitter": 3 },
+      { "cmd": "ellipse", "center": [-10, 48], "radius": [60, 6], "fill": "cloud_shade", "opacity": 0.7, "jitter": 3 } ] },
+    { "cmd": "group", "name": "cirrus", "translate": [490, 120], "commands": [
+      { "cmd": "brush", "size": 6, "color": "cloud", "opacity": 0.6, "tip": "chalk" },
+      { "cmd": "path", "points": [[-80, 20], [-30, -6], [30, -2], [80, -24]] },
+      { "cmd": "path", "points": [[-70, 48], [-20, 30], [40, 34], [90, 10]] },
+      { "cmd": "brush", "reset": true } ] },
+    { "cmd": "group", "name": "storm", "translate": [680, 150], "commands": [
+      { "cmd": "ellipse", "center": [0, 10], "radius": [96, 54], "fill": "storm", "jitter": 6 },
+      { "cmd": "ellipse", "center": [30, -30], "radius": [50, 28], "fill": "storm_rim", "jitter": 4 },
+      { "cmd": "ellipse", "center": [22, -14], "radius": [60, 32], "fill": "storm", "jitter": 4 },
+      { "cmd": "ellipse", "center": [-10, 60], "radius": [90, 12], "fill": "ink", "opacity": 0.5 } ] },
+    { "cmd": "group", "name": "sunset cloud", "translate": [860, 190], "commands": [
+      { "cmd": "ellipse", "center": [0, 0], "radius": [70, 28], "fill": "sunset_shade", "jitter": 4 },
+      { "cmd": "ellipse", "center": [8, -16], "radius": [60, 20], "fill": "sunset", "jitter": 4 } ] },
+    { "cmd": "layer", "name": "Labels" },
+    { "cmd": "text", "text": "cumulus", "at": [110, 330], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "stratus", "at": [300, 330], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "cirrus", "at": [490, 330], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "storm front", "at": [680, 330], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "sunset", "at": [860, 330], "size": 18, "color": "ink", "align": "center" }
+  ]
+}

@@ -1,10 +1,73 @@
 {
-  "about": "Finished pieces made with Art App's scripts: each folder has script.json (the painting), final.png (as painted), process.png (one picture per stage, from --snapshots --sheet) and notes.md (what each tool did, and what's still weak). Include library parts with paths relative to the script.",
+  "about": "Finished pieces made with Art App's scripts: each folder has script.json (the painting, with its intent), final.png (as painted), process.png (one picture per stage, from --snapshots --sheet), views.png (the views sheet), critique.md (the report as printed), blind-read.md (the blind-read test), and notes.md (what each tool did, what's still weak, and proposed lessons). `rating` is the person's alone (art-cli gallery rate), 1 to 5 with a comment; it outranks every number. Include library parts with paths relative to the script.",
   "pieces": [
-    { "folder": "sunset-pond", "title": "Sunset pond", "size": [1920, 1080], "animated": true,
-      "tags": ["landscape", "sunset", "water", "reflection", "noise", "clip", "glow", "shadow", "stamp", "library", "gradient_map", "loop"],
-      "before": "before.json", "loop": "loop.gif" },
-    { "folder": "duck-portrait", "title": "Duck portrait", "size": [1024, 1024], "animated": false,
-      "tags": ["character", "portrait", "noise", "clip", "outline", "rim", "stamp", "bristle", "bokeh", "gradient_map"] }
+    {
+      "folder": "sunset-pond",
+      "title": "Sunset pond",
+      "size": [
+        1920,
+        1080
+      ],
+      "animated": true,
+      "tags": [
+        "calm",
+        "warm",
+        "noise",
+        "texture",
+        "clip",
+        "mask",
+        "blur",
+        "glow",
+        "shadow",
+        "adjust",
+        "gradient_map",
+        "stamp",
+        "brush tips",
+        "dynamics",
+        "scatter",
+        "library",
+        "animated",
+        "loop",
+        "landscape",
+        "sunset",
+        "water",
+        "reflection"
+      ],
+      "before": "before.json",
+      "loop": "loop.gif",
+      "rating": null
+    },
+    {
+      "folder": "duck-portrait",
+      "title": "Duck portrait",
+      "size": [
+        1024,
+        1024
+      ],
+      "animated": false,
+      "tags": [
+        "bright",
+        "friendly",
+        "studio",
+        "noise",
+        "texture",
+        "clip",
+        "mask",
+        "blur",
+        "shadow",
+        "gradient_map",
+        "outline",
+        "rim",
+        "stamp",
+        "brush tips",
+        "dynamics",
+        "hatch",
+        "scatter",
+        "character",
+        "portrait",
+        "bokeh"
+      ],
+      "rating": null
+    }
   ]
 }

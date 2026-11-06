@@ -1,0 +1,28 @@
+{
+  "title": "Study: the astronaut portrait (big shapes and palette only)",
+  "palette": { "grey": "#D1C7C4", "orange": "#D4603C", "black": "#010101", "grey_mid": "#8E7F7C", "skin": "#C29E8D", "red": "#781B12", "hair": "#534240" },
+  "intent": { "subject": "a smiling astronaut in an orange suit, a black collar ring around the face, a flag on the left and a model shuttle on the right", "focal": "face", "light": "top left", "mood": "proud, bright", "key_colors": ["orange", "grey"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 512, "paper": "grey" },
+    { "cmd": "layer", "name": "Background" },
+    { "cmd": "gradient", "from": [0, 0], "to": [512, 0], "colors": ["grey_mid", "grey"] },
+    { "cmd": "group", "name": "flag", "commands": [
+      { "cmd": "rect", "x": 0, "y": 0, "width": 90, "height": 512, "fill": "red", "opacity": 0.5 },
+      { "cmd": "repeat", "count": 5, "step": { "translate": [0, 60] }, "commands": [
+        { "cmd": "rect", "x": 0, "y": 20, "width": 90, "height": 24, "fill": "grey", "opacity": 0.6 } ] } ] },
+    { "cmd": "group", "name": "shuttle", "commands": [
+      { "cmd": "rect", "x": 380, "y": 170, "width": 90, "height": 120, "fill": "black", "opacity": 0.8 },
+      { "cmd": "polygon", "points": [[420, 20], [440, 0], [460, 20], [470, 180], [410, 180]], "fill": "grey" } ] },
+    { "cmd": "layer", "name": "Figure" },
+    { "cmd": "group", "name": "suit", "commands": [
+      { "cmd": "polygon", "points": [[60, 512], [100, 330], [180, 250], [330, 250], [420, 330], [470, 512]], "fill": "orange", "jitter": 4 },
+      { "cmd": "polygon", "points": [[60, 512], [100, 330], [150, 300], [140, 512]], "fill": "red", "opacity": 0.5, "jitter": 4 },
+      { "cmd": "ellipse", "center": [380, 450], "radius": [80, 60], "fill": "black" } ] },
+    { "cmd": "group", "name": "collar", "commands": [
+      { "cmd": "ellipse", "center": [250, 250], "radius": [96, 60], "fill": "black" } ] },
+    { "cmd": "group", "name": "face", "commands": [
+      { "cmd": "ellipse", "center": [242, 100], "radius": [70, 60], "fill": "hair" },
+      { "cmd": "ellipse", "center": [245, 150], "radius": [56, 68], "fill": "skin" },
+      { "cmd": "ellipse", "center": [246, 185], "radius": [18, 7], "fill": "grey" } ] }
+  ]
+}

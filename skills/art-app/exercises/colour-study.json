@@ -1,0 +1,25 @@
+{
+  "title": "Exercise: a colour study in one key, five colours",
+  "palette": { "shadow": "#2A1208", "deep": "#6A2A10", "mid": "#B4602A", "light": "#E0A468", "cream": "#F4E3C4" },
+  "intent": { "subject": "a cup on a table by a window, one warm key", "focal": "cup", "light": "top right", "mood": "warm, still", "key_colors": ["mid", "light", "deep"] },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 360, "paper": "mid" },
+    { "cmd": "layer", "name": "Wall" },
+    { "cmd": "gradient", "from": [0, 0], "to": [640, 0], "colors": ["deep", "mid"] },
+    { "cmd": "group", "name": "window", "commands": [
+      { "cmd": "rect", "x": 430, "y": 20, "width": 150, "height": 180, "fill": "cream", "jitter": 2 } ] },
+    { "cmd": "layer", "name": "Table" },
+    { "cmd": "group", "name": "table", "commands": [
+      { "cmd": "polygon", "points": [[-20, 240], [660, 225], [660, 380], [-20, 380]], "fill": "light" },
+      { "cmd": "polygon", "points": [[-20, 300], [660, 290], [660, 380], [-20, 380]], "fill": "deep" } ] },
+    { "cmd": "layer", "name": "Cup" },
+    { "cmd": "group", "name": "cup", "commands": [
+      { "cmd": "ellipse", "center": [250, 270], "radius": [78, 18], "fill": "shadow", "opacity": 0.6, "jitter": 3 },
+      { "cmd": "ellipse", "center": [240, 235], "radius": [52, 40], "fill": "deep" },
+      { "cmd": "ellipse", "center": [228, 230], "radius": [34, 30], "fill": "mid" },
+      { "cmd": "ellipse", "center": [240, 198], "radius": [52, 14], "fill": "cream" },
+      { "cmd": "ellipse", "center": [240, 200], "radius": [40, 9], "fill": "shadow" },
+      { "cmd": "ellipse", "center": [300, 232], "radius": [16, 20], "outline": "deep", "outline_size": 8, "fill": "#00000000" },
+      { "cmd": "ellipse", "center": [214, 220], "radius": [8, 12], "fill": "light", "opacity": 0.8 } ] }
+  ]
+}

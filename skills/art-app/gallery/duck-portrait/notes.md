@@ -27,3 +27,10 @@ living fill, shading, texture and light. `process.png` is the `--snapshots --she
 - The down strokes on the head are subtle at full size; they'd want a smaller tip and more of
   them.
 - The whole picture paints in about 3.5 s with snapshots.
+
+## Proposed lessons
+
+Put forward from the critique and the phase 3 notes; each already stands in `../../lessons.md` because the person agreed to the first set at the phase 4 design review. The before/after numbers for them come with the repaint.
+
+- Shade with big soft shapes and a few directed marks, not a noise fill: the body reads as marble (critique: `duck is blotchy inside: soft blobs with no direction`). Lesson 16.
+- Vary stamped marks in length, overlap and lightness: the wing's leaf rows read as rope (not caught by the numbers; the blind read should). Lesson 19.

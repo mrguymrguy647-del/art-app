@@ -1,0 +1,40 @@
+{
+  "title": "Exercise: one character in three poses",
+  "palette": { "paper": "#EFE6D2", "body": "#E36B4A", "body_dark": "#A8432C", "skin": "#F3C9A4", "ink": "#2A2420" },
+  "intent": { "subject": "one small character standing, walking and waving, the same shapes each time", "focal": "walking", "light": "top left", "mood": "cheerful", "key_colors": ["body", "skin"] },
+  "commands": [
+    { "cmd": "canvas", "width": 660, "height": 260, "paper": "paper" },
+    { "cmd": "define", "name": "leg", "params": { "angle": 0 }, "commands": [
+      { "cmd": "group", "rotate": "$angle", "commands": [
+        { "cmd": "line", "from": [0, 0], "to": [0, 34], "size": 9, "color": "ink", "taper": 0 },
+        { "cmd": "group", "translate": [0, 34], "upright": true, "commands": [
+          { "cmd": "rect", "x": -5, "y": 0, "width": 18, "height": 7, "fill": "ink" } ] } ] } ] },
+    { "cmd": "define", "name": "arm", "params": { "angle": 20 }, "commands": [
+      { "cmd": "group", "rotate": "$angle", "commands": [
+        { "cmd": "line", "from": [0, 0], "to": [0, 32], "size": 8, "color": "body_dark", "taper": 0.2 },
+        { "cmd": "ellipse", "center": [0, 36], "radius": 6, "fill": "skin" } ] } ] },
+    { "cmd": "define", "name": "hero", "params": { "near_leg": 0, "far_leg": 0, "near_arm": 20, "far_arm": -20 }, "commands": [
+      { "cmd": "group", "name": "figure", "outline": { "color": "ink", "size": 2.5 }, "commands": [
+        { "cmd": "use", "name": "leg", "translate": [-10, 0], "with": { "angle": "$far_leg" } },
+        { "cmd": "use", "name": "arm", "translate": [-22, -58], "with": { "angle": "$far_arm" } },
+        { "cmd": "ellipse", "center": [0, -34], "radius": [26, 36], "fill": "body" },
+        { "cmd": "ellipse", "center": [0, -86], "radius": 22, "fill": "skin" },
+        { "cmd": "ellipse", "center": [8, -90], "radius": 3, "fill": "ink" },
+        { "cmd": "path", "points": [[-2, -78], [6, -74], [14, -78]], "size": 2, "color": "ink" },
+        { "cmd": "use", "name": "leg", "translate": [10, 0], "with": { "angle": "$near_leg" } },
+        { "cmd": "use", "name": "arm", "translate": [22, -58], "with": { "angle": "$near_arm" } } ] } ] },
+    { "cmd": "layer", "name": "Ground" },
+    { "cmd": "rect", "x": 0, "y": 196, "width": 660, "height": 64, "fill": "body_dark", "opacity": 0.25 },
+    { "cmd": "layer", "name": "Characters" },
+    { "cmd": "group", "name": "standing", "commands": [
+      { "cmd": "use", "name": "hero", "translate": [110, 190] } ] },
+    { "cmd": "group", "name": "walking", "commands": [
+      { "cmd": "use", "name": "hero", "translate": [330, 188], "with": { "near_leg": 28, "far_leg": -26, "near_arm": -30, "far_arm": 30 } } ] },
+    { "cmd": "group", "name": "waving", "commands": [
+      { "cmd": "use", "name": "hero", "translate": [550, 190], "mirror": "x", "with": { "near_arm": 200, "far_arm": -16 } } ] },
+    { "cmd": "layer", "name": "Labels" },
+    { "cmd": "text", "text": "standing", "at": [110, 238], "size": 16, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "walking", "at": [330, 238], "size": 16, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "waving", "at": [550, 238], "size": 16, "color": "ink", "align": "center" }
+  ]
+}

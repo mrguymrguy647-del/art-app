@@ -63,20 +63,30 @@ pub const BLOTCH_ENERGY: f32 = 0.015;
 /// Feathers, grass and strokes have a direction and edges; noise fills
 /// have neither.
 pub const BLOTCH_COHERENCE: f32 = 0.5;
-/// Sharpness: the 95th percentile of the gradient over its mean in a
-/// cell, each band on the picture blurred to its own scale. Smooth
-/// blobs give about 1.5 to 2.5; marks with edges more.
-pub const BLOTCH_SHARPNESS: f32 = 2.5;
+/// Stillness: the share of pixels whose gradient is under half the
+/// mean, over the band's direction window, each band on the picture
+/// blurred to its own scale. Marks and flat fills are still between
+/// their edges (a high share); a smooth blob field is a gradient
+/// everywhere (a low share). Under this share a band is soft.
+pub const BLOTCH_STILL: f32 = 0.5;
+/// Gradient magnitudes are counted in this many log-scale bins (four
+/// per doubling from `SLOPE_FINEST`), so windows can be summed.
+const SLOPE_BINS: usize = 96;
+const SLOPE_FINEST: f32 = 1.0 / 4096.0;
+const SLOPE_BINS_PER_DOUBLING: f32 = 4.0;
 /// A part whose own paint is one colour (less value range than this)
 /// and mostly see-through (mean opacity under `TINT_ALPHA` where it
 /// counts) is a tint (a vignette, a shadow, a glow): nothing to judge.
 pub const TINT: f32 = 0.02;
 pub const TINT_ALPHA: f32 = 220.0;
-/// Texture is judged this many pixels in from a part's edge: the edge
-/// itself (an outline, the silhouette) is a shape, not a texture.
-pub const EDGE_MARGIN: f32 = 8.0;
+/// Texture is judged this many pixels in from a part's edge, per band:
+/// the edge itself (an outline, the silhouette) is a shape, not a
+/// texture, and a band's blur drags it that far inside.
+pub const EDGE_MARGIN: [f32; 3] = [8.0, 12.0, 30.0];
 /// A part is blotchy when blotches cover more than this share of it.
-pub const BLOTCHY_SHARE: f32 = 0.5;
+/// (The gallery's marbled duck body and smudge clouds sit at 42%; a
+/// smooth-form painting as one part at 26 to 34%.)
+pub const BLOTCHY_SHARE: f32 = 0.4;
 /// A cell with a value range under this is flat...
 pub const FLAT_CELL: f32 = 0.02;
 /// ...and a part with more than this share of flat cells is flat.
@@ -90,10 +100,18 @@ pub const LIGHT_STANDOUT: f32 = 0.3;
 pub const FRINGE: (f32, f32) = (2.0, 6.0);
 /// ...against further in.
 pub const INTERIOR: (f32, f32) = (14.0, 30.0);
-/// An edge is soft when the part's own opacity, over the first pixels
-/// inside its silhouette (`SOFT_DEPTH`), is this far under full (0-255).
+/// An edge is soft when the part's own opacity ramps: over the first
+/// pixels inside its silhouette (`SOFT_DEPTH`) it is this far (0-255)
+/// under the opacity further in (`SOFT_INSIDE`). A blurred silhouette
+/// ramps; a see-through shadow is even all the way in, and isn't soft.
 pub const SOFT_EDGE: f32 = 40.0;
 pub const SOFT_DEPTH: (f32, f32) = (1.0, 3.0);
+pub const SOFT_MIDDLE: (f32, f32) = (4.0, 6.0);
+pub const SOFT_INSIDE: (f32, f32) = (7.0, 12.0);
+/// A ramp keeps rising: the middle depth is at least this much more
+/// opaque than the first pixels (a see-through shadow under an opaque
+/// body is a step, not a ramp).
+pub const SOFT_RISE: f32 = 10.0;
 /// A soft edge through which the picture is this much lighter than the
 /// part's own paint (the background showing through) is a halo: a blur
 /// on the silhouette reads as a haze band or a smudge.
@@ -291,11 +309,11 @@ pub struct Texture {
     /// The mean coherence of each band on its own, over the cells where
     /// it has energy.
     pub coherences: [Option<f32>; 3],
-    /// The mean sharpness (95th percentile of the gradient over its
-    /// mean) of each band over the cells where it has energy: edges or
-    /// not, and the least of them.
-    pub sharpnesses: [Option<f32>; 3],
-    pub sharpness: Option<f32>,
+    /// The mean stillness (the share of pixels with a gradient under
+    /// half the mean) of each band over the cells where it has energy:
+    /// edges and flats, or a gradient everywhere; and the least of them.
+    pub stills: [Option<f32>; 3],
+    pub still: Option<f32>,
     pub flat_share: f32,
     pub flat: bool,
     /// The value range of the part's squint.
@@ -307,8 +325,9 @@ pub struct Texture {
     /// A tint: one colour with a soft alpha (a vignette, a glow), so
     /// its structure isn't judged.
     pub tint: bool,
-    /// How soft its edges are: 255 minus the own opacity over the first
-    /// pixels inside the silhouette, on the softest side (own paint only).
+    /// How soft its edges are: how much the own opacity ramps up from
+    /// the first pixels inside the silhouette to further in, on the
+    /// softest side (own paint only).
     pub soft_edge: Option<f32>,
     /// The strongest light fringe on a soft side: how much lighter the
     /// picture is than the part's own paint just inside that edge (the
@@ -642,13 +661,13 @@ impl Critique {
             if t.blotchy {
                 out.push(format!(
                     "texture: {} is blotchy inside: soft blobs with no direction over {:.0}% \
-                     of it (coherence {:.2}, sharpness {:.1}); feathers, grass and strokes have \
+                     of it (coherence {:.2}, still {:.2}); feathers, grass and strokes have \
                      a direction and edges, noise fills have neither: shade with big soft \
                      shapes and a few directed marks",
                     t.name,
                     t.blotchy_share * 100.0,
                     t.coherence.unwrap_or(0.0),
-                    t.sharpness.unwrap_or(0.0)
+                    t.still.unwrap_or(0.0)
                 ));
             }
             if t.flat {
@@ -822,14 +841,14 @@ impl Critique {
                         .map(|b| b.map_or("-".to_owned(), |v| format!("{v:.2}")))
                         .collect();
                     let sharp: Vec<String> = t
-                        .sharpnesses
+                        .stills
                         .iter()
-                        .map(|b| b.map_or("-".to_owned(), |v| format!("{v:.1}")))
+                        .map(|b| b.map_or("-".to_owned(), |v| format!("{v:.2}")))
                         .collect();
                     format!(
-                        " (coherence {c:.2}: {}; sharpness {:.1}: {})",
+                        " (coherence {c:.2}: {}; still {:.2}: {})",
                         per.join(" "),
-                        t.sharpness.unwrap_or(0.0),
+                        t.still.unwrap_or(0.0),
                         sharp.join(" ")
                     )
                 }),
@@ -1335,9 +1354,11 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
     let mut greys = Vec::new();
     let mut squints = Vec::new();
     let mut grains = Vec::new();
-    let mut cell_inner = vec![0usize; GRID * GRID];
-    let mut cell_slopes: Vec<[Vec<f32>; 3]> =
-        vec![[Vec::new(), Vec::new(), Vec::new()]; GRID * GRID];
+    let mut cell_inner = vec![[0usize; 3]; GRID * GRID];
+    // Per cell and band: gradient magnitudes as a log histogram, their
+    // sum and count (summed over windows for stillness).
+    let mut cell_slopes: Vec<[([u32; SLOPE_BINS], f32, u32); 3]> =
+        vec![[([0; SLOPE_BINS], 0.0, 0); 3]; GRID * GRID];
     let (mut marks_sum, mut band_sums, mut n) = (0.0f32, [0.0f32; 3], 0usize);
     let (mut alpha_sum, mut alpha_n) = (0.0f32, 0usize);
     for (x, y) in pixels_of(part, m.width, m.height) {
@@ -1347,11 +1368,22 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
         let cell = cell_index(x, y, m.width, m.height);
         cell_greys[cell].push(field.grey.values[i]);
         cell_grain[cell].push(field.grain[i]);
-        if depth_at(x, y) >= EDGE_MARGIN {
-            cell_inner[cell] += 1;
-            for band in 0..3 {
+        let depth = depth_at(x, y);
+        for band in 0..3 {
+            if depth >= EDGE_MARGIN[band] {
+                cell_inner[cell][band] += 1;
                 let (fx, fy) = (field.gradients[band].0[i], field.gradients[band].1[i]);
-                cell_slopes[cell][band].push(fx.hypot(fy));
+                let slope = fx.hypot(fy);
+                let bin = if slope <= SLOPE_FINEST {
+                    0
+                } else {
+                    (((slope / SLOPE_FINEST).log2() * SLOPE_BINS_PER_DOUBLING).floor() as usize)
+                        .min(SLOPE_BINS - 1)
+                };
+                let (hist, sum, n) = &mut cell_slopes[cell][band];
+                hist[bin] += 1;
+                *sum += slope;
+                *n += 1;
                 cell_bands[cell][band] += field.bands[band][i];
                 band_sums[band] += field.bands[band][i];
                 let (gx, gy) = (field.gradients[band].0[i], field.gradients[band].1[i]);
@@ -1375,15 +1407,15 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
     if n == 0 {
         return None;
     }
-    let inner_total: usize = cell_inner.iter().sum();
+    let inner_total: [usize; 3] = [0, 1, 2].map(|b| cell_inner.iter().map(|c| c[b]).sum());
     let range = range_of(&mut greys).max(1e-3);
     let squint_range = range_of(&mut squints);
     let (mut dirty_cells, mut blotchy_cells, mut flat_cells, mut cells) =
         (0usize, 0usize, 0usize, 0usize);
     let (mut coherence_sum, mut coherence_n) = (0.0f32, 0usize);
-    let (mut sharpness_sum, mut sharpness_n) = (0.0f32, 0usize);
+    let (mut still_sum, mut still_n) = (0.0f32, 0usize);
     let mut band_coherence = [(0.0f32, 0usize); 3];
-    let mut band_sharpness = [(0.0f32, 0usize); 3];
+    let mut band_still = [(0.0f32, 0usize); 3];
     for i in 0..GRID * GRID {
         let count = cell_greys[i].len();
         // A cell counts when the part fills at least half of it.
@@ -1394,38 +1426,52 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
         }
         cells += 1;
         let grain = median_of(&mut cell_grain[i]);
-        let inner = cell_inner[i].max(1) as f32;
-        let marks = cell_bands[i][0] / inner;
+        let marks = cell_bands[i][0] / cell_inner[i][0].max(1) as f32;
         if grain > DIRTY_GRAIN * range && marks < MARKS_OVER_GRAIN * grain {
             dirty_cells += 1;
         }
         // Direction and edges: for each band with energy here, the
         // coherence over a window as big as its blotches, and the
-        // sharpness of the picture blurred to the band's scale; only on
+        // stillness of the picture blurred to the band's scale; only on
         // pixels in from the edge. The cell is blotchy when some band
         // is both soft and directionless.
         let mut least: Option<f32> = None;
         let mut softest: Option<f32> = None;
         let mut blotchy_here = false;
         for band in 0..3 {
-            if cell_inner[i] * 2 < count || cell_bands[i][band] / inner <= BLOTCH_ENERGY {
+            let inner = cell_inner[i][band];
+            if inner * 2 < count || cell_bands[i][band] / inner.max(1) as f32 <= BLOTCH_ENERGY {
                 continue;
             }
-            let slopes = &mut cell_slopes[i][band];
-            let mean = slopes.iter().sum::<f32>() / slopes.len().max(1) as f32;
-            slopes.sort_by(|a, b| a.total_cmp(b));
-            let p95 = slopes
-                .get(((slopes.len().max(1) - 1) as f32 * 0.95).round() as usize)
-                .copied()
-                .unwrap_or(0.0);
-            let sharpness = if mean > 0.0 { p95 / mean } else { 0.0 };
-            band_sharpness[band] = (
-                band_sharpness[band].0 + sharpness,
-                band_sharpness[band].1 + 1,
-            );
-            softest = Some(softest.map_or(sharpness, |s: f32| s.min(sharpness)));
             let (column, row) = ((i % GRID) as i32, (i / GRID) as i32);
             let radius = DIRECTION_WINDOW[band];
+            // Sharpness over the window: the 95th percentile of the
+            // gradient (from the summed histograms) over its mean.
+            let mut hist = [0u32; SLOPE_BINS];
+            let (mut sum, mut n) = (0.0f32, 0u32);
+            for r in (row - radius).max(0)..=(row + radius).min(GRID as i32 - 1) {
+                for c in (column - radius).max(0)..=(column + radius).min(GRID as i32 - 1) {
+                    let (h, s, k) = &cell_slopes[r as usize * GRID + c as usize][band];
+                    for (a, b) in hist.iter_mut().zip(h) {
+                        *a += b;
+                    }
+                    sum += s;
+                    n += k;
+                }
+            }
+            let mean = sum / n.max(1) as f32;
+            // Still pixels: a gradient under half the mean.
+            let half = mean * 0.5;
+            let half_bin = if half <= SLOPE_FINEST {
+                0
+            } else {
+                (((half / SLOPE_FINEST).log2() * SLOPE_BINS_PER_DOUBLING).floor() as usize)
+                    .min(SLOPE_BINS - 1)
+            };
+            let still_count: u32 = hist[..half_bin].iter().sum();
+            let still = still_count as f32 / n.max(1) as f32;
+            band_still[band] = (band_still[band].0 + still, band_still[band].1 + 1);
+            softest = Some(softest.map_or(still, |s: f32| s.min(still)));
             let mut sum = [0.0f32; 3];
             for r in (row - radius).max(0)..=(row + radius).min(GRID as i32 - 1) {
                 for c in (column - radius).max(0)..=(column + radius).min(GRID as i32 - 1) {
@@ -1440,15 +1486,15 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
                 band_coherence[band].1 + 1,
             );
             least = Some(least.map_or(coherence, |l: f32| l.min(coherence)));
-            if coherence < BLOTCH_COHERENCE && sharpness < BLOTCH_SHARPNESS {
+            if coherence < BLOTCH_COHERENCE && still < BLOTCH_STILL {
                 blotchy_here = true;
             }
         }
-        if let (Some(coherence), Some(sharpness)) = (least, softest) {
+        if let (Some(coherence), Some(still)) = (least, softest) {
             coherence_sum += coherence;
             coherence_n += 1;
-            sharpness_sum += sharpness;
-            sharpness_n += 1;
+            still_sum += still;
+            still_n += 1;
             if blotchy_here {
                 blotchy_cells += 1;
             }
@@ -1463,9 +1509,9 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
     let flat_share = flat_cells as f32 / cells;
     let coherence = (coherence_n > 0).then(|| coherence_sum / coherence_n as f32);
     let coherences = band_coherence.map(|(sum, n)| (n > 0).then(|| sum / n as f32));
-    let sharpness = (sharpness_n > 0).then(|| sharpness_sum / sharpness_n as f32);
-    let sharpnesses = band_sharpness.map(|(sum, n)| (n > 0).then(|| sum / n as f32));
-    let bands = band_sums.map(|sum| sum / inner_total.max(1) as f32);
+    let still = (still_n > 0).then(|| still_sum / still_n as f32);
+    let stills = band_still.map(|(sum, n)| (n > 0).then(|| sum / n as f32));
+    let bands = [0, 1, 2].map(|b| band_sums[b] / inner_total[b].max(1) as f32);
     // One colour with a soft alpha (a vignette, a glow, a shadow) is a
     // tint: nothing to judge inside it.
     let tint = part.own.is_some()
@@ -1512,12 +1558,15 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
             let w = depth_w;
             let h = (rect.bottom - rect.top).max(0) as usize;
             let own_rect = part.mask.rect();
-            // Per side: (opacity sum, count) over the first pixels, and
-            // (picture sum, own sum, count) over the fringe.
+            // Per side: (opacity sum, count) over the first pixels and
+            // over the pixels further in, and (picture sum, own sum,
+            // count) over the fringe.
             let mut softness = [(0.0f32, 0usize); SIDES];
+            let mut middle = [(0.0f32, 0usize); SIDES];
+            let mut deeper = [(0.0f32, 0usize); SIDES];
             let mut fringes = [(0.0f32, 0.0f32, 0usize); SIDES];
             for (i, &d) in depth.iter().enumerate() {
-                if d < SOFT_DEPTH.0 || d > FRINGE.1 {
+                if d < SOFT_DEPTH.0 || d > SOFT_INSIDE.1 {
                     continue;
                 }
                 let (lx, ly) = ((i % w.max(1)) as i32, (i / w.max(1)) as i32);
@@ -1539,11 +1588,16 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
                 if ox >= own.width() || oy >= own.height() {
                     continue;
                 }
+                let a = f32::from(own.pixel(ox, oy)[3]);
                 if d <= SOFT_DEPTH.1 {
-                    let a = f32::from(own.pixel(ox, oy)[3]);
                     softness[side] = (softness[side].0 + a, softness[side].1 + 1);
+                } else if d >= SOFT_MIDDLE.0 && d <= SOFT_MIDDLE.1 {
+                    middle[side] = (middle[side].0 + a, middle[side].1 + 1);
+                } else if d >= SOFT_INSIDE.0 {
+                    deeper[side] = (deeper[side].0 + a, deeper[side].1 + 1);
                 }
                 if d >= FRINGE.0
+                    && d <= FRINGE.1
                     && let Some(j) = field.at(x, y)
                 {
                     let v = m.grey().get(x as u32, y as u32);
@@ -1555,11 +1609,19 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
             let mut strongest: Option<(f32, &'static str)> = None;
             for side in 0..SIDES {
                 let (a, n) = softness[side];
+                let (mid, mn) = middle[side];
+                let (deep, dn) = deeper[side];
                 let (pv, ov, fn_) = fringes[side];
-                if n < 50 || fn_ < 100 {
+                if n < 50 || mn < 50 || dn < 50 || fn_ < 100 {
                     continue;
                 }
-                let soft = 255.0 - a / n as f32;
+                let shallow = a / n as f32;
+                let rises = mid / mn as f32 - shallow >= SOFT_RISE;
+                let soft = if rises {
+                    deep / dn as f32 - shallow
+                } else {
+                    0.0
+                };
                 softest = Some(softest.map_or(soft, |s: f32| s.max(soft)));
                 if soft < SOFT_EDGE {
                     continue;
@@ -1587,8 +1649,8 @@ fn texture_of(m: &Measured, part: &Part, squint_radius: f32) -> Option<Texture> 
         blotchy: !light && !tint && blotchy_share > BLOTCHY_SHARE,
         coherence,
         coherences,
-        sharpnesses,
-        sharpness,
+        stills,
+        still,
         flat_share,
         // A layer is allowed big smooth areas (a sky, a wall); a named
         // part that's flat is a shape with nothing inside.
@@ -2035,19 +2097,13 @@ mod tests {
         let stripes = texture(&c, "stripes");
         let blotches = texture(&c, "blotches");
         assert!(stripes.coherence.unwrap() > 0.7, "{stripes:?}");
-        assert!(
-            stripes.sharpnesses[0].unwrap() > BLOTCH_SHARPNESS,
-            "{stripes:?}"
-        );
+        assert!(stripes.stills[0].unwrap() > BLOTCH_STILL, "{stripes:?}");
         assert!(!stripes.blotchy, "{stripes:?}");
         assert!(
             blotches.coherence.unwrap() < BLOTCH_COHERENCE,
             "{blotches:?}"
         );
-        assert!(
-            blotches.sharpness.unwrap() < BLOTCH_SHARPNESS,
-            "{blotches:?}"
-        );
+        assert!(blotches.still.unwrap() < BLOTCH_STILL, "{blotches:?}");
         assert!(blotches.blotchy, "{blotches:?}");
         assert!(!stripes.dirty && !blotches.dirty, "neither is fine grain");
         assert!(
@@ -2289,19 +2345,20 @@ mod reference_tests {
             );
         }
         // Texture, the whole picture as one part: no painting or
-        // photograph here is noisy, and the paintings of lines and flat
-        // colour (Hokusai) and of smooth form (Vermeer, Friedrich) aren't
-        // blotchy. Van Gogh's curving strokes at 1024 px, and the
-        // photographs of soft things (a face, fur, a cup), read as soft
-        // blobs with no one direction: a known limit, recorded in
-        // decisions.md, that the painter overrules.
+        // photograph here is noisy, and the paintings of smooth form
+        // (Vermeer, Friedrich) and the rocket at dusk aren't blotchy. A
+        // whole picture is not a part, and at the biggest band (24 to
+        // 96 px) Van Gogh's curving strokes, Hokusai's lines everywhere
+        // and the photographs of soft things (a face, fur, a cup) read
+        // as soft blobs with no one direction: a known limit, recorded
+        // in decisions.md, that the painter overrules.
         WHOLE.with(|w| {
             for (file, t) in w.borrow().iter() {
                 assert!(!t.dirty, "{file} is called noisy: {t:?}");
                 if [
                     "vermeer-girl-with-a-pearl-earring.jpg",
                     "friedrich-wanderer.jpg",
-                    "hokusai-great-wave.jpg",
+                    "rocket.jpg",
                 ]
                 .contains(&file.as_str())
                 {

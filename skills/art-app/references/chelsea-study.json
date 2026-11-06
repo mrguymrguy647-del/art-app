@@ -1,0 +1,26 @@
+{
+  "title": "Study: Chelsea the cat (big shapes and palette only)",
+  "palette": { "tan": "#A67C5B", "pink": "#B59789", "brown": "#876145", "dark": "#6D4429", "darkest": "#3D2514", "green": "#9AA85A", "black": "#1A1410" },
+  "intent": { "subject": "a tabby cat's face filling the frame, two green eyes, a pink nose", "focal": "eyes", "light": "above", "mood": "soft, watchful", "key_colors": ["tan", "brown"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 341, "paper": "tan" },
+    { "cmd": "layer", "name": "Fur" },
+    { "cmd": "gradient", "from": [0, 0], "to": [512, 341], "colors": ["brown", "tan", "pink"] },
+    { "cmd": "group", "name": "head", "commands": [
+      { "cmd": "ellipse", "center": [250, 200], "radius": [190, 150], "fill": "tan", "jitter": 8 },
+      { "cmd": "polygon", "points": [[90, 100], [120, 0], [190, 70]], "fill": "brown", "jitter": 4 },
+      { "cmd": "polygon", "points": [[330, 70], [400, 0], [430, 100]], "fill": "brown", "jitter": 4 },
+      { "cmd": "brush", "size": 10, "color": "dark", "opacity": 0.7, "tip": "bristle" },
+      { "cmd": "repeat", "count": 5, "step": { "translate": [0, 26] }, "commands": [
+        { "cmd": "path", "points": [[140, 70], [200, 60], [250, 58], [300, 60], [360, 70]] } ] },
+      { "cmd": "brush", "reset": true } ] },
+    { "cmd": "group", "name": "eyes", "commands": [
+      { "cmd": "ellipse", "center": [180, 190], "radius": [26, 18], "fill": "green" },
+      { "cmd": "ellipse", "center": [320, 190], "radius": [26, 18], "fill": "green" },
+      { "cmd": "ellipse", "center": [181, 190], "radius": [5, 16], "fill": "black" },
+      { "cmd": "ellipse", "center": [321, 190], "radius": [5, 16], "fill": "black" } ] },
+    { "cmd": "group", "name": "nose", "commands": [
+      { "cmd": "polygon", "points": [[236, 236], [264, 236], [250, 254]], "fill": "pink" },
+      { "cmd": "ellipse", "center": [250, 268], "radius": [40, 16], "fill": "darkest", "opacity": 0.5 } ] }
+  ]
+}

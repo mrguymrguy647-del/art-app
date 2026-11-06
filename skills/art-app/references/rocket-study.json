@@ -1,0 +1,25 @@
+{
+  "title": "Study: the rocket on the pad at dusk (big shapes and palette only)",
+  "palette": { "sky_dark": "#1D263B", "sky": "#2A3A5A", "sky_pale": "#505E7B", "haze": "#394B6F", "tower": "#3F3E48", "ground": "#5C4F47", "light": "#AB824B", "white": "#AFA48E" },
+  "intent": { "subject": "a white rocket standing dead centre between dark towers under a deep blue dusk, a row of warm lights along the bottom", "focal": "rocket", "light": "behind", "mood": "quiet, expectant", "key_colors": ["sky", "light"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 341, "paper": "sky" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 341], "colors": ["sky_dark", "sky", "sky_pale"] },
+    { "cmd": "layer", "name": "Pad" },
+    { "cmd": "group", "name": "towers", "commands": [
+      { "cmd": "polygon", "points": [[0, 0], [60, 0], [40, 341], [0, 341]], "fill": "tower" },
+      { "cmd": "polygon", "points": [[512, 0], [452, 0], [472, 341], [512, 341]], "fill": "tower" },
+      { "cmd": "rect", "x": 150, "y": 100, "width": 14, "height": 241, "fill": "tower" },
+      { "cmd": "rect", "x": 350, "y": 100, "width": 14, "height": 241, "fill": "tower" } ] },
+    { "cmd": "group", "name": "ground", "commands": [
+      { "cmd": "rect", "x": 0, "y": 318, "width": 512, "height": 23, "fill": "ground" },
+      { "cmd": "rect", "x": 0, "y": 290, "width": 512, "height": 30, "fill": "haze", "opacity": 0.6 } ] },
+    { "cmd": "group", "name": "rocket", "commands": [
+      { "cmd": "rect", "x": 246, "y": 120, "width": 20, "height": 200, "fill": "white" },
+      { "cmd": "polygon", "points": [[246, 120], [256, 96], [266, 120]], "fill": "white" } ] },
+    { "cmd": "group", "name": "lights", "commands": [
+      { "cmd": "repeat", "count": 6, "step": { "translate": [80, 0] }, "commands": [
+        { "cmd": "ellipse", "center": [60, 300], "radius": 6, "fill": "light" } ] } ] }
+  ]
+}

@@ -1488,3 +1488,57 @@ two false alarms. Every finding, before and after:
 - **Cost.** The critique paints the picture twice and measures every
   layer and part: the pond takes about 14 s now instead of 4.
 
+## 74. The learning folder (phase 4, step 5)
+
+- **One folder, copyable.** Everything an agent learns from lives in
+  `skills/art-app/`: the short entry point, lessons, mistakes with
+  pictures, styles, references with studies, exercises with answers, the
+  library and the gallery. Nothing in it depends on files outside the
+  repository, so it can be installed as a skill as it is.
+- **Lessons are earned, not written.** `lessons.md` says how a lesson
+  gets in: the person agrees, or a reviewer that didn't paint the piece
+  proposes it in the piece's notes and the before/after numbers back it.
+  The first thirty come from phase 3's notes and phase 4's critique and
+  references, agreed at the design review; each names the piece or
+  picture that shows it.
+- **Mistakes keep their before pictures now and get their after
+  pictures with the repaints** (step 9). Each entry quotes the critique
+  line that catches it, or says the numbers don't (rope feathers, the
+  pillar reflection): so a painter learns both what to look for and what
+  the numbers can't see.
+- **The gallery command does the bookkeeping.** `gallery add` paints a
+  piece in place, saves the process and views sheets, the critique as
+  printed and a blind-read skeleton, keeps notes if there are any (adding
+  the "Proposed lessons" section) and writes the index entry with tags
+  from the intent's mood and the tools the script uses. Includes are
+  rewritten so the moved script still finds its library parts. `gallery
+  rate` is the only way a rating gets in, and the rating survives a
+  re-add. The index keeps key order (`preserve_order`) so a person can
+  read it.
+- **Exercises are judged by the same critique as everything else**, and
+  their pages say which findings are expected ("flat" in a value study,
+  "bottom-heavy" when figures stand on the ground) and which would mean
+  something is wrong. Writing them turned up two false alarms in the
+  critique and fixed them: a cup made of a few flat ellipses was
+  "blotchy" (the band's blur dragged the shape's own outline into its
+  texture: the edge margin is now per band, 8, 12 and 30 px), and a
+  see-through cast shadow under an opaque body was a "soft edge" (the
+  rule now wants an opacity *ramp*, rising at every depth, which a blur
+  gives and a step of shadow doesn't).
+- **Blotchy, calibrated once more.** The direction windows [1, 5, 9
+  cells] and the stillness measure (the share of pixels whose gradient
+  is under half the window's mean, from log histograms so windows sum)
+  replace sharpness; the share that makes a part blotchy is 40%, where
+  the marbled duck body and the smudge clouds sit at 42% and the
+  smooth-form references as whole pictures at 26 to 34%. The margin is
+  small and the gallery test pins it. Judged as one whole part, Van
+  Gogh's strokes and Hokusai's lines everywhere at the 24 to 96 px band
+  are "blotchy" too: a whole picture is not a part, and the test keeps
+  the Van Gogh result on record as the limit.
+- **Study scripts** for every reference block in the big shapes with
+  the reference's own palette in about twenty commands; `compare` puts
+  them at 63 to 89 on values and 17 (Friedrich's near-grey picture,
+  where the hue histograms barely exist) to 91 on colour. The point of a
+  study is the value structure; the colour score says whether the key
+  is the same, not whether the study is good.
+

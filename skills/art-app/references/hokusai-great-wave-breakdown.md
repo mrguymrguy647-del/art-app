@@ -15,3 +15,5 @@ Two hues, flat colour, every shape outlined. The deep blue is the famous Prussia
 critique's "flat part" rule is about shading inside a part that needs it; here flatness is
 the style, and the silhouettes do all the work. Check the silhouette view of your own flat
 pictures: if a shape doesn't read as a silhouette, no shading will save it.
+
+**Study.** `hokusai-great-wave-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare hokusai-great-wave-study.json hokusai-great-wave.*`: values similar: 73; colours similar: 75, the study is cooler and darker. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

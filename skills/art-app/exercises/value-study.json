@@ -1,0 +1,26 @@
+{
+  "title": "Exercise: a value study in three greys",
+  "palette": { "light": "#D9D9D9", "mid": "#8A8A8A", "dark": "#353535", "white": "#F6F6F6" },
+  "intent": { "subject": "a lone tree on a ridge against a pale sky, in three greys", "focal": "tree", "light": "top right", "mood": "quiet, open", "key_colors": ["light", "mid", "dark"] },
+  "commands": [
+    { "cmd": "canvas", "width": 640, "height": 360, "paper": "light" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 220], "colors": ["mid", "light"] },
+    { "cmd": "group", "name": "sun", "commands": [
+      { "cmd": "ellipse", "center": [470, 110], "radius": 46, "fill": "white" } ] },
+    { "cmd": "layer", "name": "Far hills" },
+    { "cmd": "group", "name": "far hills", "commands": [
+      { "cmd": "polygon", "points": [[-20, 250], [120, 190], [260, 230], [420, 170], [560, 215], [680, 190], [680, 300], [-20, 300]], "fill": "mid", "jitter": 3 } ] },
+    { "cmd": "layer", "name": "Ridge" },
+    { "cmd": "group", "name": "ridge", "commands": [
+      { "cmd": "polygon", "points": [[-20, 300], [160, 262], [330, 248], [520, 268], [680, 300], [680, 380], [-20, 380]], "fill": "dark", "jitter": 3 } ] },
+    { "cmd": "layer", "name": "Tree" },
+    { "cmd": "group", "name": "tree", "commands": [
+      { "cmd": "line", "from": [372, 262], "to": [368, 180], "size": 9, "color": "dark", "taper": 0.3 },
+      { "cmd": "line", "from": [369, 205], "to": [340, 178], "size": 5, "color": "dark", "taper": 0.6 },
+      { "cmd": "line", "from": [369, 195], "to": [402, 168], "size": 5, "color": "dark", "taper": 0.6 },
+      { "cmd": "ellipse", "center": [364, 150], "radius": [58, 40], "fill": "dark", "jitter": 5 },
+      { "cmd": "ellipse", "center": [330, 172], "radius": [34, 24], "fill": "dark", "jitter": 5 },
+      { "cmd": "ellipse", "center": [402, 170], "radius": [38, 26], "fill": "dark", "jitter": 5 } ] }
+  ]
+}

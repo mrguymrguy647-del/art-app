@@ -165,10 +165,12 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - `art-cli critique picture.json`: about fifteen findings in numbers with hints (values, focal point,
   colour and key, texture, readability at 96 px, composition; `--detail` every part; `--frames 0-7` an
   animation). Numbers are warnings, never goals: never trade a better picture for a better number.
-- Learn from pictures (`skills/art-app/references/`, public domain or CC0 only): `art-cli palette ref.png`
-  (8 colours to paste), `art-cli values ref.png` (five greys), `art-cli compare mine.json ref.png` (0-100).
-- `art-cli check picture.json --detail` also lists the groups and uses inside others;
-  `art-cli info picture.json` gives each layer's box and which commands painted it.
+- Learn: `skills/art-app/lessons.md` (rules, each with the piece that shows it), `skills/art-app/mistakes.md`
+  (before pictures and the critique line that catches each), `skills/art-app/styles/`, `skills/art-app/exercises/`,
+  `skills/art-app/references/` (public domain or CC0 only; `art-cli palette`, `art-cli values`, `art-cli compare`).
+- Finished: `art-cli gallery add piece.json --name name` (folder, sheets, critique, blind-read skeleton, notes,
+  index tags); `art-cli gallery rate name 4 "why"` is the person's rating, and it outranks every number.
+- `art-cli check picture.json --detail` lists the groups and uses inside others; `art-cli info picture.json` gives each layer's box.
 - `--layers "Characters"` shows only some layers; `--hide "Background"` all but some. `--snapshots --sheet`
   saves a picture at every `snapshot` command and layer change (add `{ "cmd": "snapshot", "name": "blocked in" }`
   after big stages) and one sheet of them all. `--crop` may go past the canvas edges (grey squares outside);
@@ -178,21 +180,19 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 
 - Block in big shapes back to front first; details last, mostly at the focal point.
 - Shadows: a `multiply` layer in a dark cool colour; glows: `screen` or `add`.
-- Texture: `brush` with a `tip` (`chalk`, `bristle`, `leaf`, `grass`, `sparkle`, `square`) and
-  `dynamics` (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); `stroke`, `path`,
-  `hatch` and `scatter` all use it. `stamp` puts a symbol or tip along a path every `spacing`.
-- Clouds, water, rock, skin: a `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}`;
-  paper grain: `{"texture": "paper"}` on a `multiply` layer at 0.3.
-- Depth and light: `filter` with `blur` + `adjust` on far layers; `"filter": {"glow": ...}` on
-  a sun's group, `{"shadow": ...}` on a character's `use`; a `"from": "below"` layer with a
-  `gradient_map` at 0.3 to unify.
-- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use`
-  (no seams between parts), `"rim": {...}` inside it for rim light.
-- Shading inside a shape: a `"clip": true` layer above it; `"lock": true` recolours a layer
-  without changing its edges; a group's `mask` (an area, a symbol, a layer) limits its paint.
-- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it.
-- Judge the squint and thumb (`views`) and run `critique` before any detail: if it doesn't read small, fix
-  values and shapes. The whole sequence, with a worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
+- Texture: `brush` with a `tip` (`chalk`, `bristle`, `leaf`, `grass`, `sparkle`, `square`) and `dynamics`
+  (`follow`, `size`, `opacity`, `scatter`, `hue`, `lightness`); `stroke`, `path`, `hatch` and `scatter` use it.
+  `stamp` puts a symbol or tip along a path every `spacing`. Marks have a direction; a noise fill doesn't.
+- A `fill` of `{"noise": {"scale", "detail", "contrast", "colors"}}` is a base for clouds, water, rock, skin,
+  never the shading itself (it reads as marble); paper grain: `{"texture": "paper"}` on `multiply` at 0.3.
+- Depth and light: `filter` with `blur` + `adjust` on far layers (blur the fill, not the silhouette);
+  `"filter": {"glow": ...}` on a sun's group, `{"shadow": ...}` on a character's `use`; a `"from": "below"`
+  layer with a `gradient_map` at 0.3 to unify.
+- One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use` (no seams),
+  `"rim": {...}` inside it for rim light. Shading inside a shape: a `"clip": true` layer above it;
+  `"lock": true` recolours a layer without changing its edges; a group's `mask` limits its paint.
+- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it. Judge the squint
+  and thumb (`views`) and run `critique` before any detail; the whole sequence: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 

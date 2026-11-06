@@ -35,3 +35,11 @@ clouds drift, the duck bobs and turns a little, the reeds sway. `process.png` is
 - The long ripple strokes are a bit regular; a hand would vary their length more.
 - The whole still paints in about 9 s (with snapshots); the 48 preview frames and the GIF in
   about 16 s; the full-size loop would be about 7 minutes of painting.
+
+## Proposed lessons
+
+Put forward from the critique and the phase 3 notes; each already stands in `../../lessons.md` because the person agreed to the first set at the phase 4 design review. The before/after numbers for them come with the repaint.
+
+- Blur the fill, not the silhouette: the far hills' blur let the sky through as a haze band (critique: `edge: layer "Far hills"'s ... edge is soft and the lighter background shows through`). Lesson 8.
+- Mix an off-key colour from the key: the lily pads' green under an orange light (critique: `out of key: a saturated yellow-green`). Lesson 11.
+- Give a cloud a lit top and a crisp side: the clouds are soft blobs with no direction (critique: `clouds is blotchy inside`). Lesson 9.

@@ -1,0 +1,34 @@
+{
+  "title": "Study: Van Gogh, The Starry Night (big shapes and palette only)",
+  "palette": { "night": "#22272B", "blue_deep": "#314374", "blue": "#4A648D", "blue_pale": "#5A78A1", "grey": "#8C9FA3", "yellow": "#D9CF6E", "green": "#515B5A" },
+  "intent": { "subject": "a swirling night sky over a village, a cypress on the left, a moon on the right", "focal": "moon", "light": [430, 60], "mood": "restless, blue and yellow", "key_colors": ["blue", "yellow"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 405, "paper": "blue" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 405], "colors": ["blue_deep", "blue", "blue_pale"] },
+    { "cmd": "group", "name": "swirls", "commands": [
+      { "cmd": "brush", "size": 14, "color": "grey", "opacity": 0.6, "tip": "bristle" },
+      { "cmd": "path", "points": [[150, 120], [220, 90], [300, 110], [330, 150], [290, 170], [260, 140]] },
+      { "cmd": "path", "points": [[330, 150], [400, 140], [470, 170], [500, 210]] },
+      { "cmd": "path", "points": [[40, 200], [120, 180], [200, 200], [280, 190]] },
+      { "cmd": "brush", "reset": true } ] },
+    { "cmd": "group", "name": "stars", "commands": [
+      { "cmd": "repeat", "count": 8, "step": { "translate": [56, 0] }, "each": { "lift": [0, 60, -20, 90, 20, 110, 50, -10] }, "commands": [
+        { "cmd": "group", "translate": [0, "$lift"], "commands": [
+          { "cmd": "ellipse", "center": [40, 60], "radius": 9, "fill": "yellow" } ] } ] } ] },
+    { "cmd": "group", "name": "moon", "commands": [
+      { "cmd": "ellipse", "center": [430, 60], "radius": 26, "fill": "yellow" },
+      { "cmd": "ellipse", "center": [418, 54], "radius": 20, "fill": "blue_pale" } ] },
+    { "cmd": "layer", "name": "Land" },
+    { "cmd": "group", "name": "hills", "commands": [
+      { "cmd": "polygon", "points": [[-10, 280], [120, 250], [260, 270], [400, 240], [522, 270], [522, 420], [-10, 420]], "fill": "blue_deep", "jitter": 4 } ] },
+    { "cmd": "group", "name": "village", "commands": [
+      { "cmd": "repeat", "count": 6, "step": { "translate": [48, 0] }, "commands": [
+        { "cmd": "rect", "x": 180, "y": 318, "width": 26, "height": 20, "fill": "night" } ] },
+      { "cmd": "polygon", "points": [[300, 330], [304, 250], [308, 330]], "fill": "night" },
+      { "cmd": "ellipse", "center": [250, 328], "radius": 3, "fill": "yellow" } ] },
+    { "cmd": "group", "name": "cypress", "commands": [
+      { "cmd": "polygon", "points": [[70, 405], [50, 300], [60, 180], [72, 60], [86, 180], [96, 300], [82, 405]], "fill": "night", "jitter": 5 },
+      { "cmd": "polygon", "points": [[66, 300], [58, 200], [70, 150], [80, 200], [76, 300]], "fill": "green", "jitter": 4 } ] }
+  ]
+}

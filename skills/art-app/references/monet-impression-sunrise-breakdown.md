@@ -17,3 +17,5 @@ warm grey; the sun's orange is too small an area to make the top eight.
 focal point; big soft shapes and a few quick dark marks (the boats, the reflection) that read
 as marks, not noise. If a picture of yours scores "flat", ask whether it has this picture's
 one unmissable accent. Most don't.
+
+**Study.** `monet-impression-sunrise-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare monet-impression-sunrise-study.json monet-impression-sunrise.*`: values somewhat alike: 66; colours somewhat alike: 52, the study is warmer. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

@@ -16,3 +16,5 @@ grey-greens, and one yellow. Blue against yellow is the whole colour idea.
 flames, the hills' curves): texture as *marks*, never as grain. The critique should count the
 sky as detailed, not noisy, and it does. The complementary pair blue/yellow is used with one
 side dominant (blue over 80% of the picture) and the other as accents.
+
+**Study.** `van-gogh-starry-night-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare van-gogh-starry-night-study.json van-gogh-starry-night.*`: values similar: 72; colours somewhat alike: 54. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

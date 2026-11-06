@@ -1,0 +1,24 @@
+{
+  "title": "Study: Hokusai, The Great Wave off Kanagawa (big shapes and palette only)",
+  "palette": { "cream": "#F6F1DD", "cream_warm": "#F2E3C3", "blue_deep": "#294765", "blue": "#486C86", "pale": "#D3DBCF", "grey": "#929C9E", "ink": "#1E2F40" },
+  "intent": { "subject": "a huge wave curling over three boats, a small snow-capped mountain under its arch", "focal": "wave", "light": "above", "mood": "tense, clean", "key_colors": ["blue", "cream_warm"] },
+  "commands": [
+    { "cmd": "canvas", "width": 512, "height": 344, "paper": "cream" },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 200], "colors": ["grey", "cream_warm"] },
+    { "cmd": "layer", "name": "Sea" },
+    { "cmd": "group", "name": "far sea", "commands": [
+      { "cmd": "polygon", "points": [[-10, 200], [522, 230], [522, 354], [-10, 354]], "fill": "blue", "jitter": 3 } ] },
+    { "cmd": "group", "name": "mountain", "commands": [
+      { "cmd": "polygon", "points": [[290, 230], [330, 180], [370, 230]], "fill": "blue_deep" },
+      { "cmd": "polygon", "points": [[318, 196], [330, 180], [342, 196]], "fill": "cream" } ] },
+    { "cmd": "group", "name": "wave", "outline": { "color": "ink", "size": 2 }, "commands": [
+      { "cmd": "polygon", "points": [[-10, 354], [-10, 180], [60, 110], [160, 60], [260, 50], [330, 70], [360, 110], [330, 130], [280, 100], [230, 110], [190, 150], [150, 200], [60, 250], [522, 354]], "fill": "blue_deep", "jitter": 3 },
+      { "cmd": "polygon", "points": [[60, 120], [150, 80], [250, 70], [320, 90], [340, 110], [300, 110], [240, 120], [200, 150], [140, 200], [80, 230]], "fill": "blue", "jitter": 3 },
+      { "cmd": "repeat", "count": 7, "step": { "translate": [44, -4] }, "commands": [
+        { "cmd": "polygon", "points": [[50, 118], [70, 96], [80, 120]], "fill": "pale", "jitter": 2 } ] } ] },
+    { "cmd": "group", "name": "boats", "commands": [
+      { "cmd": "polygon", "points": [[90, 290], [240, 270], [230, 290], [100, 306]], "fill": "cream_warm", "outline": "ink", "outline_size": 2 },
+      { "cmd": "polygon", "points": [[260, 320], [420, 300], [412, 318], [270, 334]], "fill": "cream_warm", "outline": "ink", "outline_size": 2 } ] }
+  ]
+}

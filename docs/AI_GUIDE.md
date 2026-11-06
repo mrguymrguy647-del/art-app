@@ -440,7 +440,7 @@ critique: pond.json (painted in 4.0 s)
   focal point: the eye goes to duck (x 990, y 861); 16 px from the intent's focal point
   colour: 8 hues carry 90% of the colour; warm 78%, cool 9%, neutral 13%
   out of key: a saturated yellow-green at x 505, y 983 (lilypad, 1.1% of the picture) is far from every key colour; tint it towards the key or mute it
-  texture: clouds is blotchy inside: soft blobs with no direction over 54% of it (coherence 0.34, sharpness 2.0); feathers, grass and strokes have a direction and edges, noise fills have neither: shade with big soft shapes and a few directed marks
+  texture: clouds is blotchy inside: soft blobs with no direction over 42% of it (coherence 0.39, still 0.34); feathers, grass and strokes have a direction and edges, noise fills have neither: shade with big soft shapes and a few directed marks
   edge: layer "Far hills"'s lower left edge is soft and the lighter background shows through it (+0.08 just inside): it reads as a haze band or a smudge; a blur on the silhouette does this: blur the fill, not the edge, or give it a crisp side
   detail: 25% of the marks are within 4 cells of the focal point (an area of 8%), 78% elsewhere
   readability at 96 px: 8 of 18 parts still read
@@ -459,8 +459,8 @@ whose hue is more than 40 degrees from every key colour and not between two of t
 *texture* on each named part's own paint and on each layer's (grain is what a 1.5 px blur
 removes, marks what a 6 px blur removes beyond that, blotches and blobs what 24 and 96 px blurs
 remove; a part is *noisy* when fine grain without marks covers over half of it, *blotchy* when
-soft blobs with no direction do (feathers, grass and strokes have a direction and edges, noise
-fills have neither), a *smudge* when its squint has no light and dark side; a part much lighter
+soft blobs with no direction cover over 40% (feathers, grass and strokes have a direction and
+edges, noise fills have neither), a *smudge* when its squint has no light and dark side; a part much lighter
 than the ring around it is a light, which may be flat; a few tiny sparkles are marks, not grain);
 *edges* (a part whose own silhouette is soft and lets a lighter background through reads as a
 haze band); *readability* at 96 px (a part merges when its value differs from the ring around
@@ -482,6 +482,16 @@ value groups; `art-cli compare mine.png coffee.png` puts both side by side with 
 shares and a 4 x 4 grid of mean values) and colour (the hue histograms), with words: "values
 similar: 78; colours different: 41, the first is cooler". All three take a script instead of a
 picture (its first frame), so a study can be compared with what it studies.
+
+**The learning folder** (`skills/art-app/`): `lessons.md` is thirty short rules, each with the
+piece that shows it; read it before painting. `mistakes.md` is the real mistakes with their
+before pictures and the critique line that catches each. `styles/` says what palette, brushes
+and rules fit a storybook, a painterly or a pixel look. `exercises/` is a short course with an
+answer and its numbers for each. `gallery/` holds the finished pieces: `art-cli gallery add
+piece.json --name name` paints one into the gallery with its process and views sheets, its
+critique, a blind-read skeleton, notes with a "Proposed lessons" section and an index entry with
+tags; `art-cli gallery rate name 4 "why"` writes the person's rating into the index. A rating is
+the person's alone and outranks every number.
 
 Then, looking at the render, ask:
 

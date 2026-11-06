@@ -1,0 +1,44 @@
+{
+  "title": "Exercise: three kinds of water",
+  "palette": { "sky": "#C9DDEA", "far": "#7F9DB5", "water_dark": "#2E4A66", "water_mid": "#4E7897", "water_light": "#9FC2D8", "foam": "#EAF2F6", "tree": "#2F4A2A", "ink": "#1E2A36" },
+  "intent": { "subject": "three kinds of water side by side: a still pond with a mirror reflection, a rippled lake with a broken one, a fast stream with white streaks", "focal": "rippled", "light": "above", "mood": "cool, fresh", "key_colors": ["water_mid", "sky", "foam", "tree"] },
+  "commands": [
+    { "cmd": "canvas", "width": 960, "height": 320, "paper": "sky" },
+    { "cmd": "layer", "name": "Far" },
+    { "cmd": "rect", "x": 0, "y": 120, "width": 960, "height": 60, "fill": "far" },
+    { "cmd": "define", "name": "tree", "params": { "color": "tree" }, "commands": [
+      { "cmd": "line", "from": [0, 0], "to": [0, -40], "size": 6, "color": "$color", "taper": 0 },
+      { "cmd": "ellipse", "center": [0, -58], "radius": [26, 30], "fill": "$color", "jitter": 4 } ] },
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "rect", "x": 0, "y": 180, "width": 960, "height": 140, "fill": "water_mid" },
+    { "cmd": "group", "name": "still", "commands": [
+      { "cmd": "rect", "x": 0, "y": 180, "width": 320, "height": 140, "fill": "water_light" },
+      { "cmd": "use", "name": "tree", "translate": [160, 180] },
+      { "cmd": "use", "name": "tree", "translate": [160, 180], "mirror": "y", "opacity": 0.55 },
+      { "cmd": "gradient", "area": { "rect": [0, 180, 320, 140] }, "from": [0, 180], "to": [0, 320], "colors": ["#C9DDEA00", "water_mid"] } ] },
+    { "cmd": "group", "name": "rippled", "commands": [
+      { "cmd": "rect", "x": 320, "y": 180, "width": 320, "height": 140, "fill": "water_mid" },
+      { "cmd": "use", "name": "tree", "translate": [480, 180] },
+      { "cmd": "brush", "size": 5, "color": "tree", "opacity": 0.7 },
+      { "cmd": "repeat", "count": 9, "step": { "translate": [0, 13] }, "each": { "w": [34, 26, 40, 22, 36, 18, 30, 14, 20] }, "commands": [
+        { "cmd": "line", "from": [446, 196], "to": [514, 196], "size": 5, "color": "tree", "opacity": 0.6 } ] },
+      { "cmd": "repeat", "count": 12, "step": { "translate": [0, 11] }, "commands": [
+        { "cmd": "line", "from": [340, 190], "to": [400, 190], "size": 2, "color": "water_light", "opacity": 0.6 },
+        { "cmd": "line", "from": [540, 196], "to": [620, 196], "size": 2, "color": "water_light", "opacity": 0.5 } ] },
+      { "cmd": "brush", "reset": true } ] },
+    { "cmd": "group", "name": "stream", "commands": [
+      { "cmd": "rect", "x": 640, "y": 180, "width": 320, "height": 140, "fill": "water_dark" },
+      { "cmd": "use", "name": "tree", "translate": [800, 180] },
+      { "cmd": "brush", "size": 4, "color": "foam", "opacity": 0.8, "tip": "bristle" },
+      { "cmd": "path", "points": [[650, 200], [720, 230], [800, 236], [880, 262], [960, 270]] },
+      { "cmd": "path", "points": [[660, 240], [740, 268], [820, 272], [900, 300], [960, 305]] },
+      { "cmd": "path", "points": [[640, 290], [700, 300], [760, 314]] },
+      { "cmd": "brush", "size": 3, "color": "water_light", "opacity": 0.6, "tip": "bristle" },
+      { "cmd": "path", "points": [[640, 215], [700, 226], [760, 222], [830, 248], [960, 250]] },
+      { "cmd": "brush", "reset": true } ] },
+    { "cmd": "layer", "name": "Labels" },
+    { "cmd": "text", "text": "still", "at": [160, 20], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "rippled", "at": [480, 20], "size": 18, "color": "ink", "align": "center" },
+    { "cmd": "text", "text": "stream", "at": [800, 20], "size": 18, "color": "ink", "align": "center" }
+  ]
+}

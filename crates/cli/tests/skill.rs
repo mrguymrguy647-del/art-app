@@ -173,7 +173,13 @@ fn every_script_command_and_field_it_mentions_exists() {
         known.insert(quoted.to_owned());
     }
     // Words of art-cli itself.
-    known.extend(["check", "render", "info"].map(str::to_owned));
+    known.extend(
+        [
+            "check", "render", "info", "views", "critique", "palette", "values", "compare",
+            "gallery", "export", "measure",
+        ]
+        .map(str::to_owned),
+    );
     let mut checked = 0;
     for code in inline_code(&skill()) {
         let is_word = !code.is_empty()
@@ -259,13 +265,38 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
     assert!(pieces.len() >= 2);
     for piece in pieces {
         let folder = gallery.join(piece["folder"].as_str().unwrap());
-        for file in ["script.json", "final.png", "process.png", "notes.md"] {
+        for file in [
+            "script.json",
+            "final.png",
+            "process.png",
+            "views.png",
+            "critique.md",
+            "blind-read.md",
+            "notes.md",
+        ] {
             assert!(
                 folder.join(file).exists(),
                 "{} is missing {file}",
                 folder.display()
             );
         }
+        let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+        assert!(
+            notes.contains("## Proposed lessons"),
+            "{} notes lack the section",
+            folder.display()
+        );
+        assert!(
+            piece.get("rating").is_some(),
+            "{} has no rating field",
+            folder.display()
+        );
+        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
+        assert!(
+            text.contains("\"intent\""),
+            "{} has no intent",
+            folder.display()
+        );
         let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
         let script = art_engine::script::Script::parse(&text).unwrap();
         let options = art_engine::script::PlayOptions {
@@ -424,5 +455,272 @@ fn every_reference_picture_is_licensed_and_studied() {
             .unwrap();
         assert!(output.status.success());
     }
+    std::fs::remove_dir_all(out).ok();
+}
+
+/// The learning folder: lessons each name a piece or picture that shows
+/// them, mistakes have their before pictures and findings, every style
+/// names its pieces, every exercise has a script, a picture and a page,
+/// and every reference has a study that paints cleanly.
+#[test]
+fn the_learning_folder_is_complete() {
+    let skill = root().join("skills/art-app");
+    // Lessons: numbered, one line each, each with a backticked piece or
+    // picture, and the rule for adding them.
+    let lessons = std::fs::read_to_string(skill.join("lessons.md")).unwrap();
+    assert!(lessons.contains("Agents never edit this file directly"));
+    let numbered: Vec<&str> = lessons
+        .lines()
+        .filter(|l| l.chars().next().is_some_and(|c| c.is_ascii_digit()) && l.contains(". "))
+        .collect();
+    assert!(
+        numbered.len() >= 25 && numbered.len() <= 40,
+        "{} lessons",
+        numbered.len()
+    );
+    for (i, line) in numbered.iter().enumerate() {
+        assert!(
+            line.starts_with(&format!("{}. ", i + 1)),
+            "lesson {} is out of order: {line}",
+            i + 1
+        );
+    }
+    for mention in [
+        "gallery/sunset-pond",
+        "gallery/duck-portrait",
+        "mistakes.md",
+        "references/",
+    ] {
+        assert!(lessons.contains(mention), "lessons never mention {mention}");
+    }
+    // Mistakes: each has a before picture that exists, what was wrong,
+    // the critique's finding, and the fix.
+    let mistakes = std::fs::read_to_string(skill.join("mistakes.md")).unwrap();
+    let entries = mistakes.matches("\n## ").count();
+    assert!(entries >= 6, "{entries} mistakes");
+    for line in mistakes.lines() {
+        if let Some(rest) = line.strip_prefix("![before](") {
+            let file = rest.trim_end_matches(')');
+            assert!(skill.join(file).exists(), "{file} is missing");
+        }
+    }
+    assert_eq!(mistakes.matches("![before](").count(), entries);
+    assert_eq!(mistakes.matches("**Wrong:**").count(), entries);
+    assert_eq!(mistakes.matches("**Critique:**").count(), entries);
+    assert_eq!(mistakes.matches("**Fix:**").count(), entries);
+    // Styles: palette rules, settings, what to avoid, pieces.
+    for style in ["storybook", "painterly", "pixel"] {
+        let text = std::fs::read_to_string(skill.join(format!("styles/{style}.md"))).unwrap();
+        for heading in [
+            "**Palette rules.**",
+            "**What to avoid.**",
+            "**Pieces that show it.**",
+        ] {
+            assert!(text.contains(heading), "{style}.md needs {heading}");
+        }
+    }
+    // Exercises: a page, a script that paints cleanly and a picture each.
+    let exercises = skill.join("exercises");
+    let readme = std::fs::read_to_string(exercises.join("README.md")).unwrap();
+    let mut count = 0;
+    for entry in std::fs::read_dir(&exercises).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        let Some(stem) = name.strip_suffix(".json") else {
+            continue;
+        };
+        count += 1;
+        assert!(
+            exercises.join(format!("{stem}.png")).exists(),
+            "{stem}.png is missing"
+        );
+        let page = std::fs::read_to_string(exercises.join(format!("{stem}.md")))
+            .unwrap_or_else(|_| panic!("{stem}.md is missing"));
+        for heading in [
+            "## Do",
+            "## What a good result looks like",
+            "## Lessons it practises",
+        ] {
+            assert!(page.contains(heading), "{stem}.md needs {heading}");
+        }
+        assert!(
+            readme.contains(&format!("{stem}.md")),
+            "the README doesn't list {stem}"
+        );
+        paints_cleanly(&path);
+    }
+    assert!(count >= 5, "{count} exercises");
+    // Reference studies.
+    let references = skill.join("references");
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(references.join("index.json")).unwrap())
+            .unwrap();
+    for picture in index["pictures"].as_array().unwrap() {
+        let stem = Path::new(picture["file"].as_str().unwrap())
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let study = references.join(format!("{stem}-study.json"));
+        assert!(study.exists(), "{stem}-study.json is missing");
+        paints_cleanly(&study);
+        let breakdown =
+            std::fs::read_to_string(references.join(format!("{stem}-breakdown.md"))).unwrap();
+        assert!(
+            breakdown.contains("**Study.**"),
+            "{stem}'s breakdown has no study line"
+        );
+    }
+}
+
+/// Plays a script at a quarter size and insists on no mistakes or warnings.
+fn paints_cleanly(path: &Path) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let script = art_engine::script::Script::parse(&text)
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let options = art_engine::script::PlayOptions {
+        folder: path.parent().map(Path::to_path_buf),
+        scale: 0.5,
+        ..art_engine::script::PlayOptions::default()
+    };
+    let mut player = art_engine::script::Player::new(script, options).unwrap();
+    let mut document = player.create_document().unwrap();
+    player
+        .run(&mut document, |_, _| {})
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let report = player.report();
+    let mut warnings = report.warnings.clone();
+    warnings.extend(art_engine::script::unused_warnings(&[&report]));
+    assert!(warnings.is_empty(), "{}: {warnings:?}", path.display());
+}
+
+/// `gallery add` builds a complete folder and an index entry; `gallery
+/// rate` writes the person's rating without hand-editing JSON.
+#[test]
+fn gallery_add_and_rate_build_the_folder_and_the_index() {
+    let out = std::env::temp_dir().join(format!("art-cli-gallery-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("pond.json");
+    std::fs::write(
+        &script,
+        r##"{ "title": "Tiny pond", "palette": { "sky": "#8EC1E6", "sun": "#FFF1C0", "ink": "#202020" },
+          "intent": { "subject": "a duck at sunset", "focal": "duck", "mood": "calm, warm", "key_colors": ["sky", "sun"] },
+          "commands": [
+            { "cmd": "canvas", "width": 160, "height": 100, "paper": "sky" },
+            { "cmd": "layer", "name": "Sun" },
+            { "cmd": "group", "name": "sun", "commands": [
+              { "cmd": "ellipse", "center": [120, 30], "radius": 15, "fill": "sun" } ] },
+            { "cmd": "layer", "name": "Duck" },
+            { "cmd": "group", "name": "duck", "commands": [
+              { "cmd": "ellipse", "center": [60, 60], "radius": [20, 12], "fill": "ink" } ] } ] }"##,
+    )
+    .unwrap();
+    let gallery = out.join("gallery");
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+            .arg("gallery")
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr),
+        )
+    };
+    let (ok, text) = run(&[
+        "add",
+        script.to_str().unwrap(),
+        "--name",
+        "tiny-pond",
+        "--out",
+        gallery.to_str().unwrap(),
+        "--tags",
+        "test,Pond",
+    ]);
+    assert!(ok, "{text}");
+    let folder = gallery.join("tiny-pond");
+    for file in [
+        "script.json",
+        "final.png",
+        "process.png",
+        "views.png",
+        "critique.md",
+        "blind-read.md",
+        "notes.md",
+    ] {
+        assert!(folder.join(file).exists(), "{file} is missing: {text}");
+    }
+    let critique = std::fs::read_to_string(folder.join("critique.md")).unwrap();
+    assert!(
+        critique.contains("focal point: the eye goes to"),
+        "{critique}"
+    );
+    let blind = std::fs::read_to_string(folder.join("blind-read.md")).unwrap();
+    assert!(blind.contains("What do you see?"));
+    let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+    assert!(notes.contains("## Proposed lessons"));
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
+            .unwrap();
+    let piece = &index["pieces"][0];
+    assert_eq!(piece["folder"], "tiny-pond");
+    assert_eq!(piece["title"], "Tiny pond");
+    assert_eq!(piece["size"], serde_json::json!([160, 100]));
+    let tags: Vec<&str> = piece["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert!(
+        tags.contains(&"calm")
+            && tags.contains(&"warm")
+            && tags.contains(&"test")
+            && tags.contains(&"pond"),
+        "{tags:?}"
+    );
+    assert!(piece["rating"].is_null());
+
+    let (ok, text) = run(&[
+        "rate",
+        "tiny-pond",
+        "4",
+        "the duck reads",
+        "--out",
+        gallery.to_str().unwrap(),
+    ]);
+    assert!(ok, "{text}");
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
+            .unwrap();
+    assert_eq!(index["pieces"][0]["rating"]["score"], 4);
+    assert_eq!(index["pieces"][0]["rating"]["comment"], "the duck reads");
+    assert!(index["pieces"][0]["rating"]["date"].as_str().unwrap().len() == 10);
+    // Adding again keeps the rating; a bad score is refused.
+    let (ok, _) = run(&[
+        "add",
+        script.to_str().unwrap(),
+        "--name",
+        "tiny-pond",
+        "--out",
+        gallery.to_str().unwrap(),
+    ]);
+    assert!(ok);
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
+            .unwrap();
+    assert_eq!(index["pieces"][0]["rating"]["score"], 4);
+    let (ok, text) = run(&[
+        "rate",
+        "tiny-pond",
+        "9",
+        "too good",
+        "--out",
+        gallery.to_str().unwrap(),
+    ]);
+    assert!(!ok && text.contains("1 to 5"), "{text}");
     std::fs::remove_dir_all(out).ok();
 }

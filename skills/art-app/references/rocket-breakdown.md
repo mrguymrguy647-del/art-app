@@ -15,3 +15,5 @@ lit rocket at once.
 **Why it works.** Symmetry made deliberate (the rocket is centred, the towers pair up), a big
 calm field of one dark colour, and the lights at the bottom as the only saturated warm notes.
 For a night painting: keep 90% of the canvas in two dark values and spend the light sparingly.
+
+**Study.** `rocket-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare rocket-study.json rocket.*`: values similar: 84; colours similar: 91. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

@@ -15,3 +15,5 @@ separated by value.
 **Why it works.** One key, five values, the lights saved for the rim and the spoon. The wood's
 grain is large and directional (marks), the porcelain is smooth (flat on purpose): texture
 changes where the material changes, which is what tells the eye what things are.
+
+**Study.** `coffee-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare coffee-study.json coffee.*`: values somewhat alike: 63; colours similar: 82. A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.

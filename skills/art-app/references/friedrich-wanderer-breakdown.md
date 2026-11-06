@@ -15,3 +15,5 @@ hue, hardly saturated: the whole picture is drawn in value.
 painting breaks it on purpose: the figure is centred so the viewer stands where he stands.
 A warning is a reason to look, not a rule to obey. The fog is low in structure *as a field*,
 and that is right for fog; it would be a finding on a cloud that needs a lit side.
+
+**Study.** `friedrich-wanderer-study.json` blocks in the big shapes with the palette above (about twenty commands, no detail). `art-cli compare friedrich-wanderer-study.json friedrich-wanderer.*`: values similar: 89; colours different: 17 (the study has almost no saturated pixels, so the hue histograms barely overlap: a grey picture compares by value, not colour). A study that scores 70 or more on values has the picture's value structure; the colour score says whether the palette is in the same key, not whether the painting is any good.
