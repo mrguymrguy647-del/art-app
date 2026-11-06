@@ -26,6 +26,7 @@ mod export;
 mod font;
 mod grid;
 mod sheet;
+mod study;
 mod views;
 
 use std::fmt;
@@ -76,6 +77,14 @@ USAGE
                                            texture, readability at thumbnail
                                            size, composition (warnings to look
                                            at, never goals)
+  art-cli palette <picture> [--colors n]   the main colours of a PNG, JPEG or
+                                           script, as swatches (<name>-palette.png)
+                                           and a palette block to paste
+  art-cli values <picture>                 the picture in five greys
+                                           (<name>-values.png) with their shares
+  art-cli compare <mine> <reference>       both side by side with their greys
+                                           (compare.png), and how alike they are
+                                           in value structure and colour, 0-100
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -121,6 +130,10 @@ VIEWS OPTIONS
   --frame <n>        for a script with animations: frame n (from 0)
   --animation <name> which animation, if the script has more than one
 
+PALETTE, VALUES AND COMPARE OPTIONS
+  --out <folder>     where to save (default: out)
+  --colors <n>       for palette: this many colours (default 8)
+
 CRITIQUE OPTIONS
   --detail           also every named part's numbers (texture, thumbnail size)
   --frame <n>        for a script with animations: critique frame n (from 0)
@@ -148,6 +161,8 @@ EXAMPLES
   art-cli export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
   art-cli views examples/sunset.json
   art-cli critique examples/sunset.json
+  art-cli palette skills/art-app/references/coffee.png --colors 6
+  art-cli compare out/study.png skills/art-app/references/coffee.png
 
 The script format is described in docs/script-format.md.";
 
@@ -173,6 +188,9 @@ fn main() -> ExitCode {
         Some("critique") => {
             critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
         }
+        Some("palette") => study::palette(&args[1..]),
+        Some("values") => study::values(&args[1..]),
+        Some("compare") => study::compare(&args[1..]),
         None | Some("help" | "--help" | "-h") => {
             say!("{HELP}");
             Ok(())

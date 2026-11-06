@@ -319,3 +319,93 @@ fn the_critique_catches_the_gallerys_known_mistakes() {
     assert!(portrait.contains("inside the focal part"), "{portrait}");
     assert!(!portrait.contains("looks flat"), "{portrait}");
 }
+
+/// Every reference picture has the right to be here (a licence from the
+/// allowed set, a source, an author), its palette and values pictures,
+/// and a breakdown; and the study tools work on it.
+#[test]
+fn every_reference_picture_is_licensed_and_studied() {
+    let folder = root().join("skills/art-app/references");
+    let index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder.join("index.json")).unwrap()).unwrap();
+    let allowed: Vec<&str> = index["allowed_licences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(allowed, ["public domain", "CC0"]);
+    let pictures = index["pictures"].as_array().unwrap();
+    assert!(pictures.len() >= 4);
+    let readme = std::fs::read_to_string(folder.join("README.md")).unwrap();
+    let out = std::env::temp_dir().join(format!("art-cli-references-{}", std::process::id()));
+    for picture in pictures {
+        let file = picture["file"].as_str().unwrap();
+        let licence = picture["licence"].as_str().unwrap();
+        assert!(allowed.contains(&licence), "{file}: licence {licence:?}");
+        for field in ["title", "author", "source"] {
+            assert!(
+                picture[field]
+                    .as_str()
+                    .is_some_and(|s| !s.trim().is_empty()),
+                "{file} needs a {field}"
+            );
+        }
+        assert!(picture["tags"].as_array().is_some_and(|t| !t.is_empty()));
+        assert!(folder.join(file).exists(), "{file} is missing");
+        let stem = Path::new(file).file_stem().unwrap().to_str().unwrap();
+        for suffix in ["-palette.png", "-values.png", "-breakdown.md"] {
+            assert!(
+                folder.join(format!("{stem}{suffix}")).exists(),
+                "{stem}{suffix} is missing"
+            );
+        }
+        assert_eq!(
+            picture["breakdown"].as_str().unwrap(),
+            format!("{stem}-breakdown.md")
+        );
+        let breakdown =
+            std::fs::read_to_string(folder.join(format!("{stem}-breakdown.md"))).unwrap();
+        for heading in [
+            "**Shapes.**",
+            "**Values**",
+            "**Palette**",
+            "**Why it works.**",
+        ] {
+            assert!(
+                breakdown.contains(heading),
+                "{stem}'s breakdown needs {heading}"
+            );
+        }
+        assert!(
+            readme.contains("public domain"),
+            "the README says what's allowed"
+        );
+        // The tools open it (PNG and JPEG) and are deterministic.
+        let run = || {
+            let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+                .arg("palette")
+                .arg(folder.join(file))
+                .arg("--out")
+                .arg(&out)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        assert_eq!(run(), run(), "{file}: the same palette every time");
+        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+            .arg("values")
+            .arg(folder.join(file))
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    std::fs::remove_dir_all(out).ok();
+}

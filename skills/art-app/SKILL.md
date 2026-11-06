@@ -58,8 +58,7 @@ before opening any picture. Errors name the command: `command 8 (use "duck") > 2
 
 ## Ready parts: the library (finished pieces, with scripts and notes, in `skills/art-app/gallery/`)
 
-`skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck,
-each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
+`skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
 
 ```json
 { "cmd": "include", "file": "../skills/art-app/library/tree.json" }
@@ -84,9 +83,9 @@ Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around
 ```
 
 - `define` only at the top level, before its first `use`, each name once. Symbols can use symbols.
-- Layer names inside a symbol are the picture's own layers; after a `use` or `group` the brush
-  and layer are back as before. A symbol starts from the plain brush (`"reset": true` resets).
-- Name your groups (`"name"`): `check` reports their boxes, and errors say where they are.
+- Layer names inside a symbol are the picture's own layers; after a `use` or `group` the brush and
+  layer are back as before. A symbol starts from the plain brush (`"reset": true` resets). Name your
+  groups (`"name"`): `check` reports their boxes, errors say where they are, `views` draws their silhouettes.
 
 ## Rows, rings and frames: `repeat`
 
@@ -97,8 +96,7 @@ Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around
 ] }
 ```
 
-Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `origin`). In
-`text`, `{i}` is the copy number from 1, `{i0}` from 0.
+Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `origin`). In `text`, `{i}` is the copy number from 1, `{i0}` from 0.
 
 ## Text
 
@@ -167,6 +165,8 @@ Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for th
 - `art-cli critique picture.json`: about fifteen findings in numbers with hints (values, focal point,
   colour and key, texture, readability at 96 px, composition; `--detail` every part; `--frames 0-7` an
   animation). Numbers are warnings, never goals: never trade a better picture for a better number.
+- Learn from pictures (`skills/art-app/references/`, public domain or CC0 only): `art-cli palette ref.png`
+  (8 colours to paste), `art-cli values ref.png` (five greys), `art-cli compare mine.json ref.png` (0-100).
 - `art-cli check picture.json --detail` also lists the groups and uses inside others;
   `art-cli info picture.json` gives each layer's box and which commands painted it.
 - `--layers "Characters"` shows only some layers; `--hide "Background"` all but some. `--snapshots --sheet`

@@ -27,6 +27,7 @@ pub mod senses;
 pub mod smoothing;
 pub mod sprites;
 pub mod stroke;
+pub mod study;
 pub mod surface;
 pub mod text;
 pub mod tile;

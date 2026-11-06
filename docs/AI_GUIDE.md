@@ -464,6 +464,16 @@ The numbers are warnings, never goals. Never trade a better-looking picture for 
 number, and a person's rating outranks every number. They can't tell whether a cloud looks
 like a cloud: they catch what a person spots in a second, so your time goes to the rest.
 
+Learning from pictures you may use (`skills/art-app/references/`: public domain or CC0 only,
+each with its source and licence in `index.json`): `art-cli palette coffee.png` draws out its
+eight main colours as swatches (`coffee-palette.png`) and a palette block to paste into a
+script; `art-cli values coffee.png` paints it in five greys (`coffee-values.png`) and counts the
+value groups; `art-cli compare mine.png coffee.png` puts both side by side with their greys
+(`compare.png`) and scores how alike they are, 0 to 100, in value structure (the five greys'
+shares and a 4 x 4 grid of mean values) and colour (the hue histograms), with words: "values
+similar: 78; colours different: 41, the first is cooler". All three take a script instead of a
+picture (its first frame), so a study can be compared with what it studies.
+
 Then, looking at the render, ask:
 
 1. Can you tell what it is at thumbnail size (the views sheet's thumb)? Is there one clear focal point?

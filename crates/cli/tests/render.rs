@@ -1050,3 +1050,89 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("no animations"));
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn palette_values_and_compare_work_on_pictures_and_scripts() {
+    let out = folder("study");
+    std::fs::create_dir_all(&out).unwrap();
+    // A picture: half red, half blue, saved as a PNG by the renderer.
+    let script = out.join("halves.json");
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "red": "#C82828", "blue": "#2828C8" }, "commands": [
+            { "cmd": "canvas", "width": 64, "height": 32, "paper": "red" },
+            { "cmd": "rect", "x": 32, "y": 0, "width": 32, "height": 32, "fill": "blue" } ] }"##,
+    )
+    .unwrap();
+    let status = art_cli()
+        .args(["render", script.to_str().unwrap(), "--out"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let picture = out.join("halves.png");
+
+    let output = art_cli()
+        .args([
+            "palette",
+            picture.to_str().unwrap(),
+            "--colors",
+            "2",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("\"palette\": { \"c1\": \"#2828C8\", \"c2\": \"#C82828\" }"),
+        "{text}"
+    );
+    assert!(text.contains("shares: c1 50%, c2 50%"), "{text}");
+    assert!(out.join("halves-palette.png").exists());
+
+    let output = art_cli()
+        .args(["values", script.to_str().unwrap(), "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("values of ") && text.contains("dark 100%"),
+        "{text}"
+    );
+    assert!(text.contains("value group when squinted"), "{text}");
+    assert!(out.join("halves-values.png").exists());
+
+    let output = art_cli()
+        .args([
+            "compare",
+            picture.to_str().unwrap(),
+            script.to_str().unwrap(),
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("values similar: 100; colours similar: 100"),
+        "{text}"
+    );
+    assert!(out.join("compare.png").exists());
+
+    let output = art_cli()
+        .args(["compare", picture.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let output = art_cli()
+        .args(["palette", script.to_str().unwrap(), "--colors", "0"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    std::fs::remove_dir_all(out).ok();
+}

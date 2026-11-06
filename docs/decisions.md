@@ -1352,3 +1352,41 @@ the painted picture, a process sheet and honest notes, listed in
 - **Silhouettes come from a second painting** (as for `views`), so the
   critique's picture is exactly the render.
 
+## 72. Palette, values, compare, and the references folder (phase 4, step 4)
+
+- **Pictures, not scripts.** The three study tools take PNG or JPEG
+  files (`Image::load`, with the `jpeg-decoder` crate for JPEG), so a
+  photograph or a painting from anywhere can be studied; a script is
+  accepted too and painted first, so a study can be compared with the
+  picture it studies.
+- **Median cut, then one honest pass.** Median cut splits every box in
+  half, so its shares are always 50/25/12...: true of the boxes, useless
+  about the picture. After the cut each pixel is given to its nearest
+  colour once and the colours and shares are recounted. Still
+  deterministic (fixed split order: the widest channel, ties red before
+  green before blue; pixels sorted before the split), and the shares
+  now say which colour rules.
+- **Five fixed greys, not an adaptive posterise**, so two pictures'
+  values pictures and shares compare directly, and the bands match the
+  critique's value groups.
+- **Compare is two numbers, nothing cleverer.** Value structure is half
+  the overlap of the five-grey shares and half the agreement (Pearson,
+  mapped to 0..1) of a 4 x 4 grid of mean values; colour is the overlap
+  of saturation-weighted hue histograms. They answer "is my study as
+  dark, as arranged and as coloured as the reference", not "is it as
+  good". The words add warmer/cooler and lighter/darker only when the
+  difference is big enough to act on (15% of the warm share, 0.1 of the
+  mean value).
+- **The references are photographs from scikit-image's sample data**
+  (NASA and SpaceX public-domain photos, two CC0 photos), because the
+  build machine's network policy blocks Wikimedia Commons and every
+  museum API tried, so no public-domain painting could be fetched.
+  They're real pictures with documented licences and they exercise the
+  tools, the loader (PNG and JPEG) and the critique's reality test (none
+  is "flat", all have three or more value groups). Paintings belong
+  here as soon as one can be brought in; the index's `allowed_licences`
+  and the test keep the folder honest.
+- **The critique's reality test on them** needed no threshold change:
+  the chelsea cat is 58% mid-value and still isn't "flat" (the rule
+  looks at the middle three of ten bins, 70%), which is the right call.
+

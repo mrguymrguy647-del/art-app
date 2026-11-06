@@ -1268,3 +1268,41 @@ mod tests {
         assert_eq!(c, same, "deterministic");
     }
 }
+
+/// The senses against reality: the reference pictures (good
+/// photographs) should mostly pass.
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn the_reference_pictures_are_not_flat_and_have_value_groups() {
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/art-app/references");
+        for file in ["astronaut.png", "chelsea.png", "coffee.png", "rocket.jpg"] {
+            let image = Image::load(&folder.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+            let subject = Subject {
+                image: &image,
+                focal: None,
+                focal_part: None,
+                key_colors: vec![],
+                parts: vec![],
+            };
+            let c = Critique::of(&subject);
+            assert!(!c.values.flat, "{file} is called flat: {:?}", c.values);
+            assert!(c.values.groups.len() >= 3, "{file}: {:?}", c.values.groups);
+            assert!(
+                c.colour.hues >= 1 && c.colour.hues <= 10,
+                "{file}: {} hues",
+                c.colour.hues
+            );
+            // The visual weight is never far from the middle in these.
+            let (x, y) = c.composition.weight;
+            assert!(
+                (0.3..0.7).contains(&x) && (0.3..0.7).contains(&y),
+                "{file}: {x} {y}"
+            );
+            assert_eq!(c, Critique::of(&subject), "{file}: deterministic");
+        }
+    }
+}

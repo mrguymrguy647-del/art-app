@@ -1,0 +1,42 @@
+{
+  "about": "Pictures we have the right to learn from: public domain or CC0 only, never copyrighted artwork or other people's characters. Each entry names its source and licence; a test checks the licence is one of the allowed ones and that the picture, its palette (<name>-palette.png), its values (<name>-values.png) and its breakdown.md are here. Study scripts (study.json, a recreation in Art App's terms, compared with art-cli compare) come with the learning folder.",
+  "allowed_licences": ["public domain", "CC0"],
+  "pictures": [
+    {
+      "file": "astronaut.png",
+      "title": "Astronaut Eileen Collins, official portrait",
+      "author": "NASA",
+      "source": "NASA Great Images database, https://flic.kr/p/r9qvLn (as bundled with scikit-image)",
+      "licence": "public domain",
+      "tags": ["portrait", "person", "studio", "warm against cool", "complementary"],
+      "breakdown": "astronaut-breakdown.md"
+    },
+    {
+      "file": "chelsea.png",
+      "title": "Chelsea the cat",
+      "author": "Stefan van der Walt",
+      "source": "scikit-image sample data (skimage.data.chelsea)",
+      "licence": "CC0",
+      "tags": ["animal", "face", "fur", "texture", "one hue", "soft focus"],
+      "breakdown": "chelsea-breakdown.md"
+    },
+    {
+      "file": "coffee.png",
+      "title": "Coffee cup",
+      "author": "Rachel Michetti",
+      "source": "scikit-image sample data (skimage.data.coffee), courtesy of Pikolo Espresso Bar",
+      "licence": "CC0",
+      "tags": ["still life", "ellipses", "one key", "warm", "texture", "wood"],
+      "breakdown": "coffee-breakdown.md"
+    },
+    {
+      "file": "rocket.jpg",
+      "title": "Falcon 9 with DSCOVR on the pad at dusk",
+      "author": "SpaceX",
+      "source": "SpaceX Photos, https://www.flickr.com/photos/spacexphotos/16511594820/ (as bundled with scikit-image)",
+      "licence": "public domain",
+      "tags": ["landscape", "dusk", "night", "lights", "cool key", "silhouette", "symmetry"],
+      "breakdown": "rocket-breakdown.md"
+    }
+  ]
+}
