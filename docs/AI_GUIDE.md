@@ -607,6 +607,14 @@ The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as t
 
 - A 1600×1000 render takes well under a second; `--preview` about a third of that. `check`
   paints at full size too (so its boxes are exact), in about the time of a render.
+- An animation paints each frame once, but not every layer: a layer that no frame-dependent
+  command paints (no keyframes on it, no animation command, nothing that reads it while it's
+  still being painted) is painted once and reused in every later frame. The frames are
+  pixel-identical to a full paint (a test checks every animated example and the gallery loop).
+  `export` says how much it saved: "animation \"loop\": 12 of 20 layers painted once, 17 of 55
+  commands skipped in later frames". For the sunset pond's 48-frame loop at 1920×1080 that is
+  57 s instead of 88 s; a small walk cycle whose every layer moves gains nothing. Set
+  `ART_NO_REUSE=1` to paint every frame in full (only useful to compare).
 - Snapshots and the contact sheet cost a little per stage; use a few meaningful snapshots rather
   than one per command.
 - `scatter` and `hatch` with thousands of strokes are fine; hundreds of thousands are slow.

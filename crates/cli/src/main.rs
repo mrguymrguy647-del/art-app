@@ -37,14 +37,16 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use art_engine::document::{Background, Document};
 use art_engine::file::{self, FILE_EXTENSION};
 use art_engine::gif::save_gif;
 use art_engine::image::{Color, Image, unpremultiply};
 use art_engine::layer::Layer;
-use art_engine::script::{Event, PlayOptions, Player, Report, Script, parse_hex, unused_warnings};
+use art_engine::script::{
+    Event, PlayOptions, Player, Report, Script, Sequence, parse_hex, unused_warnings,
+};
 use art_engine::surface::PixelRect;
 
 use grid::{View, draw_grid};
@@ -161,6 +163,7 @@ GALLERY OPTIONS
 
 CRITIQUE OPTIONS
   --detail           also every named part's numbers (texture, thumbnail size)
+  --score            also the benchmark's five scores from the numbers
   --frame <n>        for a script with animations: critique frame n (from 0)
   --frames <a>-<b>   one short line per frame, and which frame is worst
   --animation <name> which animation, if the script has more than one
@@ -630,39 +633,12 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
     // For --gif and --frame-sheet: every frame's picture, kept in memory.
     let mut pictures: Vec<(u32, Image)> = Vec::new();
     let whole_animation = options.gif || options.frame_sheet.is_some();
-    // A frame of the animation, painted and ready: for the neighbours of
-    // an onion skin.
-    let paint_frame = |animation: &str, n: u32| -> Result<Image, Problem> {
-        let play = PlayOptions {
-            scale,
-            folder: folder.clone(),
-            animation: Some(animation.to_owned()),
-            frame: n,
-            ..PlayOptions::default()
-        };
-        let mut player = Player::new(script.clone(), play)
-            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-        let mut document = player
-            .create_document()
-            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-        player
-            .run(&mut document, |_, _| {})
-            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-        Ok(picture(&document, document.bounds()))
-    };
+    // The frames of each animation, painted in order: static layers are
+    // painted once (a plain picture is its own one-frame sequence).
+    let mut sequences: HashMap<Option<String>, Sequence> = HashMap::new();
     for frame in &frames {
-        let play = PlayOptions {
-            scale,
-            folder: folder.clone(),
-            animation: frame.as_ref().map(|(name, _)| name.clone()),
-            frame: frame.as_ref().map_or(0, |(_, n)| *n),
-            ..PlayOptions::default()
-        };
-        let mut player = Player::new(script.clone(), play)
-            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
-        let mut document = player
-            .create_document()
-            .map_err(|e| failed(format!("{}: {e}", options.script.display())))?;
+        let animation = frame.as_ref().map(|(name, _)| name.as_str());
+        let n = frame.as_ref().map_or(0, |(_, n)| *n);
         // One picture is <stem>.png; a frame is <stem>-<animation>-<frame>.png.
         let name = match frame {
             Some((animation, n)) => format!("{stem}-{animation}-{n:03}"),
@@ -673,8 +649,9 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         let mut sheet_entries: Vec<Entry> = Vec::new();
         let mut save_error: Option<String> = None;
         let mut event_count = 0;
-        player
-            .run(&mut document, |event, document| {
+        let sequence = sequence_for(&mut sequences, &script, scale, &folder, animation);
+        let (document, report) = sequence
+            .paint(n, |event, document| {
                 if !options.snapshots && !options.sheet {
                     return;
                 }
@@ -718,7 +695,7 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
         if whole_animation {
             let n = frame.as_ref().map_or(0, |(_, n)| *n);
             pictures.push((n, picture(&document, document.bounds())));
-            last = Some((player, document));
+            last = Some((report, document));
             continue;
         }
 
@@ -742,14 +719,22 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             let mut skin = Image::new(document.width(), document.height(), [0, 0, 0, 0]);
             if let Some(before) = neighbour(-1) {
                 skin.paste(
-                    &paint_frame(animation, before)?.tinted([230, 60, 60], 0.35),
+                    &{
+                        let doc =
+                            paint_in(&mut sequences, &script, scale, &folder, animation, before)?;
+                        picture(&doc, doc.bounds()).tinted([230, 60, 60], 0.35)
+                    },
                     0,
                     0,
                 );
             }
             if let Some(after) = neighbour(1) {
                 skin.paste(
-                    &paint_frame(animation, after)?.tinted([60, 110, 230], 0.35),
+                    &{
+                        let doc =
+                            paint_in(&mut sequences, &script, scale, &folder, animation, after)?;
+                        picture(&doc, doc.bounds()).tinted([60, 110, 230], 0.35)
+                    },
                     0,
                     0,
                 );
@@ -877,9 +862,9 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
                 &mut saved,
             )?;
         }
-        last = Some((player, document));
+        last = Some((report, document));
     }
-    let (player, document) = last.expect("at least one frame is painted");
+    let (report, document) = last.expect("at least one frame is painted");
 
     // The whole animation in one file.
     if whole_animation && let Some((animation, _)) = &frames[0] {
@@ -948,7 +933,6 @@ fn render(options: &RenderOptions) -> Result<(), Problem> {
             numbers[numbers.len() - 1]
         );
     }
-    let report = player.report();
     let layers = layer_boxes(&document, scale, shown, Some(&report));
     let warnings = warnings(&report, &layers);
     if options.detail {
@@ -1119,6 +1103,45 @@ fn check_layer_names(options: &RenderOptions, document: &Document) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// The sequence for `animation` (made on first use), so the frames of
+/// one animation reuse their static layers.
+fn sequence_for<'a>(
+    sequences: &'a mut HashMap<Option<String>, Sequence>,
+    script: &Script,
+    scale: f32,
+    folder: &Option<PathBuf>,
+    animation: Option<&str>,
+) -> &'a mut Sequence {
+    sequences
+        .entry(animation.map(str::to_owned))
+        .or_insert_with(|| {
+            Sequence::new(
+                script.clone(),
+                PlayOptions {
+                    scale,
+                    folder: folder.clone(),
+                    animation: animation.map(str::to_owned),
+                    ..PlayOptions::default()
+                },
+            )
+        })
+}
+
+/// A frame of an animation, painted (the neighbours of an onion skin).
+fn paint_in(
+    sequences: &mut HashMap<Option<String>, Sequence>,
+    script: &Script,
+    scale: f32,
+    folder: &Option<PathBuf>,
+    animation: &str,
+    n: u32,
+) -> Result<Document, Problem> {
+    let (document, _) = sequence_for(sequences, script, scale, folder, Some(animation))
+        .paint(n, |_, _| {})
+        .map_err(|e| failed(format!("{e}")))?;
+    Ok(document)
 }
 
 /// The canvas size in canvas pixels (the document is smaller in previews).

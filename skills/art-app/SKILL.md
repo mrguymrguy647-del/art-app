@@ -111,8 +111,8 @@ a line is 1.21 × `size` high; `\n` starts a new line; `rotate` turns it around 
 
 ## Animation: frames, keyframes, parameters
 
-The canvas is one frame. An `animations` section plays the script's commands and then its own, once per frame;
-time is the frame number from 0. Any number of a `group` or `use` can be keyframes; a symbol's `params` are set by `with`.
+The canvas is one frame. An `animations` section plays the script's commands and then its own, once per frame
+(layers nothing moves on are painted once and reused); time is the frame number from 0. Any number of a `group` or `use` can be keyframes; a symbol's `params` are set by `with`.
 
 ```json
 {

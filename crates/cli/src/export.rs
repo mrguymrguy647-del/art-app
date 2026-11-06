@@ -11,7 +11,7 @@ use std::process::Command;
 use art_engine::document::Background;
 use art_engine::gif::save_gif;
 use art_engine::image::{Color, Image, unpremultiply};
-use art_engine::script::{PlayOptions, Player, parse_hex};
+use art_engine::script::{PlayOptions, Sequence, parse_hex};
 use art_engine::sprites::{SheetAnimation, sprite_sheet};
 
 use crate::{Problem, failed, load};
@@ -146,6 +146,7 @@ pub fn export(options: &ExportOptions) -> Result<(), Problem> {
     let mut painted = Vec::new();
     let mut paper = [255, 255, 255, 255];
     let mut canvas = (0, 0);
+    let mut notes: Vec<String> = Vec::new();
     for (name, animation) in &script.animations {
         if options
             .animation
@@ -155,18 +156,23 @@ pub fn export(options: &ExportOptions) -> Result<(), Problem> {
             continue;
         }
         let mut frames = Vec::with_capacity(animation.frames as usize);
-        for frame in 0..animation.frames {
-            let play = PlayOptions {
+        // The frames in order: static layers are painted once.
+        let mut sequence = Sequence::new(
+            script.clone(),
+            PlayOptions {
                 folder: folder.clone(),
                 animation: Some(name.clone()),
-                frame,
                 ..PlayOptions::default()
-            };
-            let mut player = Player::new(script.clone(), play).map_err(|e| problem(&e))?;
-            let mut document = player.create_document().map_err(|e| problem(&e))?;
-            player
-                .run(&mut document, |_, _| {})
-                .map_err(|e| problem(&e))?;
+            },
+        );
+        for frame in 0..animation.frames {
+            let (document, _) = sequence.paint(frame, |_, _| {}).map_err(|e| problem(&e))?;
+            if frame + 1 == animation.frames
+                && animation.frames > 1
+                && let Some(summary) = sequence.summary(&document)
+            {
+                notes.push(format!("animation \"{name}\": {summary}"));
+            }
             paper = unpremultiply(document.paper());
             canvas = (document.width(), document.height());
             frames.push(Image::of_document(&document, Background::Transparent));
@@ -195,7 +201,6 @@ pub fn export(options: &ExportOptions) -> Result<(), Problem> {
         None => image.clone(),
     };
     let mut saved: Vec<String> = Vec::new();
-    let mut notes: Vec<String> = Vec::new();
     let save_png = |image: &Image, path: &Path| -> Result<(), Problem> {
         image
             .save_png(path, true)

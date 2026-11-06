@@ -1570,3 +1570,43 @@ two false alarms. Every finding, before and after:
   fresh session by procedure (the design's rule): art-cli only makes
   the packet and keeps the record.
 
+## 76. Faster animation: static layers painted once (phase 4, step 7)
+
+- **The rule is per command, then per layer.** A command is
+  frame-dependent when its JSON contains a `keys` array anywhere (a
+  keyframe), or when it belongs to the animation's own commands (they
+  run once per frame by definition). A layer is dynamic when a
+  frame-dependent command paints it, or when a command reads it (a
+  layer mask, a bucket fill, a `from: below`) before the layer's last
+  painter has run: then the reader would see a half-painted layer in
+  frame 0 and a finished one later, so the layer must be repainted. A
+  static command that reads a dynamic layer becomes dynamic too, and the
+  fix point is run until nothing changes. Every other command paints
+  only static layers and is skipped from the second frame on; its layer
+  is restored from the first frame's pixels at its restore point (just
+  after its last painter) so later readers see the same thing in every
+  frame.
+- **Same pixels, by test.** `crates/engine/tests/reuse.rs` paints every
+  animated example and the gallery loop with and without reuse at frames
+  0, 1, 3 and the last, and asserts pixel-identical frames, the same
+  parts, the same `painted_by` and the same warnings. The pond loop must
+  skip at least ten commands, so a change that quietly disables the
+  optimisation fails the test.
+- **The numbers.** The sunset pond loop (48 frames, 1920×1080): 88 s
+  for a full paint, 57 s with reuse, "12 of 20 layers painted once, 17
+  of 55 commands skipped in later frames". The duck walk (every layer
+  moves) gains nothing and loses nothing: 0.05 s either way. The
+  remaining pond time is the dynamic layers (the water with its moving
+  reflection, the mood layer reading everything below it) and the
+  per-frame compositing, which a later phase could cache too.
+- **Where it is used.** `render` (frames, frame sheets, onion skins),
+  `export` and the app's animation view all paint through a `Sequence`
+  that keeps the reuse between frames. `check`'s paint of every frame
+  does not: it must see each command run to report motion steps and
+  warnings per frame, and its time was acceptable. `ART_NO_REUSE=1`
+  disables the reuse everywhere, for comparing.
+- **The first attempt was wrong** in the summary's sense: the mood
+  layer's `from: below` read forced every layer dynamic and only two
+  commands were skipped. The per-layer restore point (restore after the
+  last painter, not at the start of the frame) is what makes a layer
+  read by a later effect still static.

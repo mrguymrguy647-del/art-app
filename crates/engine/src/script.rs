@@ -21,6 +21,7 @@ pub mod animate;
 mod geometry;
 mod player;
 pub mod record;
+pub mod reuse;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -32,6 +33,7 @@ pub use player::{
     Event, Part, PlayOptions, Player, Progress, Report, Silhouette, focal_point, layer_named,
     unused_warnings,
 };
+pub use reuse::{Reuse, Sequence};
 
 /// Written at the top of every script, so it can be recognised.
 pub const FORMAT_NAME: &str = "artapp-script";

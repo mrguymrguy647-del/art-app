@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use art_engine::document::{Background, Document};
 use art_engine::gif::save_gif;
 use art_engine::image::Image;
-use art_engine::script::{PlayOptions, Player, Script};
+use art_engine::script::{PlayOptions, Script, Sequence};
 use art_engine::sprites::{SheetAnimation, sprite_sheet};
 use eframe::egui::{self, Button, Slider, vec2};
 
@@ -65,17 +65,18 @@ impl AnimationView {
         let mut canvas = (0, 0);
         for (animation_name, animation) in &script.animations {
             let mut frames = Vec::with_capacity(animation.frames as usize);
-            for frame in 0..animation.frames {
-                let options = PlayOptions {
+            // The frames in order: static layers are painted once.
+            let mut sequence = Sequence::new(
+                script.clone(),
+                PlayOptions {
                     folder: folder.clone(),
                     animation: Some(animation_name.clone()),
-                    frame,
                     ..PlayOptions::default()
-                };
-                let mut player = Player::new(script.clone(), options).map_err(|e| e.to_string())?;
-                let mut document = player.create_document().map_err(|e| e.to_string())?;
-                player
-                    .run(&mut document, |_, _| {})
+                },
+            );
+            for frame in 0..animation.frames {
+                let (document, _) = sequence
+                    .paint(frame, |_, _| {})
                     .map_err(|e| e.to_string())?;
                 canvas = (document.width(), document.height());
                 frames.push(document);

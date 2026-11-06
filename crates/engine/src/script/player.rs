@@ -83,6 +83,10 @@ pub struct PlayOptions {
     /// scratch picture first and laid on the layers after, like a group
     /// with filters, so this is for looking, not for the final picture.
     pub silhouettes: bool,
+    /// What an earlier frame of the same animation taught (see
+    /// [`super::reuse`]): its static layers are copied and the commands
+    /// that painted them skipped.
+    pub reuse: Option<std::sync::Arc<super::reuse::Reuse>>,
 }
 
 impl Default for PlayOptions {
@@ -95,6 +99,7 @@ impl Default for PlayOptions {
             animation: None,
             frame: 0,
             silhouettes: false,
+            reuse: None,
         }
     }
 }
@@ -121,6 +126,9 @@ pub struct Report {
     /// painted (or erased) on it, in order. A group, `use` or `repeat`
     /// counts as one command. Clearing a layer starts its list again.
     pub painted_by: HashMap<LayerId, Vec<usize>>,
+    /// For each layer, the commands that read its pixels while painting
+    /// (a bucket fill, a `layer` mask, a `"from": "below"` layer).
+    pub read_by: HashMap<LayerId, Vec<usize>>,
     /// Every symbol defined, with its command number, and the symbols
     /// and palette colours used in this frame: see [`unused_warnings`].
     pub defined: Vec<(String, usize)>,
@@ -541,12 +549,15 @@ pub struct Player {
     used_symbols: HashSet<String>,
     used_colors: RefCell<HashSet<String>>,
     painted_by: HashMap<LayerId, BTreeSet<usize>>,
+    read_by: HashMap<LayerId, BTreeSet<usize>>,
     /// The animation being played: its name and commands.
     animation: Option<(String, Arc<Vec<Command>>)>,
     /// Those commands, until they're started (after the script's own).
     pending_animation: Option<Arc<Vec<Command>>>,
     /// The frame being painted, counting from 0.
     frame: u32,
+    /// With `PlayOptions::reuse`: the static layers put in place so far.
+    restored: HashSet<LayerId>,
     /// The frame and the animation's length, for keyframes.
     clock: Clock,
     /// A pixel canvas: painted this many times bigger, then shrunk.
@@ -672,7 +683,9 @@ impl Player {
             used_symbols: HashSet::new(),
             used_colors: RefCell::new(HashSet::new()),
             painted_by: HashMap::new(),
+            read_by: HashMap::new(),
             frame: options.frame,
+            restored: HashSet::new(),
             clock,
             pixel,
             paint_scale,
@@ -845,6 +858,21 @@ impl Player {
                     let commands = Arc::clone(&frame.commands);
                     let index = frame.next;
                     frame.next += 1;
+                    // With reuse: static layers whose last painter is done
+                    // get their pixels now; a static command whose paint
+                    // comes from the first frame is skipped.
+                    let top_level = self.frames.len() == 1 && self.frames[0].animation.is_none();
+                    if top_level && self.options.reuse.is_some() {
+                        self.restore_static(document, index);
+                        if self
+                            .options
+                            .reuse
+                            .as_ref()
+                            .is_some_and(|reuse| reuse.skip.contains(&(index + 1)))
+                        {
+                            continue;
+                        }
+                    }
                     let command = &commands[index];
                     self.current = index;
                     self.current_seed = self.default_seed(index);
@@ -857,6 +885,7 @@ impl Player {
                 }
             } else if let Some(commands) = self.pending_animation.take() {
                 // The script's own commands are done: now the animation's.
+                self.restore_static(document, usize::MAX);
                 let scale = self.paint_scale;
                 let name = self.animation.as_ref().map(|(name, _)| name.clone());
                 self.frames.push(Frame {
@@ -885,12 +914,47 @@ impl Player {
                 });
             } else {
                 self.flush_tiles();
+                if self.animation.is_none() {
+                    self.restore_static(document, usize::MAX);
+                }
                 if let Some(name) = self.painted.take() {
                     self.events.push_back(Event::LayerDone(name));
                 }
                 self.finished = true;
             }
         }
+    }
+
+    /// With `PlayOptions::reuse`: puts in place the pixels of the static
+    /// layers whose last painter (among the first `done` of the script's
+    /// own commands) is finished, each once.
+    fn restore_static(&mut self, document: &mut Document, done: usize) {
+        let Some(reuse) = self.options.reuse.clone() else {
+            return;
+        };
+        let due: Vec<LayerId> = reuse
+            .points
+            .iter()
+            .filter(|(id, point)| **point <= done && !self.restored.contains(*id))
+            .map(|(id, _)| *id)
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        self.flush_tiles();
+        for id in due {
+            if let (Some(surface), Some(layer)) = (reuse.surfaces.get(&id), document.layer_mut(id))
+            {
+                layer.surface = surface.clone();
+            }
+            self.restored.insert(id);
+        }
+    }
+
+    /// Notes that the command being started reads `layer`'s pixels.
+    fn note_read(&mut self, layer: LayerId) {
+        let top = self.position().0;
+        self.read_by.entry(layer).or_default().insert(top);
     }
 
     /// Plays everything that's left. `on_event` is called at every event,
@@ -1122,6 +1186,7 @@ impl Player {
                 .as_str()
                 .ok_or("`layer` must be a layer's name in quotes")?;
             let id = find_layer(document, name)?;
+            self.note_read(id);
             let layer = document.layer(id).ok_or("no such layer")?;
             Mask::from_alpha(&layer.surface, limits)
         } else {
@@ -1488,10 +1553,23 @@ impl Player {
     /// What was drawn where, and what looks like a mistake. Complete once
     /// the script has finished (before that, it's what's known so far).
     pub fn report(&self) -> Report {
+        let (parts, warnings) = match &self.options.reuse {
+            Some(reuse) => self.merged_parts(reuse),
+            None => (self.parts.clone(), self.warnings.clone()),
+        };
+        let mut painted_by: HashMap<LayerId, BTreeSet<usize>> = self.painted_by.clone();
+        if let Some(reuse) = &self.options.reuse {
+            for (layer, numbers) in &reuse.painted_by {
+                painted_by
+                    .entry(*layer)
+                    .or_default()
+                    .extend(numbers.iter().copied());
+            }
+        }
         Report {
-            parts: self.parts.clone(),
+            parts,
             silhouettes: self.silhouettes.clone(),
-            warnings: self.warnings.clone(),
+            warnings,
             defined: self.defined.clone(),
             used_symbols: self.used_symbols.iter().cloned().collect(),
             used_colors: self.used_colors.borrow().iter().cloned().collect(),
@@ -1501,12 +1579,57 @@ impl Player {
                 .filter(|name| !self.included_colors.contains_key(*name))
                 .cloned()
                 .collect(),
-            painted_by: self
-                .painted_by
+            painted_by: painted_by
+                .iter()
+                .map(|(&layer, numbers)| (layer, numbers.iter().copied().collect()))
+                .collect(),
+            read_by: self
+                .read_by
                 .iter()
                 .map(|(&layer, numbers)| (layer, numbers.iter().copied().collect()))
                 .collect(),
         }
+    }
+
+    /// The parts and warnings as a full paint would report them: this
+    /// frame's own, with the skipped commands' put back in their places
+    /// (`inside` pointing at the right entries).
+    fn merged_parts(&self, reuse: &super::reuse::Reuse) -> (Vec<Part>, Vec<String>) {
+        // Each part with the number of the top-level command it belongs
+        // to and which list it came from (0: skipped, 1: this frame).
+        let own = self.commands.len();
+        let number_of = |part: &Part| -> usize {
+            part.path
+                .strip_prefix("command ")
+                .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(own + 1)
+        };
+        let mut all: Vec<(usize, usize, usize, &Part)> = Vec::new();
+        for (i, (n, part)) in reuse.parts.iter().enumerate() {
+            all.push((*n, 0, i, part));
+        }
+        for (i, part) in self.parts.iter().enumerate() {
+            all.push((number_of(part), 1, i, part));
+        }
+        all.sort_by_key(|(n, source, i, _)| (*n, *source, *i));
+        let mut new_index: HashMap<(usize, usize), usize> = HashMap::new();
+        for (new, (_, source, i, _)) in all.iter().enumerate() {
+            new_index.insert((*source, *i), new);
+        }
+        let parts = all
+            .iter()
+            .map(|(_, source, _, part)| Part {
+                path: part.path.clone(),
+                area: part.area,
+                inside: part
+                    .inside
+                    .and_then(|old| new_index.get(&(*source, old)).copied()),
+            })
+            .collect();
+        let mut warnings = reuse.warnings.clone();
+        warnings.extend(self.warnings.iter().cloned());
+        (parts, warnings)
     }
 
     /// After a command has started: adds the box around what it queued to
@@ -2680,6 +2803,13 @@ impl Player {
         let Some(index) = document.layer_index(id) else {
             return;
         };
+        for below in document.layers()[..index]
+            .iter()
+            .map(|l| l.id())
+            .collect::<Vec<_>>()
+        {
+            self.note_read(below);
+        }
         let mut coords: Vec<TileCoord> = document.layers()[..index]
             .iter()
             .filter(|layer| layer.visible())
@@ -3503,6 +3633,10 @@ impl Player {
     }
 
     fn bucket(&mut self, document: &Document, command: &FillCmd) -> Result<(), String> {
+        // The bucket spreads over what it sees: every layer, read.
+        for id in document.layers().iter().map(|l| l.id()).collect::<Vec<_>>() {
+            self.note_read(id);
+        }
         let (x, y) = self.place(pt(command.at)?);
         let paint = match &command.color {
             Some(color) => Paint::Color(self.color(color)?),
