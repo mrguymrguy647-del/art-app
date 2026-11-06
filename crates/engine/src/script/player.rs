@@ -509,6 +509,50 @@ struct Saved {
 /// `check` mentions a group scaled this much more one way than the other.
 const UNEVEN_WARNING: f32 = 1.5;
 
+/// The pixels a one-pixel line through `points` (in samples, `s` to a
+/// pixel) goes through: from each point to the next one pixel per step
+/// along the longer direction (Bresenham), and no corner pixel where a
+/// diagonal step would do (no "L" at a turn).
+fn pixel_line(points: &[StrokePoint], s: f32) -> Vec<(i32, i32)> {
+    let cell = |p: &StrokePoint| ((p.x / s).floor() as i32, (p.y / s).floor() as i32);
+    let mut cells: Vec<(i32, i32)> = vec![cell(&points[0])];
+    for pair in points.windows(2) {
+        let (mut x, mut y) = cell(&pair[0]);
+        let (x1, y1) = cell(&pair[1]);
+        let (dx, dy) = ((x1 - x).abs(), -(y1 - y).abs());
+        let (sx, sy) = ((x1 - x).signum(), (y1 - y).signum());
+        let mut error = dx + dy;
+        while (x, y) != (x1, y1) {
+            let twice = 2 * error;
+            if twice >= dy {
+                error += dy;
+                x += sx;
+            }
+            if twice <= dx {
+                error += dx;
+                y += sy;
+            }
+            if cells.last() != Some(&(x, y)) {
+                cells.push((x, y));
+            }
+        }
+    }
+    // Drop the middle of an "L": a pixel whose neighbours before and
+    // after touch each other diagonally.
+    let mut kept: Vec<(i32, i32)> = Vec::with_capacity(cells.len());
+    for (i, &here) in cells.iter().enumerate() {
+        if let (Some(&before), Some(&after)) = (kept.last(), cells.get(i + 1))
+            && (before.0 - after.0).abs() == 1
+            && (before.1 - after.1).abs() == 1
+        {
+            continue;
+        }
+        kept.push(here);
+    }
+    kept.dedup();
+    kept
+}
+
 /// A group's transform and settings, checked.
 struct Placement {
     transform: Transform,
@@ -2025,6 +2069,37 @@ impl Player {
         points: Vec<StrokePoint>,
         seed: Option<u64>,
     ) {
+        // On a pixel canvas, a line one pixel wide (or less) goes through
+        // whole pixels, one per step: the shrink alone could double it up
+        // where it runs at a slant (see `pixels.rs`).
+        if self.pixel.is_some()
+            && brush.size <= self.paint_scale * 1.001
+            && brush.source.is_none()
+            && !points.is_empty()
+        {
+            let s = self.paint_scale;
+            let rings = pixel_line(&points, s)
+                .into_iter()
+                .map(|(x, y)| {
+                    let (left, top) = (x as f32 * s, y as f32 * s);
+                    vec![
+                        (left, top),
+                        (left + s, top),
+                        (left + s, top + s),
+                        (left, top + s),
+                    ]
+                })
+                .collect();
+            let [r, g, b] = brush.color;
+            self.jobs.push_back(Job::Area {
+                layer,
+                shape: Some(Shape::Rings(rings)),
+                paint: Paint::Color([r, g, b, 255]),
+                opacity: brush.opacity,
+                mode: brush.mode,
+            });
+            return;
+        }
         let seed = Random::mix(
             Random::mix(self.seed, seed.unwrap_or(self.current_seed)),
             self.jobs.len() as u64 + 1,
@@ -9484,5 +9559,74 @@ mod tests {
             ["palette colour \"spare\" is never used"],
             "only the spare one"
         );
+    }
+
+    #[test]
+    fn pixel_art_follows_the_centre_rule_and_thin_lines_never_break() {
+        // Tiny circles: a pixel is painted when its centre is inside
+        // (on the edge counts as outside), so the counts can be worked
+        // out in advance.
+        let mut commands =
+            vec![r#"{ "cmd": "canvas", "width": 56, "height": 16, "pixel": true }"#.to_owned()];
+        let radii = [0.5, 1.0, 1.5, 2.0, 2.5];
+        for (i, r) in radii.iter().enumerate() {
+            let x = 3 + 10 * i;
+            commands.push(format!(
+                r#"{{ "cmd": "ellipse", "center": [{}, 3.5], "radius": {r}, "fill": "r" }}"#,
+                x as f32 + 0.5
+            ));
+            commands.push(format!(
+                r#"{{ "cmd": "ellipse", "center": [{}, 11], "radius": {r}, "fill": "b" }}"#,
+                x + 1
+            ));
+        }
+        let script = format!(
+            r##"{{ "palette": {{ "r": "#C03030", "b": "#3050C0" }}, "commands": [{}] }}"##,
+            commands.join(",")
+        );
+        let document = play(&script);
+        let layer = &document.layers()[0].surface;
+        let count = |x0: i32, y0: i32, y1: i32| {
+            (x0 - 3..x0 + 4)
+                .flat_map(|x| (y0..y1).map(move |y| (x, y)))
+                .filter(|&(x, y)| layer.pixel(x, y).a > 0)
+                .count()
+        };
+        let on_centres: Vec<usize> = (0..5).map(|i| count(3 + 10 * i, 0, 8)).collect();
+        let on_corners: Vec<usize> = (0..5).map(|i| count(4 + 10 * i, 8, 16)).collect();
+        assert_eq!(on_centres, [1, 1, 9, 9, 21], "centred on a pixel's centre");
+        assert_eq!(on_corners, [0, 4, 4, 12, 16], "centred on a pixel's corner");
+
+        // Two thin lines crossing at a shallow slant: every column has
+        // exactly one pixel of each (no gaps, no doubling), apart from
+        // where they cross.
+        let lines = play(
+            r##"{ "palette": { "k": "#202020", "b": "#3050C0" }, "commands": [
+                { "cmd": "canvas", "width": 40, "height": 16, "pixel": { "supersample": 8 } },
+                { "cmd": "line", "from": [0.5, 14.5], "to": [39.5, 2.5], "size": 1, "color": "k", "taper": 0 },
+                { "cmd": "stroke", "points": [[0.5, 2.5], [39.5, 13.5]], "size": 1, "color": "b" }
+            ] }"##,
+        );
+        let layer = &lines.layers()[0].surface;
+        let colour_in = |x: i32, rgb: [u8; 3]| {
+            (0..16)
+                .filter(|&y| {
+                    let p = layer.pixel(x, y);
+                    p.a > 0 && [p.r, p.g, p.b] == rgb
+                })
+                .count()
+        };
+        let mut both = 0;
+        for x in 0..40 {
+            let (k, b) = (
+                colour_in(x, [0x20, 0x20, 0x20]),
+                colour_in(x, [0x30, 0x50, 0xC0]),
+            );
+            assert!(k <= 1 && b <= 1, "column {x}: doubled ({k}, {b})");
+            if k == 1 && b == 1 {
+                both += 1;
+            }
+        }
+        assert!(both >= 38, "only {both} of 40 columns have both lines");
     }
 }

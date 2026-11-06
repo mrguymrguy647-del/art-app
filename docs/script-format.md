@@ -923,12 +923,20 @@ are geometry, so a part faded to `opacity` 0 still counts as drawn.
 
 A **pixel canvas** gives crisp pixel art from ordinary commands. It's painted `supersample` times
 bigger (4 unless given; up to 16) with everything the script says, shapes, strokes, text, symbols
-and transforms alike, then shrunk to its real size: each pixel is painted if more than half of its
-samples were, in the palette colour that the most of them had. So every pixel is whole, there are
+and transforms alike, then shrunk to its real size by one rule: **a pixel is painted when its
+centre (x + 0.5, y + 0.5) is inside the paint, in the palette colour at its centre** (exactly on
+an edge counts as outside). **A line, path or stroke 1 pixel wide or less** is drawn one whole
+pixel per step instead, from each point to the next (never broken, never two pixels side by side,
+no "L" at a turn), so thin lines and crossing lines stay clean. So every pixel is whole, there are
 no blurry or half see-through edges, and the picture only ever has the palette's colours. An
 `outline` colour (a palette name) is put on every see-through pixel next to a painted one, on each
 layer, after shrinking. Positions are in canvas pixels, decimals allowed (`"radius": 5.5`).
 
+- **Small shapes, worked out in advance:** a circle centred on a pixel's centre (`[4.5, 4.5]`)
+  covers 1 pixel at radius 0.5 or 1, 3 × 3 at 1.5 or 2, 5 × 5 without the corners at 2.5; centred
+  on a pixel's corner (`[4, 4]`), nothing at 0.5, 2 × 2 at 1 or 1.5, 4 × 4 without the corners at
+  2, a full 4 × 4 at 2.5. A rectangle covers the pixels whose centres are inside it: whole-number
+  `x`, `y`, `width` and `height` cover exactly those pixels.
 - **The palette is locked:** on a pixel canvas every colour is a palette name; a `#RRGGBB` is a
   mistake, and a pixel canvas needs a palette. `transparent` is allowed.
 - **Animation moves by whole pixels:** `translate` is rounded, so a moving sprite stays crisp.

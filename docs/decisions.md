@@ -2008,3 +2008,15 @@ two false alarms. Every finding, before and after:
   of one size make an exact grid (with `tile`, `columns` and `rows` in
   the JSON, so a game can cut by size); mixed sizes go in rows as tall
   as their tallest tile. Tiles are named after their script files.
+- **Pixel art by a rule you can work out.** The shrink used to paint a
+  pixel when more than half of its samples were painted, and gave it
+  the colour most of them had. Thin lines at a slant fall just under
+  half in some pixels and broke into specks; small shapes whose edge
+  crossed near half a pixel came out either way. Now a pixel is painted
+  when its centre is inside the paint, in the colour at its centre (the
+  samples nearest the centre vote; on the edge counts as outside, which
+  keeps outlines from growing bumps), and lines, paths and strokes 1
+  pixel wide or less are drawn whole pixel by whole pixel (Bresenham,
+  with the corner pixel of an "L" dropped). The circle table in
+  script-format and a test pin it down. The pixel duck's walk frame 2
+  changed by 11 pixels (a slightly flatter crown and tail tip).

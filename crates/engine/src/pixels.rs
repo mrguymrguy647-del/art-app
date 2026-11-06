@@ -4,12 +4,16 @@
 //! The trick is to paint bigger and shrink. A pixel canvas is painted
 //! `supersample` times larger with every ordinary command (so shapes,
 //! strokes, text and transforms need nothing new), then each block of
-//! samples becomes one pixel: opaque if more than half of the samples
-//! were painted, in the palette colour that the most of them had.
-//! Averaging would give muddy in-between colours at the edge between an
-//! outline and a fill; the vote gives one of the two. An optional
-//! `outline` colour is then put on every see-through pixel next to a
-//! painted one.
+//! samples becomes one pixel, by one rule: **a pixel is painted when its
+//! centre is inside the paint, in the palette colour at its centre**
+//! (the samples nearest the centre vote; a centre exactly on an edge
+//! counts as outside). So a line at least one pixel wide never breaks (it
+//! covers a pixel centre in every column, or every row), and which pixels
+//! a small shape covers can be worked out in advance: a circle of radius
+//! 0.5 centred on a pixel's centre (x.5, y.5) is that one pixel. Picking
+//! one palette colour, rather than averaging, keeps the edge between an
+//! outline and a fill crisp. An optional `outline` colour is then put on
+//! every see-through pixel next to a painted one.
 
 use crate::document::Document;
 use crate::fill::Rgba;
@@ -67,15 +71,23 @@ impl PixelMode {
         if big.surface.painted_area().is_none() {
             return;
         }
-        let samples = (s * s) as usize;
+        // The samples nearest each pixel's centre: the middle one, or the
+        // middle 2 x 2 when there's an even number across.
+        let s = s as i32;
+        let middle: Vec<i32> = if s % 2 == 1 {
+            vec![s / 2]
+        } else {
+            vec![s / 2 - 1, s / 2]
+        };
+        let centre_samples = middle.len() * middle.len();
         let mut votes: Vec<usize> = vec![0; self.palette.len()];
         for y in 0..height as i32 {
             for x in 0..width as i32 {
                 votes.iter_mut().for_each(|v| *v = 0);
                 let mut painted = 0;
-                for sy in 0..s as i32 {
-                    for sx in 0..s as i32 {
-                        let pixel = big.surface.pixel(x * s as i32 + sx, y * s as i32 + sy);
+                for &sy in &middle {
+                    for &sx in &middle {
+                        let pixel = big.surface.pixel(x * s + sx, y * s + sy);
                         if pixel.a >= 128 {
                             painted += 1;
                             if let Some(nearest) = self.nearest(unpremultiply(pixel)) {
@@ -84,8 +96,11 @@ impl PixelMode {
                         }
                     }
                 }
-                if painted * 2 <= samples {
-                    continue; // less than half painted: see-through
+                // More than half the centre samples: the centre is inside
+                // (an edge right through the centre counts as outside, so
+                // shapes don't grow bumps).
+                if painted * 2 <= centre_samples {
+                    continue;
                 }
                 let winner = (0..votes.len()).max_by_key(|&i| (votes[i], usize::MAX - i));
                 if let Some(i) = winner {
@@ -163,18 +178,28 @@ mod tests {
     }
 
     #[test]
-    fn more_than_half_painted_is_a_pixel_in_the_most_common_colour() {
+    fn a_pixel_is_painted_when_its_centre_is_in_the_colour_at_its_centre() {
         let mut document = big();
-        // Pixel (0, 0): 10 of 16 samples red (a column of 2 is blue): red.
+        // Pixel (0, 0): red with a blue column at its left and one blue
+        // sample near the middle: three of the four middle samples are
+        // red, so red.
         fill(&mut document, 0, 0, 4, 4, RED);
         fill(&mut document, 0, 0, 1, 4, BLUE);
         fill(&mut document, 1, 0, 2, 2, BLUE);
-        // Pixel (1, 0): exactly half painted: see-through.
+        // Pixel (1, 0): the top half painted, the edge right through the
+        // centre: that counts as outside.
         fill(&mut document, 4, 0, 8, 2, RED);
-        // Pixel (2, 0): 9 of 16 painted, 5 blue and 4 red: blue, not a
-        // purple average snapped to who knows what.
+        // Pixel (2, 0): mostly blue round the middle, a red stripe at the
+        // side: blue, not an average.
         fill(&mut document, 8, 0, 11, 3, BLUE);
         fill(&mut document, 11, 0, 12, 4, RED);
+        // Pixel (0, 3): seven of sixteen samples painted, along the top
+        // and the left edge, away from the centre: see-through.
+        fill(&mut document, 0, 12, 4, 13, BLUE);
+        fill(&mut document, 0, 13, 1, 16, BLUE);
+        // Pixel (1, 3): only the four middle samples painted (a quarter):
+        // its centre is in the paint, so it's painted.
+        fill(&mut document, 5, 13, 7, 15, BLUE);
         // Pixel (3, 3): an anti-aliased shade of red snaps to red.
         fill(&mut document, 12, 12, 16, 16, [255, 60, 60, 200]);
         let small = mode(None).shrink(&document, 4, 4);
@@ -182,6 +207,8 @@ mod tests {
         assert_eq!(at(0, 0), RED);
         assert_eq!(at(1, 0), [0, 0, 0, 0]);
         assert_eq!(at(2, 0), BLUE);
+        assert_eq!(at(0, 3), [0, 0, 0, 0]);
+        assert_eq!(at(1, 3), BLUE);
         assert_eq!(at(3, 3), RED);
         assert_eq!((small.width(), small.height()), (4, 4));
         // Every pixel is see-through or exactly a palette colour.
