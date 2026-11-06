@@ -14,7 +14,7 @@ use serde_json::Value;
 use super::{
     Animations, BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd,
     FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, SelectCmd,
-    StrokeCmd, TransformLayerCmd,
+    StrokeCmd, SymmetryCmd, TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
@@ -151,6 +151,19 @@ pub fn stroke(
             Command::Stroke(stroke)
         },
     ]
+}
+
+/// Mirror lines for the stroke `stroke` made (its last command).
+pub fn mirror(commands: &mut [Command], symmetry: Option<&crate::stroke::Symmetry>) {
+    let Some(symmetry) = symmetry else {
+        return;
+    };
+    if let Some(Command::Stroke(stroke) | Command::Erase(stroke)) = commands.last_mut() {
+        stroke.symmetry = Some(SymmetryCmd {
+            x: symmetry.vertical.then(|| round(symmetry.centre.0, 2)),
+            y: symmetry.horizontal.then(|| round(symmetry.centre.1, 2)),
+        });
+    }
 }
 
 /// A paint bucket fill on `layer`.

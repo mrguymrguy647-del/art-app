@@ -889,6 +889,21 @@ pub struct StrokeCmd {
     /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<Value>,
+    /// Mirror lines: the stroke is painted again mirrored across them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symmetry: Option<SymmetryCmd>,
+}
+
+/// A stroke's mirror lines: `x` is a line going down at that x (left and
+/// right mirror each other), `y` a line going across at that y; both
+/// give four copies. Inside a group they move and turn with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymmetryCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
 }
 
 /// `line`: a straight line from `from` to `to`, thinning towards its ends

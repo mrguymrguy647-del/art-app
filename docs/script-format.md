@@ -226,7 +226,16 @@ settings themselves instead. For the eraser preset, paint with `erase`.
 
 Paints (or erases) through the points with the brush, exactly as if a pen moved through them: a
 smooth curve through every point, with no gaps. Optional: `color`, `size`, `opacity`,
-`hardness`, `flow` (this stroke only), `jitter` (a gentle hand-drawn wobble, in pixels), `seed`.
+`hardness`, `flow` (this stroke only), `jitter` (a gentle hand-drawn wobble, in pixels), `seed`,
+and `symmetry`: mirror lines the stroke is painted again across, as one stroke (where the copies
+overlap they don't darken each other). `"x"` is a line going down at that x (left and right mirror
+each other), `"y"` a line going across; both give four copies. Inside a group the lines move and
+turn with it. The app's symmetry strokes are saved this way by Export strokes.
+
+```json
+{ "cmd": "stroke", "points": [[300, 200], [380, 260, 0.5]], "symmetry": { "x": 512 } }
+{ "cmd": "erase", "points": [[100, 100], [140, 120]], "symmetry": { "x": 512, "y": 384 } }
+```
 
 ### `line` — a tapered straight line
 

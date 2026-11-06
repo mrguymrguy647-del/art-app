@@ -32,8 +32,8 @@ use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
     HatchCmd, IncludeCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd,
-    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, SelectCmd, StampCmd, StrokeCmd, TextCmd,
-    TransformLayerCmd, UseCmd, parse_hex,
+    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, SelectCmd, StampCmd, StrokeCmd,
+    SymmetryCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
 use crate::document::{Background, Document, MAX_CANVAS_SIDE};
@@ -54,7 +54,7 @@ use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
 use crate::selection::{self, Selection, What};
-use crate::stroke::{Stroke, StrokePoint, TilesBefore};
+use crate::stroke::{Stroke, StrokePoint, Symmetry, TilesBefore};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
 use crate::tile::Rgba8;
@@ -270,6 +270,8 @@ enum Job {
         points: Vec<StrokePoint>,
         /// Where the brush's dynamics get their randomness.
         seed: u64,
+        /// Mirror lines, in canvas pixels.
+        symmetry: Option<Symmetry>,
     },
     /// Fills a shape (or the whole layer, if `shape` is `None`). A shape
     /// is one or more outlines filled together (a letter "o" has two).
@@ -1845,8 +1847,12 @@ impl Player {
                 brush,
                 points,
                 seed,
+                symmetry,
             } => {
                 let mut stroke = Stroke::new(brush, document.bounds()).seeded(seed);
+                if let Some(symmetry) = symmetry {
+                    stroke = stroke.mirrored(symmetry);
+                }
                 if let Some(clip) = clip {
                     stroke = stroke.clipped(clip);
                 }
@@ -1954,7 +1960,30 @@ impl Player {
             brush,
             points,
             seed,
+            symmetry: None,
         });
+    }
+
+    /// The mirror lines of a `stroke` command, on the canvas: they move
+    /// and turn with the group it's in.
+    fn symmetry(&self, written: Option<&SymmetryCmd>) -> Result<Option<Symmetry>, String> {
+        let Some(written) = written else {
+            return Ok(None);
+        };
+        if written.x.is_none() && written.y.is_none() {
+            return Err(
+                "`symmetry` needs `x` (a line going down), `y` (going across) or both".into(),
+            );
+        }
+        let x = finite("symmetry x", written.x.unwrap_or(0.0))?;
+        let y = finite("symmetry y", written.y.unwrap_or(0.0))?;
+        let place = self.frame().place;
+        Ok(Some(Symmetry {
+            centre: place.apply((x, y)),
+            vertical: written.x.is_some(),
+            horizontal: written.y.is_some(),
+            angle: place.b.atan2(place.a).to_degrees(),
+        }))
     }
 
     fn mark_painted(&mut self, document: &Document, layer: LayerId) {
@@ -3287,12 +3316,19 @@ impl Player {
             false,
         )?;
         self.place_all(&mut points);
+        let symmetry = self.symmetry(command.symmetry.as_ref())?;
         self.push_stroke(
             document.active_id(),
             brush,
             points,
             self.seed_of(command.seed.as_ref())?,
         );
+        if let Some(Job::Stroke {
+            symmetry: mirror, ..
+        }) = self.jobs.back_mut()
+        {
+            *mirror = symmetry;
+        }
         Ok(())
     }
 
@@ -8847,6 +8883,162 @@ mod tests {
                 assert_eq!(
                     both.layers()[0].surface.pixel(x, y),
                     plain_only.layers()[0].surface.pixel(x, y)
+                );
+            }
+        }
+    }
+
+    // ---- Symmetry (phase 5, step 6) ------------------------------------------
+
+    fn mirror_script(symmetry: &str, points: &str) -> String {
+        format!(
+            r##"{{ "commands": [
+                {{ "cmd": "canvas", "width": 200, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "brush", "size": 14, "color": "#000000", "opacity": 0.5, "hardness": 0.7 }},
+                {{ "cmd": "stroke", "points": {points}, "symmetry": {symmetry} }}
+              ] }}"##
+        )
+    }
+
+    #[test]
+    fn the_mirror_copies_land_across_the_lines() {
+        let both = Symmetry {
+            centre: (100.0, 40.0),
+            vertical: true,
+            horizontal: true,
+            angle: 0.0,
+        };
+        let copies = both.copies((90.0, 50.0), 30.0);
+        let close = |(x, y): (f32, f32), (ex, ey): (f32, f32)| {
+            (x - ex).abs() < 1e-3 && (y - ey).abs() < 1e-3
+        };
+        assert!(close(copies[0].0, (110.0, 50.0)) && (copies[0].1 - 150.0).abs() < 1e-3);
+        assert!(close(copies[1].0, (90.0, 30.0)) && (copies[1].1 + 30.0).abs() < 1e-3);
+        assert!(close(copies[2].0, (110.0, 30.0)));
+        // Turned a quarter: the "down" line now goes across.
+        let turned = Symmetry {
+            angle: 90.0,
+            horizontal: false,
+            ..both
+        };
+        assert!(close(turned.copies((90.0, 50.0), 0.0)[0].0, (90.0, 30.0)));
+    }
+
+    #[test]
+    fn a_mirrored_stroke_is_its_own_mirror_image_and_never_doubles_up() {
+        let layer = |d: &Document| d.layers()[0].surface.clone();
+        let one = play(&mirror_script(
+            r#"{ "x": 100 }"#,
+            "[[30, 30], [120, 60], [60, 100]]",
+        ));
+        let surface = layer(&one);
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(surface.pixel(x, y), surface.pixel(199 - x, y), "({x}, {y})");
+            }
+        }
+        // The stroke crosses the line, where the copies overlap: still no
+        // darker than the brush's opacity.
+        let darkest = (0..200)
+            .flat_map(|x| (0..120).map(move |y| (x, y)))
+            .map(|(x, y)| surface.pixel(x, y).a)
+            .max()
+            .unwrap();
+        assert!(darkest <= 128, "{darkest}");
+        // Both lines: four copies, mirrored both ways.
+        let four = play(&mirror_script(
+            r#"{ "x": 100, "y": 60 }"#,
+            "[[30, 20], [80, 40]]",
+        ));
+        let surface = layer(&four);
+        for y in 0..120 {
+            for x in 0..200 {
+                let p = surface.pixel(x, y);
+                assert_eq!(p, surface.pixel(199 - x, y));
+                assert_eq!(p, surface.pixel(x, 119 - y));
+            }
+        }
+        assert!(surface.pixel(55, 30).a > 0 && surface.pixel(144, 89).a > 0);
+        // Erasing is mirrored too.
+        let erased = play(&mirror_script(r#"{ "x": 100 }"#, "[[20, 60], [60, 60]]").replace(
+            r#"{ "cmd": "stroke", "points": [[20, 60], [60, 60]]"#,
+            r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 200, "height": 120, "fill": "#000000" },
+               { "cmd": "erase", "points": [[20, 60], [60, 60]]"##,
+        ));
+        let surface = layer(&erased);
+        assert!(surface.pixel(40, 60).a < 255 && surface.pixel(159, 60).a < 255);
+        assert_eq!(surface.pixel(100, 60).a, 255, "the middle is left alone");
+    }
+
+    #[test]
+    fn symmetry_moves_with_the_group_and_says_what_it_needs() {
+        // In a group moved 50 to the right, the line at x 50 is at 100.
+        let moved = play(
+            &mirror_script(r#"{ "x": 50 }"#, "[[0, 30], [20, 60]]")
+                .replace(
+                    r#"{ "cmd": "stroke""#,
+                    r#"{ "cmd": "group", "translate": [50, 0], "commands": [ { "cmd": "stroke""#,
+                )
+                .replace(
+                    r#""symmetry": { "x": 50 } }"#,
+                    r#""symmetry": { "x": 50 } } ] }"#,
+                ),
+        );
+        let surface = &moved.layers()[0].surface;
+        assert!(surface.pixel(60, 45).a > 0);
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(surface.pixel(x, y), surface.pixel(199 - x, y));
+            }
+        }
+        let problem = error(&mirror_script("{}", "[[0, 30], [20, 60]]"));
+        assert!(problem.contains("`symmetry` needs"), "{problem}");
+    }
+
+    #[test]
+    fn the_apps_mirrored_strokes_replay_exactly() {
+        let symmetry = Symmetry {
+            centre: (100.0, 60.0),
+            vertical: true,
+            horizontal: true,
+            angle: 0.0,
+        };
+        let brush = BrushSettings {
+            size: 12.0,
+            ..BrushSettings::default()
+        };
+        let points = [
+            StrokePoint::new(20.0, 20.0, 0.4),
+            StrokePoint::new(70.0, 50.0, 1.0),
+            StrokePoint::new(95.0, 90.0, 0.6),
+        ];
+        // As the app paints it.
+        let mut document = Document::new(200, 120);
+        let mut stroke = Stroke::new(brush, document.bounds()).mirrored(symmetry);
+        let surface = &mut document.active_layer_mut().surface;
+        for point in points {
+            stroke.add_point(surface, point);
+        }
+        stroke.finish(surface);
+        // As Export strokes writes it, played.
+        let name = document.active_layer().name().to_owned();
+        let mut commands = vec![crate::script::record::brush(&brush, true)];
+        let mut stroke = crate::script::record::stroke(&name, &brush, &points, None);
+        crate::script::record::mirror(&mut stroke, Some(&symmetry));
+        commands.extend(stroke);
+        let script = crate::script::record::script(200, 120, Rgba8::WHITE, commands, None, None);
+        assert!(
+            script.to_json().contains(r#""symmetry":{"x":100.0,"y":60.0}"#),
+            "{}",
+            script.to_json()
+        );
+        let played = play(&script.to_json());
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(
+                    played.layers()[0].surface.pixel(x, y),
+                    document.layers()[0].surface.pixel(x, y),
+                    "({x}, {y})"
                 );
             }
         }
