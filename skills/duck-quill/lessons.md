@@ -118,12 +118,17 @@ The person asked for these with the brush presets (phase 5); they come from thei
     accents. Going over again darkens only to a shiny grey (`build_up`), never ink black.
     (`prince-profile`: hair shaded along each spike, the arm as one block on the shadow side.)
 38. Light pencil shows the paper grain; that is what makes it read as pencil. Flat, even grey
-    reads as a marker. If a pencil area looks flat, press lighter and add a second pass in
-    another direction; don't raise the opacity. (The Pencil preview in the app's Presets panel:
-    the light ends show the paper, the middle is filled; `face-door`'s stucco is the grain.)
+    reads as a marker, and white dots punched in a hard-edged line read as a speckled marker.
+    Graphite has a soft, ragged edge; pressure and extra passes fill the valleys. (The "after"
+    half of `lessons/pencil-aim-for.png`; `face-door`'s stucco is the grain.)
 39. Pencil first, ink last: sketch the construction lightly in pencil on its own layer, ink the
     final contour on a layer above, then fade or hide the pencil layer, or keep it as shading
     on purpose. (`pen-hero-head`: the pencil sky hatching stays.)
+
+**Aim for this.** `lessons/pencil-aim-for.png`: the bottom half is the Pencil preset at a light,
+medium and hard touch, and 1, 2, 4 and 8 passes over the same line (the top half is the old pencil,
+a speckled marker). `lessons/pencil-test.json` paints the bottom half: render your own pencil
+marks the same way and `quill compare` them with it.
 
 ```json
 { "cmd": "layer", "name": "Sketch" },

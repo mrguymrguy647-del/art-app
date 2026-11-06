@@ -8752,6 +8752,62 @@ mod tests {
         }
     }
 
+    /// The share of pixels with no graphite in rows `ys`, along the line.
+    fn hole_share(document: &Document, ys: impl Iterator<Item = i32> + Clone) -> f32 {
+        let layer = &document.layers()[0].surface;
+        let (mut holes, mut all) = (0, 0);
+        for y in ys {
+            for x in 40..260 {
+                holes += usize::from(layer.pixel(x, y).a == 0);
+                all += 1;
+            }
+        }
+        holes as f32 / all as f32
+    }
+
+    #[test]
+    fn the_pencils_edge_breaks_up_and_pressure_fills_the_middle() {
+        let hard = play(&PENCIL_SCRIPT.replace("PRESSURE", "1"));
+        let light = play(&PENCIL_SCRIPT.replace("PRESSURE", "0.2"));
+        let middle = |d: &Document| hole_share(d, 29..=31);
+        // The outer rows of a 12-wide line (its radius at full pressure
+        // is 6): ragged, not a clean capsule edge.
+        let edge = |d: &Document| hole_share(d, [25, 26, 34, 35].into_iter());
+        assert!(
+            middle(&hard) < 0.05,
+            "hard: only a few specks ({})",
+            middle(&hard)
+        );
+        assert!(edge(&hard) > 0.25, "hard: a broken edge ({})", edge(&hard));
+        assert!(
+            middle(&light) > 0.35,
+            "light: most valleys white ({})",
+            middle(&light)
+        );
+        assert!(
+            edge(&light) > middle(&light),
+            "the edge breaks more than the middle"
+        );
+    }
+
+    #[test]
+    fn going_over_pencil_again_fills_the_valleys() {
+        let passes = |n: usize| {
+            let stroke = r#"{ "cmd": "stroke", "points": [[20, 30, 0.55], [280, 30, 0.55]] }"#;
+            let script = PENCIL_SCRIPT.replace(
+                r#"{ "cmd": "stroke", "points": [[20, 30, PRESSURE], [280, 30, PRESSURE]] }"#,
+                &vec![stroke; n].join(","),
+            );
+            hole_share(&play(&script), 29..=31)
+        };
+        let (one, eight) = (passes(1), passes(8));
+        assert!(one > 0.15, "one pass shows the tooth ({one})");
+        assert!(
+            eight < one / 3.0,
+            "eight passes fill most of it ({one} -> {eight})"
+        );
+    }
+
     #[test]
     fn going_over_pencil_again_darkens_it_only_so_far() {
         let again = r##"{ "commands": [

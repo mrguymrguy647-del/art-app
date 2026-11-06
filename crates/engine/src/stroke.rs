@@ -334,7 +334,7 @@ impl Stroke {
         let centre = StrokePoint::new(cx, cy, pressure);
         let (sin, cos) = dab.angle.to_radians().sin_cos();
         let varies_color = self.brush.dynamics.varies_color();
-        let grainy = self.brush.grain > 0.0;
+        let tooth = self.brush.tooth(pressure);
 
         for coord in rect.tiles() {
             let (left, top) = coord.origin();
@@ -357,6 +357,11 @@ impl Stroke {
                     .entry(coord)
                     .or_insert_with(|| vec![self.brush.color; TILE_PIXELS].into_boxed_slice())
             });
+            // How dark the layer was before this stroke, for the tooth.
+            let original = match self.before.get(&coord) {
+                Some(before) => before.as_ref(),
+                None => layer.tile(coord),
+            };
             let mut changed = false;
             for y in area.top..area.bottom {
                 for x in area.left..area.right {
@@ -374,11 +379,21 @@ impl Stroke {
                                 * dab_coverage(distance, reach - 0.5, self.brush.hardness)
                         }
                     };
-                    let mut target = dab.opacity * shape;
-                    if grainy {
-                        target *= self.brush.grain_at(x, y, pressure);
-                    }
                     let i = tile_index(x - left, y - top);
+                    let mut target = dab.opacity * shape;
+                    if let Some(tooth) = &tooth {
+                        // The grain makes the edge, so it's not also faded.
+                        target = dab.opacity * shape.sqrt();
+                        // The tooth only ever takes away: skip it where
+                        // the dab couldn't add anything anyway.
+                        if target <= coverage[i] {
+                            continue;
+                        }
+                        let already = original.map_or(0.0, |t| {
+                            darkness_around(t, (x - left) as usize, (y - top) as usize)
+                        });
+                        target *= tooth.at(x, y, shape, already);
+                    }
                     if target > coverage[i] {
                         // Flow 1: jump straight to the target. Lower flow:
                         // move part of the way, so paint builds up.
@@ -499,6 +514,19 @@ impl Stroke {
         }
         varied
     }
+}
+
+/// How dark the layer is at a tile pixel and around it, 0..1: a white
+/// valley among graphite counts as fairly dark, so going over it again
+/// fills it, as graphite smears into the paper's tooth.
+fn darkness_around(tile: &Tile, x: usize, y: usize) -> f32 {
+    let last = TILE_SIZE - 1;
+    let alpha = |x: usize, y: usize| f32::from(tile.pixel(x, y).a);
+    let around = alpha(x.saturating_sub(1), y)
+        + alpha((x + 1).min(last), y)
+        + alpha(x, y.saturating_sub(1))
+        + alpha(x, (y + 1).min(last));
+    alpha(x, y).max(around / 4.0) / 255.0
 }
 
 /// One dab, with the dynamics applied.

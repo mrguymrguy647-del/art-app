@@ -1838,12 +1838,21 @@ two false alarms. Every finding, before and after:
     touch keeps. The pencil keeps 85% of its width but only 15% of its
     darkness, so pressure is shading, not thickness.
   - `pressure_curve`: 1.4 for the pencil, so you press harder for dark.
-  - `grain`: a tileable 256-pixel height map fixed to the canvas (not
-    the stroke). A light touch only marks the high points; pressing
-    harder reaches further down. Fixed to the canvas means every stroke
-    meets the same bumps, which is what real paper does and what makes
-    shading over shading look like graphite. The bumps are 1 to 4 pixels
-    across: bigger ones made the line look dashed.
+  - `grain`: paper tooth, fixed to the canvas (not the stroke), so every
+    stroke meets the same bumps. Revised after the owner's review (the
+    first version read as a speckled marker: a crisp capsule with round
+    white dots, and the hard stroke as speckled as the light one):
+    - the bumps are 1 to 6 pixels, stretched about 3:1 and turned 30°,
+      like paper fibres, instead of round;
+    - their heights are spread evenly by rank, so a threshold is simply
+      the share of paper left white: about half at a light touch, a few
+      specks pressing hard (`BrushSettings::tooth`);
+    - the threshold rises towards the dab's edge (and the pencil's
+      hardness is 0.1), so the outline is ragged and soft;
+    - graphite already on the layer, at the pixel or around it, lowers
+      the threshold, so going over it again fills the valleys, as
+      graphite smears into the tooth.
+    The aim is `skills/duck-quill/lessons/pencil-aim-for.png`.
   - `build_up`: the most the layer darkens when you go over it again
     (0.8 for the pencil: shiny grey, never black).
 - **Recorded brushes always carry the new settings** (and `tidy` drops
@@ -1853,9 +1862,11 @@ two false alarms. Every finding, before and after:
   surface (shown at half size), light-hard-light, sizes squeezed to fit;
   each is drawn once and again only when its settings change.
 - **Cost.** On the 4000 x 3000, 20-layer test (`tests/big_canvas.rs`), a
-  3600-pixel stroke at size 60 takes 219 ms with the pencil against
-  100 ms with the plain brush: a grain lookup per pixel and dabs 20%
-  closer. That stroke takes seconds to draw by hand, so the pen never
+  3600-pixel stroke at size 60 takes about 230 ms with the pencil against
+  115 ms with the plain brush (the limit is 2.5 times): the tooth is
+  only worked out where a dab could still darken a pixel, its angle
+  once per dab, and the pencil's dabs are as far apart as the plain
+  brush's. That stroke takes seconds to draw by hand, so the pen never
   waits; at the pencil's own size (5) it is a small fraction of that.
 
 ## 84. Symmetry (phase 5, step 6)

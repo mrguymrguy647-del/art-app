@@ -525,6 +525,11 @@ fn the_learning_folder_is_complete() {
     ] {
         assert!(lessons.contains(mention), "lessons never mention {mention}");
     }
+    // The pencil's "aim for" picture, and the script that paints it.
+    for file in ["lessons/pencil-aim-for.png", "lessons/pencil-test.json"] {
+        assert!(lessons.contains(file), "lessons never mention {file}");
+        assert!(skill.join(file).exists(), "{file} is missing");
+    }
     // Mistakes: each has a before picture that exists, what was wrong,
     // the critique's finding, and the fix.
     let mistakes = read_text(skill.join("mistakes.md")).unwrap();
