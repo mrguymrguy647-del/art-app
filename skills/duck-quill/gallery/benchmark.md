@@ -27,6 +27,15 @@ later phase adds rows and the old ones stay.
 | 4 step 9 | forest-at-dawn | person | - | - | - | - | - | - | - |
 | 4 step 9 | sunset-pond | agent (step 9 judge) | 3 | 3 | 3 | 2 | 2 | 2 | 2026-11-06 |
 | 4 step 9 | duck-portrait | agent (step 9 judge) | 4 | 3 | 3 | 3 | 2 | 2 | 2026-11-06 |
+| 5 wrap-up | sunset-pond | numbers | 4 | 5 | 2 | 4 | 4 | - | 2026-11-06 |
+| 5 wrap-up | duck-portrait | numbers | 2 | 4 | 5 | 5 | 3 | - | 2026-11-06 |
+| 5 wrap-up | sunset-pond-v3 | numbers | 5 | 5 | 4 | 5 | 5 | - | 2026-11-06 |
+| 5 wrap-up | duck-portrait-v2 | numbers | 5 | 4 | 5 | 4 | 4 | - | 2026-11-06 |
+| 5 wrap-up | forest-at-dawn | numbers | 5 | 5 | 4 | 5 | 3 | - | 2026-11-06 |
+
+The phase 5 wrap-up rows re-score the numbers with phase 5's `quill`: nothing changed, except
+that sunset-pond-v3 reads 5, not 4. That 4 was recorded before a late phase 4 change to the
+critique: phase 4's own final `quill` already gives 5, so it isn't phase 5's doing.
 
 The pieces: `sunset-pond-simple` is `examples/sunset-pond-simple.json` (the phase 3 example,
 flat fills, one duck), `sunset-pond` and `duck-portrait` are this folder's phase 3 pieces
