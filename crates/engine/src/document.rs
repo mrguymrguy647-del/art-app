@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use crate::fill::Mask;
+use crate::reference::Reference;
 use crate::selection::Selection;
 use std::collections::HashSet;
 
@@ -40,6 +41,8 @@ pub struct Document {
     /// What's selected, if anything: painting stays inside it. Not saved
     /// in the file.
     selection: Option<Selection>,
+    /// Pictures pinned beside the painting (saved in the file, never painted).
+    references: Vec<Reference>,
 }
 
 impl Document {
@@ -55,6 +58,7 @@ impl Document {
             next_layer_number: 2,
             removed_tiles: HashSet::new(),
             selection: None,
+            references: Vec::new(),
         }
     }
 
@@ -78,6 +82,7 @@ impl Document {
             next_layer_number,
             removed_tiles: HashSet::new(),
             selection: None,
+            references: Vec::new(),
         }
     }
 
@@ -96,6 +101,26 @@ impl Document {
     /// `SelectionCommand::set` instead.
     pub fn set_selection(&mut self, selection: Option<Selection>) -> Option<Selection> {
         std::mem::replace(&mut self.selection, selection)
+    }
+
+    /// The pinned reference pictures, oldest first.
+    pub fn references(&self) -> &[Reference] {
+        &self.references
+    }
+
+    /// For changing how a reference is shown (zoom, opacity...). To pin
+    /// or remove one, use `ReferenceCommand`, which can be undone.
+    pub fn references_mut(&mut self) -> &mut [Reference] {
+        &mut self.references
+    }
+
+    pub(crate) fn insert_reference(&mut self, index: usize, reference: Reference) {
+        let index = index.min(self.references.len());
+        self.references.insert(index, reference);
+    }
+
+    pub(crate) fn remove_reference(&mut self, index: usize) -> Option<Reference> {
+        (index < self.references.len()).then(|| self.references.remove(index))
     }
 
     /// The mask painting must stay inside: the selection's, if any.

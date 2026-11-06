@@ -20,8 +20,10 @@ mod pen_input;
 mod pen_test;
 mod playback;
 mod presets_panel;
+mod references_view;
 mod select_tool;
 mod settings_folder;
+mod symmetry_view;
 mod text_tool;
 mod theme;
 mod thumbnails;
@@ -354,7 +356,34 @@ impl eframe::App for DuckQuill {
                     .or(edit::select_menu(ui, not_here, selected));
                 layer_action = layer_menu(ui, busy || self.screen != Screen::Canvas);
                 self.filters.menu(ui, busy || self.screen != Screen::Canvas);
-                ui.menu_button("View", theme::theme_menu);
+                let mut add_reference = false;
+                ui.menu_button("View", |ui| {
+                    theme::theme_menu(ui);
+                    ui.separator();
+                    let here = !busy && self.screen == Screen::Canvas;
+                    if ui
+                        .add_enabled(here, egui::Button::new("Add reference picture…"))
+                        .on_hover_text("Pin a photo or drawing beside the painting, to look at and pick colours from")
+                        .clicked()
+                    {
+                        add_reference = true;
+                        ui.close();
+                    }
+                    ui.checkbox(self.canvas.references_hidden(), "Hide reference pictures");
+                });
+                if add_reference
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Pictures", &["png", "jpg", "jpeg"])
+                        .pick_file()
+                    && let Err(problem) =
+                        self.canvas
+                            .add_reference(&mut self.document, &mut self.history, &path)
+                {
+                    self.files.show_message(
+                        "Can't pin that picture",
+                        format!("{}\n\n{problem}", path.display()),
+                    );
+                }
                 ui.menu_button("Help", |ui| {
                     if ui.button("About Duck Quill").clicked() {
                         self.about.open = true;

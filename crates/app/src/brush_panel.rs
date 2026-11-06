@@ -10,6 +10,7 @@ use crate::color_panel::ColorPicker;
 use crate::paint_tool::{GradientEnd, PaintTool, Tool};
 use crate::presets_panel::PresetsPanel;
 use crate::select_tool::SelectShape;
+use crate::symmetry_view::SymmetryMode;
 
 /// The paint bucket can grow its fill by at most this many pixels.
 const MAX_FILL_GROW: u32 = 8;
@@ -61,6 +62,7 @@ pub fn brush_panel(
     egui::ScrollArea::vertical().show(ui, |ui| {
         if matches!(tools.tool, Tool::Brush | Tool::Eraser) {
             presets.ui(ui, tools);
+            symmetry_row(ui, tools);
             ui.separator();
         }
         if tools.tool != Tool::Eraser {
@@ -94,6 +96,32 @@ pub fn brush_panel(
     });
 
     actions
+}
+
+/// Symmetry for the brush and eraser: a mode and, when on, a button that
+/// puts the mirror lines back in the middle.
+fn symmetry_row(ui: &mut egui::Ui, tools: &mut PaintTool) {
+    ui.horizontal(|ui| {
+        ui.label("Symmetry").on_hover_text(
+            "Paint on one side of a mirror line and the other side is painted too. \
+             Drag the round handle on a line to move it.",
+        );
+        egui::ComboBox::from_id_salt("symmetry")
+            .selected_text(tools.symmetry.mode.label())
+            .show_ui(ui, |ui| {
+                for mode in SymmetryMode::ALL {
+                    ui.selectable_value(&mut tools.symmetry.mode, mode, mode.label());
+                }
+            });
+        if tools.symmetry.mode != SymmetryMode::Off
+            && ui
+                .small_button("Centre")
+                .on_hover_text("Put the mirror lines back in the middle of the canvas")
+                .clicked()
+        {
+            tools.symmetry.centre_lines();
+        }
+    });
 }
 
 /// What the selection tools do: they have no settings of their own.

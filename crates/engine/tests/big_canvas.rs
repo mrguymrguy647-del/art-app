@@ -15,7 +15,7 @@ use quill_engine::filters::{self, Filter};
 use quill_engine::image::Image;
 use quill_engine::layer_commands::LayerPresenceCommand;
 use quill_engine::selection::{self, Selection};
-use quill_engine::stroke::{Stroke, StrokePoint};
+use quill_engine::stroke::{Stroke, StrokePoint, Symmetry};
 
 const WIDTH: u32 = 4000;
 const HEIGHT: u32 = 3000;
@@ -97,6 +97,27 @@ fn timings_on_a_4000_by_3000_picture_with_20_layers() {
     pencil.size = 60.0;
     time("long stroke, size 60, pencil (grain)", || {
         stroke_with(&mut document, None, pencil)
+    });
+    // Symmetry: every dab four times.
+    time("long stroke, size 60, four-way symmetry", || {
+        let brush = BrushSettings {
+            size: 60.0,
+            ..BrushSettings::default()
+        };
+        let mut stroke = Stroke::new(brush, document.bounds()).mirrored(Symmetry {
+            centre: (2000.0, 1500.0),
+            vertical: true,
+            horizontal: true,
+            angle: 0.0,
+        });
+        let surface = &mut document.active_layer_mut().surface;
+        for i in 0..=2000 {
+            let t = i as f32 / 2000.0;
+            let point =
+                StrokePoint::new(200.0 + 3600.0 * t, 1500.0 + 800.0 * (t * 12.0).sin(), 0.8);
+            stroke.add_point(surface, point);
+        }
+        stroke.finish(surface);
     });
     // The same blur without a selection, on a copy, to compare.
     let mut plain = document.clone();

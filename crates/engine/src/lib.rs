@@ -23,6 +23,7 @@ pub mod pen;
 pub mod pixels;
 pub mod presets;
 pub mod random;
+pub mod reference;
 pub mod script;
 pub mod selection;
 pub mod senses;

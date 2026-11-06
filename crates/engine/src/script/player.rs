@@ -9028,7 +9028,9 @@ mod tests {
         commands.extend(stroke);
         let script = crate::script::record::script(200, 120, Rgba8::WHITE, commands, None, None);
         assert!(
-            script.to_json().contains(r#""symmetry":{"x":100.0,"y":60.0}"#),
+            script
+                .to_json()
+                .contains(r#""symmetry":{"x":100.0,"y":60.0}"#),
             "{}",
             script.to_json()
         );

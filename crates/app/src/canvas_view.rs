@@ -23,6 +23,7 @@ use quill_engine::document::{Background, Document};
 use quill_engine::history::{History, TileCommand};
 use quill_engine::image::Image;
 use quill_engine::layer::{BlendMode, blend_over};
+use quill_engine::reference::{Reference, ReferenceCommand};
 use quill_engine::script::record;
 use quill_engine::surface::{PixelRect, TileCoord};
 use quill_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
@@ -36,7 +37,9 @@ use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
 use crate::presets_panel::PresetsPanel;
+use crate::references_view::{ReferenceAction, ReferencesView};
 use crate::select_tool::{self, Ants, SelectShape};
+use crate::symmetry_view::MirrorHandles;
 use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
@@ -115,6 +118,10 @@ pub struct CanvasView {
     /// Select → Feather… while its window is open.
     feather: Option<FeatherWindow>,
     presets: PresetsPanel,
+    /// The symmetry lines' handles.
+    mirror: MirrorHandles,
+    /// The reference pictures' windows.
+    references: ReferencesView,
 }
 
 impl Default for CanvasView {
@@ -139,6 +146,8 @@ impl Default for CanvasView {
             clipboard: Clipboard::default(),
             feather: None,
             presets: PresetsPanel::default(),
+            mirror: MirrorHandles::default(),
+            references: ReferencesView::default(),
         }
     }
 }
@@ -216,6 +225,7 @@ impl CanvasView {
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
         self.presets.windows(ui.ctx(), &mut self.tools);
+        self.reference_windows(ui, document, history, panels_enabled);
         if let Some(window) = &mut self.feather {
             let mut close = false;
             if let Some(pixels) = window.ui(ui.ctx(), &mut close) {
@@ -225,6 +235,57 @@ impl CanvasView {
                 self.feather = None;
             }
         }
+    }
+
+    /// The reference pictures' windows, and what was done in them.
+    fn reference_windows(
+        &mut self,
+        ui: &egui::Ui,
+        document: &mut Document,
+        history: &mut History,
+        enabled: bool,
+    ) {
+        if !enabled {
+            return;
+        }
+        let picking = self.tools.tool == Tool::Eyedropper;
+        let canvas_rect = self.last_rect.unwrap_or(ui.max_rect());
+        let actions = self
+            .references
+            .ui(ui.ctx(), document.references_mut(), canvas_rect, picking);
+        // (Removing from the last, so the numbers stay right.)
+        for action in actions.into_iter().rev() {
+            match action {
+                ReferenceAction::PickColor(color) => self.tools.take_color(color),
+                ReferenceAction::Remove(index) => {
+                    if let Some(step) = ReferenceCommand::remove(document, index) {
+                        history.push(Box::new(step));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pins a picture file beside the painting (an undo step).
+    pub fn add_reference(
+        &mut self,
+        document: &mut Document,
+        history: &mut History,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let name = path
+            .file_name()
+            .map_or("Reference".into(), |n| n.to_string_lossy().into_owned());
+        let reference = Reference::from_bytes(&name, bytes).map_err(|e| e.to_string())?;
+        history.push(Box::new(ReferenceCommand::add(document, reference)));
+        self.references.hidden = false;
+        Ok(())
+    }
+
+    /// View → Hide references.
+    pub fn references_hidden(&mut self) -> &mut bool {
+        &mut self.references.hidden
     }
 
     /// True while one of the canvas's small windows (Feather) is open.
@@ -453,13 +514,29 @@ impl CanvasView {
                 transform.cancel(document);
             }
         } else if !self.locked {
-            let placement = CanvasPlacement {
-                rect,
-                view: &self.view,
-                navigating,
-            };
-            self.tools
-                .handle_input(ui, placement, document, history, ink_events);
+            // The symmetry lines' handles come first: dragging one paints nothing.
+            let mut ink_events = ink_events;
+            let canvas = (document.width(), document.height());
+            let can_grab = !navigating && !self.tools.is_painting();
+            let moving_mirror = self.tools.uses_symmetry()
+                && self.mirror.handle_input(
+                    ui,
+                    rect,
+                    &self.view,
+                    canvas,
+                    &mut self.tools.symmetry,
+                    &mut ink_events,
+                    can_grab,
+                );
+            if !moving_mirror {
+                let placement = CanvasPlacement {
+                    rect,
+                    view: &self.view,
+                    navigating,
+                };
+                self.tools
+                    .handle_input(ui, placement, document, history, ink_events);
+            }
         }
 
         let visible = self.visible_tiles(document, rect);
@@ -475,6 +552,19 @@ impl CanvasView {
                 draw_notice(&painter, rect, text);
             }
             return; // no brush outline while transforming
+        }
+
+        if self.tools.uses_symmetry() {
+            let accent = ui.visuals().selection.bg_fill;
+            let canvas = (document.width(), document.height());
+            self.mirror.draw(
+                &painter,
+                rect,
+                &self.view,
+                canvas,
+                &self.tools.symmetry,
+                accent,
+            );
         }
 
         // Text being typed: a box around it, and a line where the next letter goes.
@@ -600,9 +690,13 @@ impl CanvasView {
                 wheel_notches,
                 i.zoom_delta(),
                 i.multi_touch(),
-                i.pointer.hover_pos().filter(|pos| rect.contains(*pos)),
+                i.pointer.hover_pos(),
             )
         });
+        // Over the canvas itself, not a window on top (a reference picture).
+        let canvas_layer = ui.layer_id();
+        let hover =
+            hover.filter(|pos| rect.contains(*pos) && ctx.layer_id_at(*pos) == Some(canvas_layer));
 
         if let Some(touch) = touch.filter(|touch| rect.contains(touch.center_pos)) {
             // Two or more fingers: pinch to zoom, twist to rotate, move to pan.

@@ -5,7 +5,10 @@
 //! - `document.json`: the canvas size, paper colour and each layer's
 //!   settings, as readable text;
 //! - `layers/<n>/<x>_<y>.png`: every painted tile of layer `n` (0 = bottom)
-//!   as a 256x256 PNG image.
+//!   as a 256x256 PNG image;
+//! - `references/<n>.png` (or `.jpg`): the pinned reference pictures, as
+//!   the files they came from (added in phase 5; older versions of the
+//!   app ignore them, as they ignore anything they don't know).
 //!
 //! Only painted tiles are stored, so saving is quick and files stay small.
 //! Tiles are stored exactly as the app keeps them in memory (8-bit,
@@ -25,6 +28,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use crate::document::{Document, MAX_CANVAS_SIDE};
 use crate::image::Image;
 use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
+use crate::reference::{Reference, ReferenceView};
 use crate::surface::{Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
 
@@ -59,6 +63,17 @@ struct Description {
     next_layer_number: u64,
     /// Bottom layer first.
     layers: Vec<LayerDescription>,
+    /// Pinned reference pictures (missing in older files: none).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<ReferenceDescription>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReferenceDescription {
+    name: String,
+    /// Its picture inside the archive.
+    file: String,
+    view: ReferenceView,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -157,6 +172,16 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
                 lock: layer.lock(),
             })
             .collect(),
+        references: document
+            .references()
+            .iter()
+            .enumerate()
+            .map(|(index, reference)| ReferenceDescription {
+                name: reference.name.clone(),
+                file: format!("references/{index}.{}", reference.extension()),
+                view: reference.view,
+            })
+            .collect(),
     };
     zip.start_file(DESCRIPTION_FILE, compressed)
         .map_err(write_error)?;
@@ -168,6 +193,10 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
             zip.start_file(name, as_is).map_err(write_error)?;
             encode_tile(tile, &mut zip)?;
         }
+    }
+    for (saved, reference) in description.references.iter().zip(document.references()) {
+        zip.start_file(&saved.file, as_is).map_err(write_error)?;
+        zip.write_all(reference.bytes()).map_err(write_error)?;
     }
     zip.finish().map_err(write_error)
 }
@@ -275,14 +304,31 @@ pub fn read_document<R: Read + Seek>(reader: R) -> Result<Document, FileError> {
     // Layer ids are given out fresh (1, 2, 3, ...), so the next one must
     // come after them, whatever the file says.
     let next_number = description.next_layer_number.max(layers.len() as u64 + 1);
-    Ok(Document::from_parts(
+    let mut document = Document::from_parts(
         description.width,
         description.height,
         Rgba8::new(r, g, b, 255),
         layers,
         description.active_layer,
         next_number,
-    ))
+    );
+
+    // 5. The reference pictures. One that can't be read is left out: the
+    //    painting matters more than what was pinned beside it.
+    for saved in description.references {
+        let mut bytes = Vec::new();
+        let read = archive
+            .by_name(&saved.file)
+            .ok()
+            .and_then(|mut entry| entry.read_to_end(&mut bytes).ok());
+        if read.is_some()
+            && let Ok(reference) = Reference::saved(&saved.name, bytes, saved.view)
+        {
+            let index = document.references().len();
+            document.insert_reference(index, reference);
+        }
+    }
+    Ok(document)
 }
 
 /// Makes sure the description makes sense before we use it.
@@ -506,6 +552,60 @@ mod tests {
             .unwrap();
         zip.write_all(text.as_bytes()).unwrap();
         zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn reference_pictures_are_saved_with_how_they_were_shown() {
+        use crate::reference::{Reference, ReferenceCommand};
+        let png = crate::reference::tests::two_colour_png();
+        let mut document = sample_document();
+        let mut reference = Reference::from_bytes("cat.png", png.clone()).unwrap();
+        reference.view.zoom = 3.5;
+        reference.view.opacity = 0.6;
+        reference.view.window = [100.0, 80.0, 300.0, 200.0];
+        let _ = ReferenceCommand::add(&mut document, reference);
+        let bytes = save_to_memory(&document);
+        let opened = read_document(Cursor::new(&bytes)).unwrap();
+        let back = &opened.references()[0];
+        assert_eq!(back.name, "cat.png");
+        assert_eq!(back.bytes(), &png[..], "the picture file as it was");
+        assert_eq!(back.view, document.references()[0].view);
+        assert_eq!(back.color_at(30.0, 3.0), Some([0, 0, 255]));
+        // A picture without references is written as before: no list.
+        let plain = save_to_memory(&sample_document());
+        let description = read_description(&plain);
+        assert!(!description.contains("references"), "{description}");
+        // A reference that can't be read is left out; the painting opens.
+        let mut broken = ZipWriter::new(Cursor::new(Vec::new()));
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let name = entry.name().unwrap().into_owned();
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content).unwrap();
+            if name.starts_with("references/") {
+                content = b"not a picture".to_vec();
+            }
+            broken
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            broken.write_all(&content).unwrap();
+        }
+        let broken = broken.finish().unwrap().into_inner();
+        let opened = read_document(Cursor::new(&broken)).unwrap();
+        assert!(opened.references().is_empty());
+        assert_eq!(opened.layers().len(), document.layers().len());
+    }
+
+    fn read_description(bytes: &[u8]) -> String {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
+        archive
+            .by_name(DESCRIPTION_FILE)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        text
     }
 
     #[test]

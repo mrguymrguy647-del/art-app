@@ -1857,3 +1857,45 @@ two false alarms. Every finding, before and after:
   100 ms with the plain brush: a grain lookup per pixel and dabs 20%
   closer. That stroke takes seconds to draw by hand, so the pen never
   waits; at the pencil's own size (5) it is a small fraction of that.
+
+## 84. Symmetry (phase 5, step 6)
+
+- **Mirrored dabs, one stroke.** `Stroke::mirrored(Symmetry)` stamps
+  each dab again across the lines, with the same random variation and a
+  mirrored angle. Because the copies belong to the same stroke they
+  share its coverage: where they overlap near a line they don't darken
+  each other, which separate mirrored strokes would. Undo is one step.
+- **Scripts get it too** (`"symmetry": {"x": .., "y": ..}` on `stroke`
+  and `erase`), so Export strokes replays the app's mirrored strokes
+  exactly. Inside a group the lines move and turn with the group.
+- **The lines live as fractions of the canvas**, so they stay in the
+  middle (or wherever they were put) on a new or resized picture. They
+  are dragged by a round handle at the line's top or left end (or where
+  the line comes into view), never by grabbing the line itself, which
+  would fight with painting next to it. The grab uses where the button
+  went down, not where the pointer is a frame later.
+- **Brush and eraser only**: a mirrored fill or gradient would be
+  surprising, and the lines are only shown for those two tools.
+- **Cost.** A four-way stroke costs four times a plain one (421 ms vs
+  110 ms for the 3600-pixel size-60 stroke on the 4000 x 3000 test).
+
+## 85. Reference pictures (phase 5, step 6)
+
+- **Kept in the document, not painted.** Each reference keeps the file's
+  bytes as they were (PNG or JPEG), the decoded picture and how it's
+  shown (zoom, centre, opacity, window). Scripts, exports and the
+  layers never see them.
+- **Saved in the `.quill` file** as `references/<n>.png|jpg` beside the
+  layers, with a `references` list in `document.json` written only when
+  there are some. The format version stays 1: older versions of the app
+  ignore both, as they ignore anything they don't know, so files keep
+  opening both ways. A reference that can't be read is left out rather
+  than refusing to open the painting.
+- **Pinning and removing are undo steps** that write no script (they
+  aren't changes to the painting, so Export strokes doesn't count them
+  as missing). Zooming and moving a reference aren't undo steps.
+- **Own windows, not a panel**, so a reference can sit right next to the
+  part being painted, and several can be open. Pictures over 4096
+  pixels are shown shrunk (graphics cards limit texture sizes); colours
+  are picked from the full picture. The wheel over a reference zooms the
+  reference, not the canvas.

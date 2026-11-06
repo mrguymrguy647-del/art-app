@@ -29,12 +29,13 @@ use quill_engine::layer::LayerId;
 use quill_engine::pen::InputKind;
 use quill_engine::script::record;
 use quill_engine::smoothing::Smoother;
-use quill_engine::stroke::{Stroke, StrokePoint};
+use quill_engine::stroke::{Stroke, StrokePoint, Symmetry};
 use quill_engine::view::{Point, View};
 
 use crate::color_panel::MAX_RECENT_COLORS;
 use crate::pen_input::InkEvent;
 use crate::select_tool::{SelectDrag, SelectShape};
+use crate::symmetry_view::SymmetrySettings;
 use crate::text_tool::{TextEdit, TextSettings, Typing};
 use quill_engine::selection::Combine;
 
@@ -176,6 +177,8 @@ struct ActiveStroke {
     seed: u64,
     /// The latest point from the pen or mouse (before smoothing).
     last_point: StrokePoint,
+    /// Mirror lines it's painted across too.
+    symmetry: Option<Symmetry>,
 }
 
 impl ActiveStroke {
@@ -206,7 +209,12 @@ impl ActiveStroke {
         if !tiles_before.is_empty() {
             history.push_recorded(
                 Box::new(TileCommand::new(self.name, self.layer, tiles_before)),
-                record::stroke(&name, &self.settings, &self.fed, Some(self.seed)),
+                {
+                    let mut commands =
+                        record::stroke(&name, &self.settings, &self.fed, Some(self.seed));
+                    record::mirror(&mut commands, self.symmetry.as_ref());
+                    commands
+                },
             );
         }
     }
@@ -222,6 +230,8 @@ pub struct PaintTool {
     pub eraser: BrushSettings,
     /// How much lines are steadied: 0 = not at all, 1 = the most.
     pub smoothing: f32,
+    /// Mirror lines for the brush and eraser.
+    pub symmetry: SymmetrySettings,
     pub fill: FillSettings,
     pub gradient: GradientSettings,
     pub text: TextSettings,
@@ -258,6 +268,7 @@ impl Default for PaintTool {
             brush: BrushSettings::default(),
             eraser: BrushSettings::eraser(),
             smoothing: 0.25,
+            symmetry: SymmetrySettings::default(),
             fill: FillSettings::default(),
             gradient: GradientSettings::default(),
             text: TextSettings::default(),
@@ -292,6 +303,11 @@ impl PaintTool {
             Tool::Eraser => &mut self.eraser,
             _ => &mut self.brush,
         }
+    }
+
+    /// True for the tools symmetry mirrors (the brush and the eraser).
+    pub fn uses_symmetry(&self) -> bool {
+        matches!(self.tool, Tool::Brush | Tool::Eraser)
     }
 
     /// True for the tools that work at one point (paint bucket, gradient)
@@ -761,6 +777,15 @@ impl PaintTool {
         }
     }
 
+    /// Takes a colour picked somewhere else (a reference picture) as the
+    /// brush colour; the Pick tool then hands over to the brush.
+    pub fn take_color(&mut self, color: [u8; 3]) {
+        self.brush.color = color;
+        if self.tool == Tool::Eyedropper {
+            self.tool = Tool::Brush;
+        }
+    }
+
     /// Takes the colour under `point` as the brush colour.
     fn pick(&mut self, document: &Document, point: StrokePoint) {
         if let Some(color) = document.sample_color(point.x, point.y) {
@@ -812,6 +837,7 @@ impl PaintTool {
         if settings.mode == BrushMode::Paint {
             self.remember_color(settings.color);
         }
+        let symmetry = self.symmetry.on_canvas(document.width(), document.height());
         let mut active = ActiveStroke {
             name: match settings.mode {
                 BrushMode::Paint => "Brush stroke",
@@ -822,6 +848,10 @@ impl PaintTool {
             stroke: {
                 let stroke = Stroke::new(settings, document.bounds())
                     .seeded(record::stroke_seed(1, self.strokes_started));
+                let stroke = match symmetry {
+                    Some(symmetry) => stroke.mirrored(symmetry),
+                    None => stroke,
+                };
                 // Inside the selection, if there is one.
                 match document.clip() {
                     Some(clip) => stroke.clipped(clip),
@@ -833,6 +863,7 @@ impl PaintTool {
             source,
             last_point: point,
             seed: self.strokes_started,
+            symmetry,
         };
         self.strokes_started += 1;
         active.add(document, point);
