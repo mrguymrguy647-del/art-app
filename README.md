@@ -26,6 +26,10 @@ and rotate the canvas, and save, open and export your pictures. The pen test is 
 `READ ME FIRST.txt` says the rest. To update, download the new zip and replace the folder: your
 pictures are wherever you saved them.
 
+**Making a release** (no terminal): raise `version` in `Cargo.toml` (open it on GitHub and click
+the pencil), then **Actions → Release → Run workflow** on `main`. A few minutes later the new zip is
+on the Releases page. If that version was already released, its zip is replaced.
+
 ## Build it yourself on Windows (no terminal needed)
 
 ### One-time setup

@@ -26,8 +26,9 @@ cargo build --release -p quill_cli
 
 The program is `target/release/quill`. It only depends on the painting engine (no window
 libraries), so it builds in under a minute on a plain Linux machine. Before the app was renamed
-Duck Quill it was `art-cli`, and that name still runs (with one note on stderr); scripts saying
-`"format": "artapp-script"` and `.artapp` pictures still work. Check that it works:
+Duck Quill it was `art-cli`, and that name still runs (with one note on stderr), but like `quill`
+it saves pictures as `.quill`, not `.artapp`; scripts saying `"format": "artapp-script"` and
+`.artapp` pictures still work. Check that it works:
 
 ```bash
 target/release/quill render examples/sunset.json --preview --out /tmp/try
