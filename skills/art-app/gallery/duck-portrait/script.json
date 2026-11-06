@@ -1,0 +1,78 @@
+{
+  "title": "Duck portrait",
+  "notes": [
+    "A 1024 x 1024 portrait of the duck, painted large: noise-filled feathers, clipping layers for shadow and",
+    "light, leaf tips stamped along the wing, bristle strokes for down, one outline with rim light around the",
+    "whole bird, a soft bokeh background, and a faint unifying pass."
+  ],
+  "seed": 21,
+  "palette": {
+    "bg_dark": "#2E3A5A", "bg_mid": "#5A7A9A", "bg_light": "#C8D8E0", "bokeh": "#FFF1C0",
+    "yellow": "#F2C230", "yellow_light": "#FFE070", "yellow_dark": "#C8901A", "wing": "#D9A21E", "wing_dark": "#A06E12",
+    "beak": "#E8892B", "beak_dark": "#B85E18", "ink": "#1A1410", "shade": "#5A3A60", "warm": "#FFF3DC", "eye_white": "#FFFFFF",
+    "mood_dark": "#1B2433", "mood_mid": "#C2651C", "mood_light": "#FFF3DC"
+  },
+  "commands": [
+    { "cmd": "canvas", "width": 1024, "height": 1024, "paper": "bg_mid" },
+
+    { "cmd": "layer", "name": "Background" },
+    { "cmd": "gradient", "kind": "radial", "from": [640, 420], "to": [640, 1200], "colors": ["bg_light", "bg_dark"] },
+    { "cmd": "rect", "x": 0, "y": 0, "width": 1024, "height": 1024, "opacity": 0.5,
+      "fill": { "noise": { "scale": 220, "detail": 2, "contrast": 0.9, "colors": ["transparent", "bg_light"], "seed": 2 } } },
+    { "cmd": "layer", "name": "Bokeh", "blend": "screen" },
+    { "cmd": "group", "name": "bokeh", "filter": { "blur": 10 }, "commands": [
+      { "cmd": "scatter", "area": { "rect": [0, 0, 1024, 700] }, "count": 40, "size": [30, 110], "color": "bokeh", "opacity": [0.08, 0.3], "hardness": 0.9, "seed": 3 } ] },
+    { "cmd": "snapshot", "name": "background" },
+
+    { "cmd": "layer", "name": "Body" },
+    { "cmd": "group", "name": "duck", "outline": { "color": "ink", "size": 7, "rim": { "color": "warm", "size": 11, "angle": -60 } },
+      "filter": { "shadow": { "offset": [0, 24], "blur": 30, "color": "#1A101070" } }, "commands": [
+      { "cmd": "polygon", "points": [[250, 640], [110, 540], [230, 720]], "jitter": 3,
+        "fill": { "noise": { "scale": 60, "detail": 3, "contrast": 1.1, "colors": ["yellow_dark", "yellow"], "seed": 4 } } },
+      { "cmd": "ellipse", "center": [480, 700], "radius": [280, 190],
+        "fill": { "noise": { "scale": 90, "detail": 3, "contrast": 1.0, "colors": ["yellow_dark", "yellow_light"], "seed": 5 } } },
+      { "cmd": "ellipse", "center": [640, 420], "radius": 170,
+        "fill": { "noise": { "scale": 90, "detail": 3, "contrast": 1.0, "colors": ["yellow", "yellow_light"], "seed": 6 } } },
+      { "cmd": "polygon", "points": [[770, 380], [960, 440], [770, 500]], "jitter": 2,
+        "fill": { "gradient": "linear", "from": [770, 380], "to": [770, 500], "colors": ["beak", "beak_dark"] } },
+      { "cmd": "ellipse", "center": [420, 700], "radius": [170, 95], "rotation": -14, "outline": "ink", "outline_size": 5,
+        "fill": { "noise": { "scale": 70, "detail": 3, "contrast": 1.1, "colors": ["wing_dark", "wing"], "seed": 7 } } } ] },
+    { "cmd": "snapshot", "name": "blocked in" },
+
+    { "cmd": "layer", "name": "Body shade", "clip": true, "blend": "multiply", "opacity": 0.45 },
+    { "cmd": "gradient", "from": [480, 620], "to": [480, 900], "colors": ["transparent", "shade"], "area": { "ellipse": [480, 700, 290, 200] } },
+    { "cmd": "gradient", "kind": "radial", "from": [660, 400], "to": [660, 700], "colors": ["transparent", "shade"], "area": { "circle": [640, 420, 175] }, "opacity": 0.5 },
+    { "cmd": "layer", "name": "Body light", "clip": true, "blend": "screen", "opacity": 0.6 },
+    { "cmd": "gradient", "kind": "radial", "from": [690, 330], "to": [690, 620], "colors": ["warm", "transparent"] },
+    { "cmd": "snapshot", "name": "shaded" },
+
+    { "cmd": "layer", "name": "Feathers", "clip": true },
+    { "cmd": "group", "mask": { "ellipse": [420, 700, 165, 92] }, "commands": [
+      { "cmd": "stamp", "tip": "leaf", "points": [[290, 770], [420, 790], [570, 750]], "spacing": 46, "size": [70, 90], "angle": [-28, -16], "colors": ["wing_dark", "wing"], "opacity": 0.9, "seed": 8 },
+      { "cmd": "stamp", "tip": "leaf", "points": [[300, 715], [430, 735], [570, 700]], "spacing": 44, "size": [66, 84], "angle": [-28, -16], "colors": ["wing", "yellow"], "opacity": 0.9, "seed": 9 },
+      { "cmd": "stamp", "tip": "leaf", "points": [[320, 662], [440, 680], [570, 650]], "spacing": 42, "size": [60, 78], "angle": [-30, -18], "colors": ["yellow", "yellow_light"], "opacity": 0.9, "seed": 10 } ] },
+    { "cmd": "brush", "tip": "bristle", "size": 34, "color": "yellow_light", "opacity": 0.55, "flow": 0.6, "spacing": 0.3, "dynamics": { "follow": true, "size": 0.3, "opacity": 0.5, "lightness": 0.1 } },
+    { "cmd": "path", "points": [[520, 330], [620, 300], [720, 330]], "seed": 11 },
+    { "cmd": "path", "points": [[560, 360], [640, 340], [740, 370]], "seed": 12 },
+    { "cmd": "path", "points": [[300, 600], [420, 560], [560, 580]], "seed": 13 },
+    { "cmd": "brush", "reset": true },
+    { "cmd": "hatch", "area": { "ellipse": [480, 760, 240, 110] }, "angle": -20, "spacing": 14, "size": 3, "color": "yellow_dark", "opacity": 0.25, "jitter": 3, "taper": 0.4 },
+    { "cmd": "snapshot", "name": "feathers" },
+
+    { "cmd": "layer", "name": "Face" },
+    { "cmd": "ellipse", "center": [700, 380], "radius": 30, "fill": "eye_white", "outline": "ink", "outline_size": 3 },
+    { "cmd": "ellipse", "center": [708, 384], "radius": 18, "fill": "ink" },
+    { "cmd": "ellipse", "center": [716, 374], "radius": 6, "fill": "eye_white" },
+    { "cmd": "path", "points": [[770, 440], [860, 436], [940, 440]], "size": 4, "color": "beak_dark", "taper": [0.2, 0.2] },
+    { "cmd": "group", "name": "cheek", "filter": { "blur": 14 }, "commands": [
+      { "cmd": "ellipse", "center": [620, 470], "radius": [60, 36], "fill": "#E8892B50" } ] },
+    { "cmd": "snapshot", "name": "face" },
+
+    { "cmd": "layer", "name": "Mood", "from": "below", "opacity": 0.2 },
+    { "cmd": "filter", "gradient_map": { "stops": [[0, "mood_dark"], [0.5, "mood_mid"], [1, "mood_light"]] } },
+    { "cmd": "layer", "name": "Vignette", "blend": "multiply", "opacity": 0.45 },
+    { "cmd": "gradient", "kind": "radial", "from": [512, 512], "to": [512, -300], "stops": [[0, "transparent"], [0.55, "transparent"], [1, "#1A1020"]] },
+    { "cmd": "layer", "name": "Paper", "blend": "multiply", "opacity": 0.18 },
+    { "cmd": "rect", "x": 0, "y": 0, "width": 1024, "height": 1024, "fill": { "texture": "paper" } }
+  ]
+}

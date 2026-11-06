@@ -236,6 +236,7 @@ name = "art_cli"
 version = "0.1.0"
 dependencies = [
  "art_engine",
+ "serde_json",
 ]
 
 [[package]]

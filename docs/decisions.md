@@ -1194,3 +1194,51 @@ put it:
 - Checked on a virtual screen: the panel fits, the toggles light up,
   and the tip list shows all seven tips.
 
+## 68. Proof of phase 3: the gallery (phase 3, step 10)
+
+Two finished pieces in `skills/art-app/gallery/`, each with its script,
+the painted picture, a process sheet and honest notes, listed in
+`index.json` with tags; a test plays both and refuses warnings.
+
+- **Sunset pond**: the simple pond (`examples/sunset-pond-simple.json`,
+  written here: no such file was on `main`, so the "before" is this
+  session's own plain version) repainted at 1920 x 1080 with noise
+  skies and water, clipped shading, a glowing sun with a masked
+  reflection, library parts, stamped grass, a drop shadow, a gradient
+  map and paper; a 48-frame loop drifts the water and clouds, bobs the
+  duck and sways the reeds.
+- **Duck portrait**: the duck painted large at 1024 x 1024: noise-filled
+  feathers, clipped shadow and light, stamped leaf feathers, bristle
+  down, one outline with rim light, bokeh, a mood pass.
+
+**Speed** (release build, this machine):
+- the pond still at 1920 x 1080 with 20 snapshots: 8.7 s; without
+  snapshots about 7 s; 48 preview frames (800 x 450) plus the GIF: 16 s;
+  the quarter-size GIF: 7 s. A full-size loop would be about 6 minutes.
+- the portrait at 1024 x 1024 with snapshots: 3.5 s.
+- costliest single things: the big blurs on the clouds and reflections
+  and the full-canvas noise fills; nothing is slow enough to change
+  how one works.
+
+**What was still hard, as the agent painting these:**
+- **Water.** Noise plus ripple strokes gives texture, not water; a
+  reflection is a blurred mirror. A real reflection breaks along the
+  ripples: a "displace by noise" filter, or a mask that is itself noise,
+  would get there in one line.
+- **Feathers and fur.** Stamped tips in rows look like rows. A stamp
+  that follows a flow field, or jitters each copy's position and angle
+  more freely with overlap, would read as plumage.
+- **Soft masks.** Masks are hard-edged shapes or silhouettes; a mask
+  from a gradient or noise (feathered edges, the haze band on the
+  hills) would remove several workarounds.
+- **Seeing small things.** Judging a 1920 x 1080 picture from an 800 px
+  preview hides the texture; `--crop` works but needs coordinates. A
+  "crop around a named part" would save a round trip each time.
+- **Palette clashes with includes** are refused loudly, which is right,
+  but a library part's colours then have to be known; a `use` could
+  take `colors` for all of them at once ("recolour with my palette").
+- **Animated keyframes inside the script's own commands** work (the
+  clock applies everywhere), but nothing in `check` says which of the
+  script's commands move; the motion summary covers only the animation's
+  own commands.
+

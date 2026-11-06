@@ -1,0 +1,34 @@
+{
+  "title": "Sunset pond, the simple way (before phase 3)",
+  "notes": "Flat fills, gradients, scatter and a symbol: what the tools could do before clipping, noise, brushes with tips and filters. The gallery piece sunset-pond repaints this scene with them.",
+  "seed": 4,
+  "palette": { "sky_top": "#2A2448", "sky_mid": "#C4583C", "sky_low": "#F7B25A", "sun": "#FFE9A8", "hill_far": "#6B4B6E", "hill": "#3A3A4E",
+               "water_dark": "#2E3A66", "water_light": "#D08A5A", "pad": "#3F6A3A", "reed": "#4A4A32", "yellow": "#F2C230", "beak": "#E8892B", "ink": "#1A1410" },
+  "commands": [
+    { "cmd": "canvas", "width": 1920, "height": 1080, "paper": "sky_low" },
+    { "cmd": "define", "name": "duck", "commands": [
+      { "cmd": "ellipse", "center": [0, 0], "radius": [60, 40], "fill": "yellow", "outline": "ink", "outline_size": 4 },
+      { "cmd": "ellipse", "center": [44, -56], "radius": 28, "fill": "yellow", "outline": "ink", "outline_size": 4 },
+      { "cmd": "polygon", "points": [[66, -64], [100, -52], [66, -42]], "fill": "beak" },
+      { "cmd": "ellipse", "center": [54, -64], "radius": 5, "fill": "ink" } ] },
+    { "cmd": "layer", "name": "Sky" },
+    { "cmd": "gradient", "from": [0, 0], "to": [0, 620], "stops": [[0, "sky_top"], [0.5, "sky_mid"], [1, "sky_low"]] },
+    { "cmd": "layer", "name": "Sun" },
+    { "cmd": "ellipse", "center": [1300, 500], "radius": 90, "fill": "sun" },
+    { "cmd": "layer", "name": "Hills" },
+    { "cmd": "ellipse", "center": [400, 760], "radius": [700, 200], "fill": "hill_far" },
+    { "cmd": "ellipse", "center": [1500, 780], "radius": [600, 180], "fill": "hill_far" },
+    { "cmd": "polygon", "points": [[0, 700], [300, 620], [700, 680], [1100, 600], [1500, 660], [1920, 640], [1920, 720], [0, 720]], "fill": "hill" },
+    { "cmd": "layer", "name": "Water" },
+    { "cmd": "gradient", "from": [0, 700], "to": [0, 1080], "colors": ["water_light", "water_dark"], "area": { "rect": [0, 700, 1920, 380] } },
+    { "cmd": "scatter", "area": { "rect": [0, 720, 1920, 340] }, "count": 120, "kind": "stroke", "length": [30, 120], "angle": [-3, 3], "size": [2, 5], "colors": ["sun", "water_light"], "opacity": [0.3, 0.7] },
+    { "cmd": "layer", "name": "Pads" },
+    { "cmd": "ellipse", "center": [500, 980], "radius": [90, 40], "fill": "pad" },
+    { "cmd": "ellipse", "center": [700, 1020], "radius": [70, 30], "fill": "pad" },
+    { "cmd": "layer", "name": "Reeds" },
+    { "cmd": "repeat", "count": 6, "step": { "translate": [40, 6] }, "commands": [
+      { "cmd": "line", "from": [160, 980], "to": [172, 760], "size": 6, "color": "reed", "taper": [0, 0.4] } ] },
+    { "cmd": "layer", "name": "Duck" },
+    { "cmd": "use", "name": "duck", "translate": [1000, 880] }
+  ]
+}

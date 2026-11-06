@@ -56,7 +56,7 @@ before opening any picture. Errors name the command: `command 8 (use "duck") > 2
 - Run backgrounds past the canvas edges; shapes that stop exactly at an edge leave slivers.
 - `gradient` without an `area` covers the whole layer.
 
-## Ready parts: the library
+## Ready parts: the library (finished pieces, with scripts and notes, in `skills/art-app/gallery/`)
 
 `skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck,
 each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
