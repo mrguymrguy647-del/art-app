@@ -120,14 +120,17 @@ mod tests {
 
     #[test]
     fn recent_files_are_newest_first_without_repeats() {
+        // (Full paths, as Windows and Linux each write them.)
+        let folder = std::env::temp_dir();
+        let path = |i: usize| folder.join(format!("{i}.quill"));
         let mut recent = Vec::new();
         for i in 0..12 {
-            add_recent(&mut recent, Path::new(&format!("/p/{i}.quill")));
+            add_recent(&mut recent, &path(i));
         }
-        add_recent(&mut recent, Path::new("/p/5.quill"));
+        add_recent(&mut recent, &path(5));
         assert_eq!(recent.len(), MAX_RECENT_FILES);
-        assert_eq!(recent[0], Path::new("/p/5.quill"));
-        assert_eq!(recent[1], Path::new("/p/11.quill"));
-        assert_eq!(recent.iter().filter(|p| p.ends_with("5.quill")).count(), 1);
+        assert_eq!(recent[0], path(5));
+        assert_eq!(recent[1], path(11));
+        assert_eq!(recent.iter().filter(|p| **p == path(5)).count(), 1);
     }
 }
