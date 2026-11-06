@@ -11,11 +11,10 @@ command and option: `docs/script-format.md`. Techniques: `docs/AI_GUIDE.md`.
 
 ## Setup (once)
 
-```bash
-cargo build --release -p quill_cli
-```
-
-Then use `target/release/quill` (below `quill`; `art-cli` still works). Start from `examples/two-ducks.json`.
+From the repository's root: `cargo build --release -p quill_cli` (a few minutes the first time). Then use
+`target/release/quill` (below `quill`; it isn't on the PATH, so give its full path from elsewhere; `art-cli` still
+works). Pictures go to `out/` in the folder you run it from (`--out <folder>` on render, views, export, atlas; check
+and critique only print). `quill <command> --help` lists one command's options. Start from `examples/two-ducks.json`.
 
 ## The process (after every stage: `quill views` and `quill critique`; fix before moving on)
 
@@ -66,7 +65,7 @@ the intent, the picture doesn't read yet. Numbers are warnings, never goals; the
 
 ## Ready parts: the library (finished pieces, with scripts and notes, in `skills/duck-quill/gallery/`)
 
-`skills/duck-quill/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, each a `define` with parameters and a preview (see its `README.md`). Include one, then `use` it:
+`skills/duck-quill/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, each a `define` with parameters and a preview (see its `README.md`). Include one (the path is from the script's own folder), then `use` it:
 
 ```json
 { "cmd": "include", "file": "../skills/duck-quill/library/tree.json" }

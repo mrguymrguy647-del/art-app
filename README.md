@@ -142,13 +142,17 @@ quill render examples/duck-animated.json --animation walk --frame-sheet --transp
 quill export examples/duck-animated.json --gif --mp4   # sprite sheet + JSON, GIFs and videos
 quill info out/sunset.quill                           # size, paper and layers of a picture
 quill info examples/sunset.json                        # ...and which commands painted each layer
+quill render ground.json --tile                        # a repeating background 2 x 2, and its seams
+quill atlas grass.json water.json --name ground        # tiles packed into ground.png + ground.json
+quill presets                                          # the brush presets a script can name
+quill render --help                                    # just that command's options
 ```
 
 After a render it prints a short summary: the canvas, the box around each layer's paint, the time
 taken, warnings, and the files saved. `check` paints without saving anything and lists more: every
 layer's box, every named group's and symbol `use`'s box, and warnings about things that are
 probably mistakes (drawn entirely off the canvas, empty layers, symbols never used, palette colours
-never used).
+never used, unevenly scaled groups).
 
 Build it with `cargo build --release -p quill_cli`; the program is `target/release/quill`
 (`quill.exe` on Windows). `quill help` lists every option.
@@ -198,6 +202,10 @@ duck-quill/
     │       │   ├── geometry.rs shapes, smooth curves, hatching, wobble
     │       │   └── record.rs   writes down what was painted, as script commands
     │       ├── smoothing.rs  steadier lines
+    │       ├── selection.rs  selections: shapes, combining, feather, cut / copy / paste
+    │       ├── presets.rs    brush presets (the built-in ones are in engine/presets/)
+    │       ├── reference.rs  reference pictures pinned beside a painting
+    │       ├── pixels.rs     pixel art: painting big and shrinking by the centre rule
     │       ├── history.rs    undo / redo
     │       ├── file.rs       saving and opening .quill files, PNG export
     │       ├── color.rs      RGB ↔ HSV, hex codes, colour on paper
@@ -209,6 +217,8 @@ duck-quill/
     │       ├── sheet.rs       contact sheets (every stage in one image)
     │       ├── grid.rs        the --grid: lines and coordinates over a picture
     │       ├── export.rs      export: sprite sheet + JSON, frames, GIF, MP4
+    │       ├── atlas.rs       atlas: tiles and sprites packed into one PNG + JSON
+    │       ├── tile.rs        render --tile: the picture 2 x 2 and where edges don't meet
     │       └── font.rs        a tiny pixel font for the labels
     └── app/              quill_app: Duck Quill itself, window and interface (egui)
         ├── build.rs      puts the brand icon into DuckQuill.exe (Windows only)
@@ -226,7 +236,14 @@ duck-quill/
             ├── transform_tool.rs the Layer menu: flip, and Transform with handles
             ├── brush_panel.rs the tool panel (tools, colour, settings)
             ├── color_panel.rs colour wheel, hex code, recent colours
-            ├── layers_panel.rs the Layers panel
+            ├── layers_panel.rs the Layers panel (thumbnails.rs: its little pictures)
+            ├── select_tool.rs the selection tools and marching ants (edit.rs: Edit and Select menus)
+            ├── presets_panel.rs the Presets grid: use, save, rename, import, export
+            ├── symmetry_view.rs symmetry: the mirror lines and their handles
+            ├── references_view.rs reference pictures in their own windows
+            ├── autosave.rs    copies of unsaved work, and restoring them after a crash
+            ├── settings.rs    what's remembered between runs (settings_folder.rs: where)
+            ├── shortcut_sheet.rs Help → Keyboard shortcuts
             ├── pen_input.rs   reads pressure/tilt from Windows Ink
             └── pen_test.rs    the pen test screen
 ```

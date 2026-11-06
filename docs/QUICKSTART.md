@@ -152,4 +152,7 @@ worked example are in [AI_GUIDE.md](AI_GUIDE.md), "Making it beautiful".
 
 - [script-format.md](script-format.md): every command and option, with examples.
 - [AI_GUIDE.md](AI_GUIDE.md): a workflow, techniques for skies, light and texture, common mistakes.
-- `quill help`: every option of `render`, `check` and `info`.
+- `quill help`: every command and option; `quill render --help` (any command): just that one.
+- Pencil, ink and other brushes by name: `{"cmd": "brush", "preset": "Ink pen"}` (`quill presets`
+  lists them). For games: `render --tile` for repeating backgrounds, `quill atlas` for tilesets
+  ([sprite-sheet-format.md](sprite-sheet-format.md)).
