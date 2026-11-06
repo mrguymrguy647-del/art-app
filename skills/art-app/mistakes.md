@@ -81,3 +81,23 @@ what the critique says after the fix.
 - **Fix:** a column of stamped horizontal dashes along the ripples, bright near the sun's
   reflection and sparser lower down.
 - **After:** A radial pool of light at the waterline and three scatters of short horizontal strokes, dense near the sun and sparse lower down; the duck sits on the broken light. The blind reader saw "a glittering reflection trail".
+
+## The clip-art pencil copy (face door)
+
+![before](mistakes/clipart-pencil-before.png)
+
+No after picture yet. Copying the person's own pencil drawing of a door with a face on it
+(`references/sketchbook/face-door.jpg`); rated 0/5. The close-up is the door half: flat grey
+frames with no bevel and one line weight everywhere.
+
+- **Wrong:** filled vector shapes with an outline and a little hatching on top: a flat black
+  mask with even drips, doll eyes with tiny pupils, a thin pale nose 60 px too long, lips as
+  flat ovals, panel frames as flat grey bands with no bevel, every line the same weight.
+- **Critique:** `values: 2 value groups when squinted (light 12%, white 83%)` against the
+  reference's 3 (mid 16%, light 66%, white 15%); `compare` value structure 58 of 100;
+  `layer "Face base" is blotchy inside`.
+- **Fix:** overlay on the reference first and fix proportions; then build every dark from
+  layered directed strokes (dense scribble for the mask, curved hatching that follows the nose
+  and lips, bevel shading that differs per side of each frame); vary line weight: heavy where
+  the hand pressed, light construction lines elsewhere.
+

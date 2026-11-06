@@ -1,0 +1,110 @@
+{
+ "about": "The user's own pencil, ink and coloured-pencil drawings (Steve the normal's sketchbook), photographed on paper. Kept for their technique: line weight, directional shading, pose, energy marks, humour. Most are fan art of other people's characters: agents study how they are drawn and never reproduce the characters. These are not public domain or CC0, so they live here, apart from the masterworks index.",
+ "rules": [
+  "Learn the technique, never redraw the character.",
+  "Do not ship these pictures, or copies of them, in an app, game or video."
+ ],
+ "pictures": [
+  {
+   "file": "yellow-face.jpg",
+   "title": "Squashed yellow face",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "The user's own original drawing.",
+   "tags": [
+    "coloured pencil",
+    "outline + fill",
+    "scribble shading",
+    "expression"
+   ],
+   "technique": "A bold grey contour round a squashed face, yellow coloured pencil laid in loose directed strokes, the dark features scribbled in densely. The outline does the drawing; the colour stays loose inside it."
+  },
+  {
+   "file": "face-door.jpg",
+   "title": "The face door",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "The user's own original drawing. (the face may be a known cartoon character's; if so, treat it as fan art.)",
+   "tags": [
+    "pencil",
+    "texture",
+    "perspective",
+    "contrast"
+   ],
+   "technique": "Speckled stucco texture against flat door panels; the darkest dark (the mask) right next to the whitest white (the eyes) is the focal point. Panel frames shaded so they read as recessed."
+  },
+  {
+   "file": "prince-profile.jpg",
+   "title": "Upward profile",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "Fan art: the character belongs to its owners. Study the technique; never redraw the character.",
+   "tags": [
+    "pencil",
+    "anime",
+    "pose",
+    "hair",
+    "directional shading"
+   ],
+   "technique": "Chin up, the whole figure leans back: attitude from one tilt. Hair spikes shaded along their length, muscles shaded as one block on the side away from the light, clean contour on top."
+  },
+  {
+   "file": "fighter-crouch.jpg",
+   "title": "Crouching fighter with an energy ball",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "Fan art: the character belongs to its owners. Study the technique; never redraw the character.",
+   "tags": [
+    "pencil",
+    "anime",
+    "foreshortening",
+    "action",
+    "energy"
+   ],
+   "technique": "A crouch with the fist pushed at the viewer (foreshortening), gritted teeth, cloth folds hatched along the pull of the fabric, radiating marks round the glowing ball."
+  },
+  {
+   "file": "golden-hair-mashup.jpg",
+   "title": "Golden-hair mashup",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "Fan art: the character belongs to its owners. Study the technique; never redraw the character.",
+   "tags": [
+    "pencil",
+    "coloured pencil",
+    "humour",
+    "mashup",
+    "silhouette"
+   ],
+   "technique": "Comedy from combining two worlds: a grumpy tired face under huge spiky golden hair. The hair gives a big jagged silhouette round a thin, droopy body: contrast of shapes."
+  },
+  {
+   "file": "pen-hero-head.jpg",
+   "title": "Ink head with pencil speed lines",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "Fan art: the character belongs to its owners. Study the technique; never redraw the character.",
+   "tags": [
+    "ink",
+    "pencil",
+    "line weight",
+    "speed lines"
+   ],
+   "technique": "Heavy ink contour and solid black hair in front, light diagonal pencil hatching behind: two line weights separate subject from background and add speed."
+  },
+  {
+   "file": "finger-orb.jpg",
+   "title": "Finger and orb",
+   "author": "Steve the normal (the user)",
+   "licence": "the user's own drawing; all rights reserved",
+   "note": "Fan art: the character belongs to its owners. Study the technique; never redraw the character.",
+   "tags": [
+    "pencil",
+    "hands",
+    "story",
+    "energy"
+   ],
+   "technique": "A small story: a smug face, a raised finger, a glowing orb above it with radiating marks. The hand is drawn big and close, the face further back."
+  }
+ ]
+}

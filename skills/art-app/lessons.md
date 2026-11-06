@@ -89,3 +89,15 @@ A lesson is retired the same way. The first lessons below come from phase 3's no
     focal point or mood, the picture does not read yet. (`gallery/*/blind-read.md`.)
 30. Write honest notes: what each tool did and what is still weak; the next painter learns
     from the weak list. (`gallery/sunset-pond/notes.md`.)
+31. When copying a reference, overlay your render on it (`art-cli compare`, or a 50% blend)
+    before showing anyone; guessing coordinates from one look gets the nose 60 px too long and
+    the knob in the wrong place. (The face-door copy, rated 0/5.)
+32. A pencil drawing is built from strokes: darkness is stroke density and pressure, never a
+    flat filled shape with hatching laid on top. Random jitter on a smooth line is not a hand;
+    a hand varies weight, overshoots corners and re-traces. (The face-door copy.)
+33. Copy, don't restyle: a ragged scribbled edge copied as neat even drips, or puffy shaded
+    lips copied as flat ovals, changes the character. (The face-door copy.)
+34. Match the value structure first: squint at both with `art-cli values`; a copy that is 82%
+    white against a reference with real mids has lost the drawing before any detail.
+    (The face-door copy.)
+

@@ -17,3 +17,9 @@ art-cli palette skills/art-app/references/vermeer-girl-with-a-pearl-earring.jpg 
 art-cli values skills/art-app/references/friedrich-wanderer.jpg
 art-cli compare out/my-wave.png skills/art-app/references/hokusai-great-wave.jpg
 ```
+
+## The sketchbook
+
+`sketchbook/` holds the user's own drawings: line weight, directional shading, pose, energy
+marks and humour. They are not public domain or CC0, and most are fan art, so they have their
+own index and rules: learn the technique, never redraw the character.

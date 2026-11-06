@@ -167,6 +167,8 @@ Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k"
 - Learn: `skills/art-app/lessons.md` (rules, each with the piece that shows it), `skills/art-app/mistakes.md`
   (before pictures and the critique line that catches each), `skills/art-app/styles/`, `skills/art-app/exercises/`,
   `skills/art-app/references/` (public domain or CC0 only; `art-cli palette`, `art-cli values`, `art-cli compare`).
+  `skills/art-app/references/sketchbook/`: the user's own drawings, for line weight, directional shading, pose
+  and energy marks (learn the technique, never redraw their fan-art characters).
 - Finished: `art-cli gallery add piece.json --name name` (folder, sheets, critique, blind-read skeleton, notes,
   index tags); `art-cli gallery rate name 4 "why"` is the person's rating, and it outranks every number.
 - `art-cli check picture.json --detail` lists the groups and uses inside others; `art-cli info picture.json` gives each layer's box.
