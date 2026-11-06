@@ -1751,3 +1751,49 @@ two false alarms. Every finding, before and after:
   shipped in an app.
 - **Unsigned for now:** `READ ME FIRST.txt` explains SmartScreen's "Run
   anyway".
+
+## 81. Selections (phase 5, step 3)
+
+- **One code path for the app and scripts.** A selection is the same
+  8-bit `Mask` a script's group `mask` already used, so soft edges come
+  free and every painting job takes one clip. The app makes each change
+  as a `select` command and runs it with `selection::run`; the script
+  player reads the command with the same `Request::read` and combines with
+  the same `selection::apply` (it only builds the shape itself, because a
+  script's shape takes parameters and is placed by its groups). A test
+  replays the app's selections as a script and compares the pictures.
+- **Undoable, not saved.** Each change is an undo step (the owner's
+  choice), recorded as a `select` command for Export strokes. The
+  selection lives on the document but not in the file.
+- **What obeys it:** brush, eraser, paint bucket, gradient, text, the
+  Filters window, Clear layer (which then clears only the selection), and
+  in scripts every painting command. The script `filter` command obeys a
+  `select` selection but still not a group's mask, so old scripts paint
+  the same pixels.
+- **An empty selection is no selection**, in the app and in scripts
+  (with a warning there): subtracting everything deselects.
+- **Alt means two things.** With a selection tool it takes away from the
+  selection; with every other tool it still picks a colour.
+- **Marching ants** are the selection's edge along pixel sides (from half
+  selected up), joined into rings once per selection change and drawn as
+  white with black dashes that move: visible on any colour, and smooth
+  around curves.
+- **Copy, cut, paste.** Copy takes the selected pixels (each as much as
+  it's selected) and puts them on the Windows clipboard too, with
+  `arboard`, which egui already used for text. Paste goes onto a new layer
+  at the place it was copied from; a picture from another program goes in
+  the middle of the view. Ctrl+X, C and V arrive from egui as Cut, Copy
+  and Paste events, not keys, so the shortcut reader takes those.
+- **Moving a selection** lifts its pixels onto a temporary layer and uses
+  the existing transform tool; Enter puts them down, moves the selection's
+  mask the same way, and removes the temporary layer, all one undo step.
+- **Not everything is a script.** Paste and moving a selection have no
+  script command. They're marked when recorded (`push_unrecordable`), and
+  Export strokes says in its notes how many changes are missing, instead
+  of silently replaying a different picture.
+- **Speed, 4000 x 3000 with 20 layers** (`tests/big_canvas.rs`, release):
+  a long size-60 stroke 96 ms without a selection and 88 ms inside a
+  feathered ellipse (no measurable cost); a blur 549 ms plain and 681 ms
+  inside a selection (the mixing pass); making a canvas-sized ellipse
+  selection 190 ms, feathering it 150 ms, its outline 48 ms: once per
+  change, not per stroke.

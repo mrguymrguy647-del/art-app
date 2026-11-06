@@ -148,6 +148,9 @@ impl Command for CommandGroup {
 struct Step {
     command: Box<dyn Command>,
     script: Vec<ScriptCommand>,
+    /// A change scripts can't make (a paste, moving a selection): Export
+    /// strokes says it's missing.
+    unrecordable: bool,
 }
 
 /// The undo and redo lists.
@@ -159,6 +162,8 @@ pub struct History {
     /// The script of steps that were forgotten to save memory: they can't
     /// be undone any more, but they're still part of the picture.
     settled: Vec<ScriptCommand>,
+    /// How many of the settled steps had no script command.
+    unrecordable_settled: usize,
     memory_limit: usize,
     /// How many undo steps there were when the picture was last saved.
     /// `None` if that point can't be reached any more (e.g. you undid past
@@ -179,6 +184,7 @@ impl History {
             undo: VecDeque::new(),
             redo: Vec::new(),
             settled: Vec::new(),
+            unrecordable_settled: 0,
             memory_limit,
             saved_at: Some(0),
         }
@@ -209,13 +215,18 @@ impl History {
             self.saved_at = None;
         }
         self.redo.clear();
-        self.undo.push_back(Step { command, script });
+        self.undo.push_back(Step {
+            command,
+            script,
+            unrecordable: false,
+        });
 
         // Too much memory? Forget the oldest changes, but always keep the
         // newest one, however big it is.
         while self.memory_used() > self.memory_limit && self.undo.len() > 1 {
             if let Some(oldest) = self.undo.pop_front() {
                 self.settled.extend(oldest.script);
+                self.unrecordable_settled += usize::from(oldest.unrecordable);
             }
             // Everything shifted down by one step.
             self.saved_at = self.saved_at.and_then(|saved| saved.checked_sub(1));
@@ -265,6 +276,21 @@ impl History {
             .chain(&self.redo)
             .map(|step| step.command.memory_size())
             .sum()
+    }
+
+    /// Records a change that has no script command (a paste, moving a
+    /// selection): it undoes like any other, and Export strokes knows it's
+    /// missing from the script.
+    pub fn push_unrecordable(&mut self, command: Box<dyn Command>) {
+        self.push(command);
+        if let Some(step) = self.undo.back_mut() {
+            step.unrecordable = true;
+        }
+    }
+
+    /// How many changes still in the picture have no script command.
+    pub fn unrecordable_steps(&self) -> usize {
+        self.unrecordable_settled + self.undo.iter().filter(|s| s.unrecordable).count()
     }
 
     /// Everything still in the picture, as painting-script commands,

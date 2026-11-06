@@ -627,10 +627,20 @@ impl Files {
         if recorded.is_empty() {
             return None;
         }
-        let notes = self
+        let mut notes: Vec<String> = self
             .opened_from
-            .as_ref()
-            .map(|name| format!("Painted on top of {name}, as it was when it was opened."));
+            .iter()
+            .map(|name| format!("Painted on top of {name}, as it was when it was opened."))
+            .collect();
+        // Pastes and moved selections have no script command.
+        let missing = history.unrecordable_steps();
+        if missing > 0 {
+            notes.push(format!(
+                "{missing} change(s) can't be written as script commands and are missing here: \
+                 pasting, and moving a selection."
+            ));
+        }
+        let notes = (!notes.is_empty()).then(|| notes.join(" "));
         Some(record::script(
             document.width(),
             document.height(),

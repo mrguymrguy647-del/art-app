@@ -11,6 +11,7 @@ mod animation_view;
 mod brush_panel;
 mod canvas_view;
 mod color_panel;
+mod edit;
 mod files;
 mod filter_tool;
 mod layers_panel;
@@ -18,6 +19,7 @@ mod paint_tool;
 mod pen_input;
 mod pen_test;
 mod playback;
+mod select_tool;
 mod text_tool;
 mod theme;
 mod transform_tool;
@@ -318,18 +320,35 @@ impl eframe::App for DuckQuill {
 
         // While a small window like "Save changes?" is open, or a script
         // is playing, shortcuts would act on the picture, so they're ignored.
-        let (mut undo, mut redo, mut file_action) =
-            if self.files.dialog_open() || self.filters.dialog_open() || busy {
-                (false, false, None)
-            } else {
-                let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
-                (undo, redo, self.files.shortcuts(ui.ctx()))
-            };
+        let dialog =
+            self.files.dialog_open() || self.filters.dialog_open() || self.canvas.dialog_open();
+        let (mut undo, mut redo, mut file_action) = if dialog || busy {
+            (false, false, None)
+        } else {
+            let (undo, redo) = self.undo_redo_shortcuts(ui.ctx());
+            (undo, redo, self.files.shortcuts(ui.ctx()))
+        };
+        // Edit and Select shortcuts: on the canvas, not while typing text.
+        let mut edit_action = if dialog
+            || busy
+            || watching
+            || self.screen != Screen::Canvas
+            || self.canvas.is_typing()
+        {
+            None
+        } else {
+            edit::shortcuts(ui.ctx())
+        };
 
         let mut layer_action = None;
         egui::Panel::top("top_bar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 file_action = file_action.or(self.files.menu(ui, busy));
+                let not_here = busy || watching || self.screen != Screen::Canvas;
+                let selected = self.document.selection().is_some();
+                edit_action = edit_action
+                    .or(edit::edit_menu(ui, not_here, selected))
+                    .or(edit::select_menu(ui, not_here, selected));
                 layer_action = layer_menu(ui, busy || self.screen != Screen::Canvas);
                 self.filters.menu(ui, busy || self.screen != Screen::Canvas);
                 ui.menu_button("View", theme::theme_menu);
@@ -372,7 +391,8 @@ impl eframe::App for DuckQuill {
 
         // Text being typed is finished first (it becomes an undo step, and
         // what's saved or played includes it).
-        if undo || redo || file_action.is_some() || layer_action.is_some() {
+        if undo || redo || file_action.is_some() || layer_action.is_some() || edit_action.is_some()
+        {
             self.canvas
                 .finish_typing(&mut self.document, &mut self.history);
         }
@@ -384,6 +404,10 @@ impl eframe::App for DuckQuill {
             if let Some(action) = layer_action {
                 self.canvas
                     .layer_action(action, &mut self.document, &mut self.history);
+            }
+            if let Some(action) = edit_action {
+                self.canvas
+                    .edit_action(action, &mut self.document, &mut self.history);
             }
             if undo {
                 self.history.undo(&mut self.document);

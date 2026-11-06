@@ -15,8 +15,7 @@ command and option: `docs/script-format.md`. Techniques: `docs/AI_GUIDE.md`.
 cargo build --release -p quill_cli
 ```
 
-Then use `target/release/quill` (below just `quill`; `art-cli`, its old name, still works). Start new
-scripts from `examples/two-ducks.json`.
+Then use `target/release/quill` (below `quill`; `art-cli` still works). Start from `examples/two-ducks.json`.
 
 ## The process (after every stage: `quill views` and `quill critique`; fix before moving on)
 
@@ -190,7 +189,8 @@ Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k"
   layer with a `gradient_map` at 0.3 to unify.
 - One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use` (no seams),
   `"rim": {...}` inside it for rim light. Shading inside a shape: a `"clip": true` layer above it;
-  `"lock": true` recolours a layer without changing its edges; a group's `mask` limits its paint.
+  `"lock": true` recolours a layer without changing its edges; a group's `mask` limits its paint, and so does
+  `{"cmd": "select", "rect": [x, y, w, h]}` for every command after it (`"none": true` ends it).
 - `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it. The worked example:
   `docs/AI_GUIDE.md`, "Making it beautiful".
 

@@ -8,6 +8,7 @@ use quill_engine::text::Align;
 
 use crate::color_panel::ColorPicker;
 use crate::paint_tool::{GradientEnd, PaintTool, Tool};
+use crate::select_tool::SelectShape;
 
 /// The paint bucket can grow its fill by at most this many pixels.
 const MAX_FILL_GROW: u32 = 8;
@@ -41,6 +42,17 @@ pub fn brush_panel(
         ui.selectable_value(&mut tools.tool, Tool::Text, "Text (T)")
             .on_hover_text("Click on the canvas and type");
     });
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Select:");
+        for shape in SelectShape::ALL {
+            let name = shape.label().split(' ').next().unwrap_or_default();
+            ui.selectable_value(&mut tools.tool, Tool::Select(shape), name)
+                .on_hover_text(format!(
+                    "{}. Shift adds to the selection, Alt takes away from it.",
+                    shape.label()
+                ));
+        }
+    });
     ui.add_space(4.0);
 
     // Scrolls if the window is too short to show everything.
@@ -54,12 +66,17 @@ pub fn brush_panel(
             Tool::Fill => fill_settings(ui, tools),
             Tool::Gradient => gradient_settings(ui, tools),
             Tool::Text => text_settings(ui, tools),
+            Tool::Select(shape) => select_help(ui, shape),
             _ => brush_settings(ui, tools),
         }
 
         ui.separator();
         // Clearing can be undone like any other change.
-        if ui.button("Clear layer").clicked() {
+        if ui
+            .button("Clear layer")
+            .on_hover_text("With a selection, only what's selected")
+            .clicked()
+        {
             actions.clear_layer = true;
         }
 
@@ -71,6 +88,23 @@ pub fn brush_panel(
     });
 
     actions
+}
+
+/// What the selection tools do: they have no settings of their own.
+fn select_help(ui: &mut egui::Ui, shape: SelectShape) {
+    ui.label(match shape {
+        SelectShape::Rect | SelectShape::Ellipse => "Drag a box. A click drops the selection.",
+        SelectShape::Lasso => "Draw around what you want.",
+        SelectShape::Polygon => {
+            "Click corner after corner. Double-click, Enter, or click the first corner to \
+             close it; Backspace takes a corner back, Esc gives up."
+        }
+    });
+    ui.add_space(4.0);
+    ui.weak(
+        "Shift adds, Alt takes away. While something is selected, painting stays inside it. \
+         The Select and Edit menus have the rest.",
+    );
 }
 
 /// Size, opacity, softness and pen pressure: for the brush and eraser.

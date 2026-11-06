@@ -17,6 +17,9 @@ quill_engine.workspace = true
 eframe = "0.37"
 # The standard Windows "Open" and "Save As" windows.
 rfd = "0.17"
+# The Windows clipboard, for copying and pasting pictures with other programs.
+# (egui already uses it for text.)
+arboard = { version = "3", default-features = false, features = ["image-data"] }
 
 # Windows-only: lets us read pen pressure, tilt and rotation from Windows Ink.
 [target.'cfg(windows)'.dependencies]

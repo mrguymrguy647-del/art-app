@@ -20,12 +20,14 @@ use eframe::egui::{
     TextureHandle, TextureOptions, pos2, vec2,
 };
 use quill_engine::document::{Background, Document};
-use quill_engine::history::{History, TileCommand};
+use quill_engine::history::{Command, CommandGroup, History, TileCommand};
 use quill_engine::image::Image;
 use quill_engine::layer::LayerId;
 use quill_engine::layer_transform::transform_layer;
 use quill_engine::pen::InputKind;
 use quill_engine::script::{TransformLayerCmd, record};
+use quill_engine::selection::{self, Selection, SelectionCommand};
+use quill_engine::stroke::TilesBefore;
 use quill_engine::surface::PixelRect;
 use quill_engine::transform::Transform;
 use quill_engine::view::{Point, View};
@@ -180,7 +182,19 @@ struct Drag {
 /// top left, top right, bottom right, bottom left.
 const CORNER_SIDES: [(f32, f32); 4] = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
 
-/// A transform in progress (Layer → Transform…).
+/// What's selected, lifted onto a layer of its own to be moved: put down
+/// on the layer it came from on Apply, put back as it was on Cancel.
+struct Lift {
+    /// The layer the pixels came from.
+    source: LayerId,
+    /// The temporary layer holding them while they're moved.
+    floating: LayerId,
+    /// The source layer's tiles before the pixels were lifted off it.
+    source_before: TilesBefore,
+    selection: Selection,
+}
+
+/// A transform in progress (Layer → Transform…, or Edit → Transform selection…).
 pub struct LayerTransform {
     layer: LayerId,
     /// What's on the layer: the box that's moved around.
@@ -193,6 +207,8 @@ pub struct LayerTransform {
     /// The pen or mouse button is down.
     pointer_down: bool,
     last_ink: Option<Instant>,
+    /// Set when what's moved is the selection, not the whole layer.
+    lift: Option<Lift>,
 }
 
 impl LayerTransform {
@@ -222,7 +238,43 @@ impl LayerTransform {
             texture: None,
             pointer_down: false,
             last_ink: None,
+            lift: None,
         })
+    }
+
+    /// Starts transforming what's selected on the selected layer: the
+    /// pixels are lifted onto a temporary layer, which is then moved like
+    /// any layer. An `Err` explains why not.
+    pub fn start_selection(document: &mut Document) -> Result<Self, &'static str> {
+        let Some(selection) = document.selection().cloned() else {
+            return Err("Nothing is selected.");
+        };
+        let source = document.active_id();
+        if !document.active_layer().visible() {
+            return Err("This layer is hidden. Show it in the Layers panel to transform it.");
+        }
+        let Some(clip) = selection::copy(&document.active_layer().surface, &selection) else {
+            return Err("There's nothing selected on this layer to transform.");
+        };
+        let source_before = selection::delete_inside(document, source, &selection);
+        let index = document.layer_index(source).map_or(0, |i| i + 1);
+        let mut layer = document.new_layer();
+        let mut props = layer.props();
+        props.name = "Moving selection".to_owned();
+        layer.set_props(props);
+        let floating = layer.id();
+        document.insert_layer(index, layer);
+        document.set_active(floating);
+        let limits = document.bounds();
+        selection::paste_into(&mut document.active_layer_mut().surface, &clip, limits);
+        let mut transform = LayerTransform::start(document)?;
+        transform.lift = Some(Lift {
+            source,
+            floating,
+            source_before,
+            selection,
+        });
+        Ok(transform)
     }
 
     /// The layer being transformed (the canvas leaves it out meanwhile).
@@ -382,15 +434,50 @@ impl LayerTransform {
 
     /// Paints the layer where it's been put, as one undo step (recorded
     /// for "Export strokes").
-    pub fn apply(self, document: &mut Document, history: &mut History) {
+    pub fn apply(mut self, document: &mut Document, history: &mut History) {
         let command = self.command();
         self.show_layer_again(document);
-        apply_command(document, history, self.layer, &command, "Transform layer");
+        let Some(lift) = self.lift.take() else {
+            apply_command(document, history, self.layer, &command, "Transform layer");
+            return;
+        };
+        // Move the lifted pixels and the selection's outline together,
+        // put the pixels down where they came from, and drop the
+        // temporary layer: one undo step for all of it.
+        let name = "Transform selection";
+        let moved = match command.transform() {
+            Ok(transform) => {
+                transform_layer(document, lift.floating, transform);
+                selection::transformed(&lift.selection, transform, document.bounds())
+            }
+            Err(_) => Some(lift.selection.clone()),
+        };
+        let dropped = selection::drop_onto(document, lift.floating, lift.source);
+        let mut before = lift.source_before;
+        for (coord, tile) in dropped {
+            // The tile as it was before the lift, if the lift changed it.
+            before.entry(coord).or_insert(tile);
+        }
+        document.remove_layer(lift.floating);
+        document.set_active(lift.source);
+        let mut steps: Vec<Box<dyn Command>> = Vec::new();
+        if !before.is_empty() {
+            steps.push(Box::new(TileCommand::new(name, lift.source, before)));
+        }
+        steps.push(Box::new(SelectionCommand::set(document, moved, name)));
+        // Scripts have no command for this; Export strokes says so.
+        history.push_unrecordable(Box::new(CommandGroup::new(name, steps)));
     }
 
-    /// Leaves the layer as it was.
-    pub fn cancel(self, document: &mut Document) {
+    /// Leaves the layer (and a lifted selection) as it was.
+    pub fn cancel(mut self, document: &mut Document) {
         self.show_layer_again(document);
+        if let Some(lift) = self.lift.take() {
+            document.remove_layer(lift.floating);
+            // Putting the old tiles back is what undo does.
+            TileCommand::new("", lift.source, lift.source_before).undo(document);
+            document.set_active(lift.source);
+        }
     }
 
     fn show_layer_again(&self, document: &mut Document) {

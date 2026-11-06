@@ -2647,6 +2647,7 @@ dependencies = [
 name = "quill_app"
 version = "0.5.0"
 dependencies = [
+ "arboard",
  "eframe",
  "quill_engine",
  "rfd",

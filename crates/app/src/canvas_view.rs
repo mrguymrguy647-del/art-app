@@ -31,9 +31,11 @@ use quill_engine::view::{Point, View};
 
 use crate::brush_panel::brush_panel;
 use crate::color_panel::ColorPicker;
+use crate::edit::{self, Clipboard, EditAction, FeatherWindow};
 use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
+use crate::select_tool::{self, Ants, SelectShape};
 use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
@@ -105,6 +107,12 @@ pub struct CanvasView {
     /// A see-through picture (an onion skin) shown on the paper, under the
     /// picture's layers: blended into every tile's texture.
     overlay: Option<Image>,
+    /// The selection's outline, ready to draw.
+    ants: Ants,
+    /// What Edit → Copy took, for Paste.
+    clipboard: Clipboard,
+    /// Select → Feather… while its window is open.
+    feather: Option<FeatherWindow>,
 }
 
 impl Default for CanvasView {
@@ -125,6 +133,9 @@ impl Default for CanvasView {
             notice: None,
             brush_panel_rect: None,
             overlay: None,
+            ants: Ants::default(),
+            clipboard: Clipboard::default(),
+            feather: None,
         }
     }
 }
@@ -174,7 +185,10 @@ impl CanvasView {
                         brush_panel(ui, &mut self.tools, &mut self.colors)
                     })
                     .inner;
-                if actions.clear_layer {
+                if actions.clear_layer && document.selection().is_some() {
+                    self.tools.finish_typing(document, history);
+                    edit::delete_selected(document, history);
+                } else if actions.clear_layer {
                     self.tools.finish_typing(document, history);
                     let layer = document.active_id();
                     let name = document.active_layer().name().to_owned();
@@ -197,6 +211,20 @@ impl CanvasView {
             });
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
+        if let Some(window) = &mut self.feather {
+            let mut close = false;
+            if let Some(pixels) = window.ui(ui.ctx(), &mut close) {
+                edit::feather(document, history, pixels);
+            }
+            if close {
+                self.feather = None;
+            }
+        }
+    }
+
+    /// True while one of the canvas's small windows (Feather) is open.
+    pub fn dialog_open(&self) -> bool {
+        self.feather.is_some()
     }
 
     /// Forgets the previous picture's textures and view, for when a new
@@ -297,10 +325,75 @@ impl CanvasView {
                     self.show_notice("There's nothing on this layer to flip.");
                 }
             }
+            // With a selection, Transform moves what's selected.
+            LayerAction::Transform if document.selection().is_some() => {
+                self.edit_action(EditAction::Transform, document, history);
+            }
             LayerAction::Transform => match LayerTransform::start(document) {
                 Ok(transform) => self.transform = Some(transform),
                 Err(problem) => self.show_notice(problem),
             },
+        }
+    }
+
+    /// True while text is being typed: the keys are for the text.
+    pub fn is_typing(&self) -> bool {
+        self.tools.is_typing()
+    }
+
+    /// Does what was chosen in the Edit or Select menu.
+    pub fn edit_action(
+        &mut self,
+        action: EditAction,
+        document: &mut Document,
+        history: &mut History,
+    ) {
+        match action {
+            EditAction::Cut => {
+                if document.selection().is_none() {
+                    self.show_notice("Select something first, then cut it.");
+                } else if self.clipboard.copy(document) {
+                    edit::delete_selected(document, history);
+                } else {
+                    self.show_notice("There's nothing selected on this layer to cut.");
+                }
+            }
+            EditAction::Copy => {
+                if self.clipboard.copy(document) {
+                    self.show_notice("Copied.");
+                } else {
+                    self.show_notice("There's nothing here to copy.");
+                }
+            }
+            EditAction::Paste => {
+                // A picture from another program lands in the middle of the view.
+                let centre = self.last_rect.map_or(Point::new(0.0, 0.0), |r| {
+                    self.view.screen_to_canvas(to_point(r.center()))
+                });
+                if !self.clipboard.paste(document, history, centre) {
+                    self.show_notice("There's nothing to paste.");
+                }
+            }
+            EditAction::Delete => {
+                if !edit::delete_selected(document, history) {
+                    self.show_notice("There's nothing selected on this layer to delete.");
+                }
+            }
+            EditAction::Fill => edit::fill_selected(document, history, self.tools.brush.color),
+            EditAction::Transform => match LayerTransform::start_selection(document) {
+                Ok(transform) => self.transform = Some(transform),
+                Err(problem) => self.show_notice(problem),
+            },
+            EditAction::SelectAll => edit::select_all(document, history),
+            EditAction::Deselect => select_tool::deselect(document, history),
+            EditAction::Invert => edit::invert(document, history),
+            EditAction::SelectLayer => {
+                edit::select_layer_contents(document, history);
+                if document.selection().is_none() {
+                    self.show_notice("There's nothing on this layer to select.");
+                }
+            }
+            EditAction::Feather => self.feather = Some(FeatherWindow { pixels: 8.0 }),
         }
     }
 
@@ -417,6 +510,16 @@ impl CanvasView {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
             }
         }
+
+        // What's selected, and a selection being drawn: marching ants.
+        let drawing = self.tools.selection_preview();
+        self.ants.draw(
+            ui.ctx(),
+            &painter,
+            &self.view,
+            document.selection(),
+            drawing,
+        );
 
         // The gradient being dragged out: a line from start to end.
         if let Some((start, end)) = self.tools.gradient_line() {
@@ -600,6 +703,19 @@ impl CanvasView {
                 if !editing && presses(key) > 0 {
                     self.tools.tool = tool;
                 }
+            }
+            // M: rectangle, then ellipse; L: lasso, then polygon.
+            if !editing && presses(Key::M) > 0 {
+                self.tools.tool = match self.tools.tool {
+                    Tool::Select(SelectShape::Rect) => Tool::Select(SelectShape::Ellipse),
+                    _ => Tool::Select(SelectShape::Rect),
+                };
+            }
+            if !editing && presses(Key::L) > 0 {
+                self.tools.tool = match self.tools.tool {
+                    Tool::Select(SelectShape::Lasso) => Tool::Select(SelectShape::Polygon),
+                    _ => Tool::Select(SelectShape::Lasso),
+                };
             }
         }
 

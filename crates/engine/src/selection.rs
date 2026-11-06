@@ -17,7 +17,8 @@ use crate::fill::Mask;
 use crate::history::Command;
 use crate::image::Image;
 use crate::layer::LayerId;
-use crate::script::geometry;
+use crate::script::SelectCmd;
+use crate::script::geometry::{self, Pt};
 use crate::stroke::TilesBefore;
 use crate::surface::{PixelRect, Surface};
 use crate::tile::{Rgba8, TILE_SIZE};
@@ -95,11 +96,51 @@ impl Selection {
         Selection::new(self.mask.feathered(radius, limits))
     }
 
-    /// The selection's edge as line pieces in canvas pixels, for drawing
-    /// "marching ants". A pixel counts as selected from half selected up,
-    /// and the edge runs along pixel sides; pieces in a row along the same
-    /// line are joined, so even a big selection gives few pieces.
-    pub fn outline(&self) -> Vec<[(f32, f32); 2]> {
+    /// The selection's edge as closed paths (corner points in canvas
+    /// pixels), for drawing "marching ants": one path per ring, so the
+    /// dashes run on smoothly around curves. A pixel counts as selected
+    /// from half selected up, and the edge runs along pixel sides.
+    pub fn outline(&self) -> Vec<Vec<(f32, f32)>> {
+        // Join the straight pieces end to end into rings. Corners are on
+        // whole pixels, so they can be matched exactly.
+        use std::collections::HashMap;
+        let pieces = self.edge_pieces();
+        let key = |p: (f32, f32)| (p.0 as i32, p.1 as i32);
+        let mut at: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, [a, b]) in pieces.iter().enumerate() {
+            at.entry(key(*a)).or_default().push(i);
+            at.entry(key(*b)).or_default().push(i);
+        }
+        let mut used = vec![false; pieces.len()];
+        let mut rings = Vec::new();
+        for start in 0..pieces.len() {
+            if used[start] {
+                continue;
+            }
+            used[start] = true;
+            let [first, mut end] = pieces[start];
+            let mut ring = vec![first, end];
+            // Follow unused pieces from the end until the ring closes.
+            while let Some(&next) = at
+                .get(&key(end))
+                .and_then(|list| list.iter().find(|&&i| !used[i]))
+            {
+                used[next] = true;
+                let [a, b] = pieces[next];
+                end = if key(a) == key(end) { b } else { a };
+                if key(end) == key(first) {
+                    break;
+                }
+                ring.push(end);
+            }
+            rings.push(ring);
+        }
+        rings
+    }
+
+    /// The edge as straight pieces along pixel sides; pieces in a row along
+    /// the same line are joined.
+    fn edge_pieces(&self) -> Vec<[(f32, f32); 2]> {
         let mask = &self.mask;
         let r = mask.rect();
         let inside = |x: i32, y: i32| mask.get(x, y) >= 128;
@@ -136,6 +177,206 @@ impl Selection {
         }
         pieces
     }
+}
+
+// ---- The select command ----------------------------------------------------
+
+/// What a `select` command asks for (checked), in the app or a script.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Request {
+    pub what: What,
+    pub how: Combine,
+    /// Pixels the edge fades over (0: a sharp edge).
+    pub feather: f32,
+}
+
+/// The one thing a `select` names.
+#[derive(Clone, Debug, PartialEq)]
+pub enum What {
+    /// "rect", "ellipse", "circle" or "polygon", with its numbers as written.
+    Shape(&'static str, serde_json::Value),
+    Layer(String),
+    All,
+    None,
+    Invert,
+    /// `feather` on its own: softens the selection there is.
+    Feather,
+}
+
+impl Request {
+    /// Checks a `select` command: one thing at a time, a known `mode`, a
+    /// feather of 0 or more. The messages say what to do instead.
+    pub fn read(command: &SelectCmd) -> Result<Request, String> {
+        let how = match command.mode.as_deref() {
+            None | Some("replace") => Combine::Replace,
+            Some("add") => Combine::Add,
+            Some("subtract") => Combine::Subtract,
+            Some(other) => {
+                return Err(format!(
+                    "`mode` is \"replace\", \"add\" or \"subtract\", not \"{other}\""
+                ));
+            }
+        };
+        let shapes = [
+            ("rect", &command.rect),
+            ("ellipse", &command.ellipse),
+            ("circle", &command.circle),
+            ("polygon", &command.polygon),
+        ];
+        let mut found: Vec<(&str, What)> = shapes
+            .iter()
+            .filter_map(|(kind, value)| {
+                value
+                    .as_ref()
+                    .map(|v| (*kind, What::Shape(kind, v.clone())))
+            })
+            .collect();
+        if let Some(name) = &command.layer {
+            found.push(("layer", What::Layer(name.clone())));
+        }
+        for (flag, name, what) in [
+            (command.all, "all", What::All),
+            (command.none, "none", What::None),
+            (command.invert, "invert", What::Invert),
+        ] {
+            if flag == Some(true) {
+                found.push((name, what));
+            }
+        }
+        if found.len() > 1 {
+            let names: Vec<&str> = found.iter().map(|(n, _)| *n).collect();
+            return Err(format!(
+                "one at a time: `{}` (use two `select` commands, with \"mode\": \"add\")",
+                names.join("`, `")
+            ));
+        }
+        let feather = match command.feather {
+            Some(f) if f < 0.0 || !f.is_finite() => {
+                return Err("`feather` is a number of pixels, 0 or more".into());
+            }
+            Some(f) => f,
+            None => 0.0,
+        };
+        let what = match found.pop() {
+            Some((_, what)) => what,
+            None if command.feather.is_some() => What::Feather,
+            None => {
+                return Err(
+                    "`select` needs a shape (`rect`, `ellipse`, `circle`, `polygon`), \
+                            `layer`, `all`, `none`, `invert` or `feather`"
+                        .into(),
+                );
+            }
+        };
+        match what {
+            What::None if command.mode.is_some() || command.feather.is_some() => {
+                Err("`none` drops the selection: leave out `mode` and `feather`".into())
+            }
+            What::Invert if command.mode.is_some() => Err("`invert` takes no `mode`".into()),
+            what => Ok(Request { what, how, feather }),
+        }
+    }
+}
+
+/// The outline of a shape written in canvas pixels, like an area:
+/// "rect" [x, y, w, h], "ellipse" [cx, cy, rx, ry], "circle" [cx, cy, r],
+/// "polygon" [[x, y], ...]. The script player makes its own (it also
+/// takes parameters and places shapes inside groups) with the same
+/// geometry, so the app and a script get the same pixels.
+pub fn shape_outline(kind: &str, numbers: &serde_json::Value) -> Result<Vec<Pt>, String> {
+    let help = "a shape is \"rect\": [x, y, width, height], \"ellipse\": [cx, cy, rx, ry], \
+                \"circle\": [cx, cy, r] or \"polygon\": [[x, y], ...]";
+    let flat = |n: usize| -> Result<Vec<f32>, String> {
+        let list = numbers.as_array().filter(|l| l.len() == n).ok_or(help)?;
+        list.iter()
+            .map(|v| v.as_f64().map(|f| f as f32).ok_or_else(|| help.to_owned()))
+            .collect()
+    };
+    let outline = match kind {
+        "rect" => {
+            let v = flat(4)?;
+            geometry::rect_outline(v[0], v[1], v[2], v[3], 0.0, 0.0, 1.0)
+        }
+        "ellipse" => {
+            let v = flat(4)?;
+            geometry::ellipse_outline((v[0], v[1]), v[2], v[3], 0.0, 1.0)
+        }
+        "circle" => {
+            let v = flat(3)?;
+            geometry::ellipse_outline((v[0], v[1]), v[2], v[2], 0.0, 1.0)
+        }
+        "polygon" => {
+            let points: Vec<[f32; 2]> =
+                serde_json::from_value(numbers.clone()).map_err(|_| help.to_owned())?;
+            points.into_iter().map(|[x, y]| (x, y)).collect()
+        }
+        _ => return Err(help.into()),
+    };
+    if outline.len() < 3 {
+        return Err("a shape needs at least 3 points".into());
+    }
+    Ok(outline)
+}
+
+/// The selection after a request, given the selection there is and the
+/// request's shape (or layer, or the whole canvas) as a mask. `mask` is
+/// ignored for `None`, `Invert` and `Feather`.
+pub fn apply(
+    current: Option<&Selection>,
+    request: &Request,
+    mask: Option<Mask>,
+    limits: PixelRect,
+) -> Option<Selection> {
+    let feather = request.feather;
+    let soften = |mask: Mask| {
+        if feather > 0.0 {
+            mask.feathered(feather, limits)
+        } else {
+            mask
+        }
+    };
+    match &request.what {
+        What::None => None,
+        What::Invert => {
+            let inverted = Selection::inverted(current, limits)?;
+            if feather > 0.0 {
+                inverted.feathered(feather, limits)
+            } else {
+                Some(inverted)
+            }
+        }
+        What::Feather => current.and_then(|c| c.feathered(feather, limits)),
+        What::All | What::Layer(_) | What::Shape(..) => {
+            let mask = mask.unwrap_or_else(|| Mask::new(PixelRect::new(0, 0, 0, 0)));
+            Selection::combine(current, soften(mask), request.how)
+        }
+    }
+}
+
+/// Runs a `select` command written in canvas pixels (as the app writes
+/// them) on `document`: the selection it leaves. The app does every
+/// selection change this way, so Export strokes replays exactly what was
+/// selected.
+pub fn run(command: &SelectCmd, document: &Document) -> Result<Option<Selection>, String> {
+    let request = Request::read(command)?;
+    let limits = document.bounds();
+    let mask = match &request.what {
+        What::Shape(kind, numbers) => Some(polygon(&shape_outline(kind, numbers)?, limits)),
+        What::Layer(name) => {
+            let layer = document
+                .layers()
+                .iter()
+                .find(|l| l.name() == name)
+                .ok_or_else(|| format!("there's no layer called \"{name}\""))?;
+            Some(layer_contents(&layer.surface, limits))
+        }
+        What::All => Some(all(limits)),
+        What::None | What::Invert | What::Feather => None,
+    };
+    if request.what == What::Feather && document.selection().is_none() {
+        return Err("`feather` alone softens the selection, but there is none yet".into());
+    }
+    Ok(apply(document.selection(), &request, mask, limits))
 }
 
 // ---- Shapes ----------------------------------------------------------------
@@ -297,6 +538,79 @@ pub fn paste_into(surface: &mut Surface, clip: &Clip, limits: PixelRect) -> Tile
     before
 }
 
+/// Lays everything on layer `from` over layer `onto` (normal blending,
+/// full strength), as a selection that was moved is put down. Returns
+/// `onto`'s tiles as they were. `from` is left as it is.
+pub fn drop_onto(document: &mut Document, from: LayerId, onto: LayerId) -> TilesBefore {
+    use crate::layer::{BlendMode, blend_over};
+    let mut before = TilesBefore::new();
+    let Some(source) = document.layer(from).map(|l| l.surface.clone()) else {
+        return before;
+    };
+    let Some(target) = document.layer_mut(onto) else {
+        return before;
+    };
+    let Some(area) = source.painted_area() else {
+        return before;
+    };
+    for coord in area.tiles() {
+        let Some(tile) = source.tile(coord) else {
+            continue;
+        };
+        before
+            .entry(coord)
+            .or_insert_with(|| target.surface.tile(coord).cloned());
+        let dest = target.surface.tile_mut(coord);
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let top = tile.pixel(x, y);
+                if top.a == 0 {
+                    continue;
+                }
+                let under = dest.pixel(x, y);
+                dest.set_pixel(x, y, blend_over(under, top, 1.0, BlendMode::Normal));
+            }
+        }
+    }
+    before
+}
+
+/// `selection` moved by `transform` (as the transform tool moves a
+/// layer), on a canvas `limits` big. `None` if it ends up off the canvas.
+pub fn transformed(
+    selection: &Selection,
+    transform: crate::transform::Transform,
+    limits: PixelRect,
+) -> Option<Selection> {
+    // The mask as a layer's opacity, moved with the same code as pixels.
+    let mut scratch = Document::new(limits.right as u32, limits.bottom as u32);
+    let id = scratch.active_id();
+    let mask = selection.mask();
+    let r = mask.rect();
+    {
+        let surface = &mut scratch.active_layer_mut().surface;
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                let v = mask.get(x, y);
+                if v > 0 {
+                    surface.set_pixel(
+                        x,
+                        y,
+                        Rgba8 {
+                            r: v,
+                            g: v,
+                            b: v,
+                            a: v,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    crate::layer_transform::transform_layer(&mut scratch, id, transform);
+    Selection::new(layer_contents(&scratch.active_layer().surface, limits))
+}
+
 // ---- Undo --------------------------------------------------------------------
 
 /// A change of selection, for undo: it keeps the other selection, like
@@ -440,14 +754,22 @@ mod tests {
     #[test]
     fn the_outline_runs_around_the_selection() {
         let selection = Selection::new(rect(10.0, 10.0, 20.0, 5.0, canvas())).unwrap();
-        let pieces = selection.outline();
-        // A rectangle: two long horizontal and two short vertical pieces.
-        assert_eq!(pieces.len(), 4, "{pieces:?}");
-        let length: f32 = pieces
-            .iter()
-            .map(|[a, b]| (b.0 - a.0).abs() + (b.1 - a.1).abs())
-            .sum();
-        assert_eq!(length, 2.0 * (20.0 + 5.0));
+        let rings = selection.outline();
+        // A rectangle: one ring with its four corners.
+        assert_eq!(rings.len(), 1, "{rings:?}");
+        assert_eq!(rings[0].len(), 4, "{rings:?}");
+        // A ring with a hole: two rings. An ellipse: one long ring.
+        let holed = Selection::combine(
+            Some(&selection),
+            rect(15.0, 11.0, 5.0, 2.0, canvas()),
+            Combine::Subtract,
+        )
+        .unwrap();
+        assert_eq!(holed.outline().len(), 2);
+        let round = Selection::new(ellipse(100.0, 50.0, 30.0, 20.0, canvas())).unwrap();
+        let rings = round.outline();
+        assert_eq!(rings.len(), 1);
+        assert!(rings[0].len() > 40, "follows the curve step by step");
     }
 
     #[test]
@@ -513,5 +835,46 @@ mod tests {
         let surface = &document.active_layer().surface;
         assert_eq!(surface.pixel(60, 60).a, 0);
         assert_eq!(surface.pixel(40, 60).a, 255);
+    }
+
+    #[test]
+    fn a_moved_selection_is_dropped_back_and_the_selection_moves_with_it() {
+        let mut document = Document::new(200, 100);
+        let base = document.active_id();
+        let red = Paint::Color([255, 0, 0, 255]);
+        let brush = crate::brush::BrushMode::Paint;
+        paint_mask(
+            &mut document.active_layer_mut().surface,
+            &rect(0.0, 0.0, 10.0, 10.0, canvas()),
+            &red,
+            1.0,
+            brush,
+            canvas(),
+        );
+        let floating = crate::layer_commands::LayerPresenceCommand::add_layer(&mut document);
+        let _ = floating;
+        let top = document.active_id();
+        paint_mask(
+            &mut document.active_layer_mut().surface,
+            &rect(50.0, 50.0, 10.0, 10.0, canvas()),
+            &red,
+            1.0,
+            brush,
+            canvas(),
+        );
+        let before = drop_onto(&mut document, top, base);
+        assert!(!before.is_empty());
+        let surface = &document.layer(base).unwrap().surface;
+        assert_eq!(surface.pixel(55, 55).a, 255);
+        assert_eq!(surface.pixel(5, 5).a, 255, "what was there stays");
+        let selection = Selection::new(rect(0.0, 0.0, 10.0, 10.0, canvas())).unwrap();
+        let moved = transformed(
+            &selection,
+            crate::transform::Transform::translate(50.0, 20.0),
+            canvas(),
+        )
+        .unwrap();
+        assert_eq!(moved.bounds(), PixelRect::new(50, 20, 60, 30));
+        assert_eq!(moved.mask().get(55, 25), 255);
     }
 }

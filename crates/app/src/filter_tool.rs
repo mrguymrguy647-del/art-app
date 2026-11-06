@@ -270,7 +270,14 @@ pub fn apply_filter(document: &mut Document, history: &mut History, command: &Fi
     let layer = document.active_id();
     let name = document.active_layer().name().to_owned();
     let limits = document.bounds();
-    let before = filters::apply(&mut document.active_layer_mut().surface, &filters, limits);
+    // Inside the selection, if there is one (the script command does the same).
+    let clip = document.clip();
+    let before = filters::apply_within(
+        &mut document.active_layer_mut().surface,
+        &filters,
+        limits,
+        clip.as_deref(),
+    );
     if before.is_empty() {
         return false;
     }

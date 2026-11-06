@@ -53,7 +53,7 @@ use crate::layer_transform::transform_layer;
 use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
-use crate::selection::{self, Combine, Selection};
+use crate::selection::{self, Selection, What};
 use crate::stroke::{Stroke, StrokePoint, TilesBefore};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
@@ -806,6 +806,9 @@ impl Player {
                 self.record(step);
             }
         }
+        // Painting on an open picture stays inside its selection, as the
+        // app's own tools do (the Text tool plays its text this way).
+        self.selection = document.selection().cloned();
         self.start_frames();
         Ok(())
     }
@@ -2878,121 +2881,42 @@ impl Player {
     }
 
     /// `select`: sets, adds to, takes from, inverts, feathers or drops
-    /// the selection that painting stays inside.
+    /// the selection that painting stays inside. The checks and the
+    /// combining are the app's (`selection::Request`, `selection::apply`);
+    /// only the shape is made here, because a script's shape can use
+    /// parameters and is placed by the groups around it.
     fn select(&mut self, document: &Document, command: &SelectCmd) -> Result<(), String> {
         let limits = document.bounds();
-        let how = match command.mode.as_deref() {
-            None | Some("replace") => Combine::Replace,
-            Some("add") => Combine::Add,
-            Some("subtract") => Combine::Subtract,
-            Some(other) => {
-                return Err(format!(
-                    "`mode` is \"replace\", \"add\" or \"subtract\", not \"{other}\""
-                ));
-            }
-        };
-        let shapes = [
-            ("rect", &command.rect),
-            ("ellipse", &command.ellipse),
-            ("circle", &command.circle),
-            ("polygon", &command.polygon),
-        ];
-        let given: Vec<&str> = shapes
-            .iter()
-            .filter(|(_, v)| v.is_some())
-            .map(|(name, _)| *name)
-            .chain(command.layer.as_ref().map(|_| "layer"))
-            .chain(command.all.filter(|&a| a).map(|_| "all"))
-            .chain(command.none.filter(|&n| n).map(|_| "none"))
-            .chain(command.invert.filter(|&i| i).map(|_| "invert"))
-            .collect();
-        if given.len() > 1 {
-            return Err(format!(
-                "one at a time: `{}` (use two `select` commands, with \"mode\": \"add\")",
-                given.join("`, `")
-            ));
-        }
-        let feather = match command.feather {
-            Some(f) if f < 0.0 || !f.is_finite() => {
-                return Err("`feather` is a number of pixels, 0 or more".into());
-            }
-            Some(f) => f * self.detail(),
-            None => 0.0,
-        };
-        let soften = |mask: Mask| {
-            if feather > 0.0 {
-                mask.feathered(feather, limits)
-            } else {
-                mask
-            }
-        };
-        let current = self.selection.take();
-        let new = match given.first().copied() {
-            Some("none") => {
-                if command.mode.is_some() || command.feather.is_some() {
-                    return Err("`none` drops the selection: leave out `mode` and `feather`".into());
-                }
-                None
-            }
-            Some("invert") => {
-                if command.mode.is_some() {
-                    return Err("`invert` takes no `mode`".into());
-                }
-                Selection::inverted(current.as_ref(), limits).and_then(|s| {
-                    if feather > 0.0 {
-                        s.feathered(feather, limits)
-                    } else {
-                        Some(s)
-                    }
-                })
-            }
-            Some("all") => {
-                Selection::combine(current.as_ref(), soften(selection::all(limits)), how)
-            }
-            Some("layer") => {
-                let name = command.layer.as_deref().unwrap_or_default();
-                let id = find_layer(document, name)?;
-                self.note_read(id);
-                let layer = document.layer(id).ok_or("no such layer")?;
-                let mask = selection::layer_contents(&layer.surface, limits);
-                Selection::combine(current.as_ref(), soften(mask), how)
-            }
-            Some(kind) => {
-                let value = shapes
-                    .iter()
-                    .find(|(name, _)| *name == kind)
-                    .and_then(|(_, v)| v.as_ref())
-                    .cloned()
-                    .unwrap_or_default();
+        let mut request = selection::Request::read(command)?;
+        request.feather *= self.detail();
+        let mask = match &request.what {
+            What::Shape(kind, numbers) => {
                 let mut area = serde_json::Map::new();
-                area.insert(kind.to_owned(), self.value(&value)?);
+                area.insert((*kind).to_owned(), self.value(numbers)?);
                 let polygon = self.area(&Value::Object(area))?;
                 let placed = self.place_polygon(polygon);
                 let mut mask = geometry::polygons_mask(&[placed], limits);
                 if self.pixel.is_some() {
                     mask.threshold(); // a pixel canvas has hard edges
                 }
-                Selection::combine(current.as_ref(), soften(mask), how)
+                Some(mask)
             }
-            None => match (command.feather, current.as_ref()) {
-                (Some(_), Some(current)) => current.feathered(feather, limits),
-                (Some(_), None) => {
-                    return Err(
-                        "`feather` alone softens the selection, but there is none yet".into(),
-                    );
-                }
-                (None, _) => {
-                    return Err(
-                        "`select` needs a shape (`rect`, `ellipse`, `circle`, `polygon`), `layer`, \
-                         `all`, `none`, `invert` or `feather`"
-                            .into(),
-                    );
-                }
-            },
+            What::Layer(name) => {
+                let id = find_layer(document, name)?;
+                self.note_read(id);
+                let layer = document.layer(id).ok_or("no such layer")?;
+                Some(selection::layer_contents(&layer.surface, limits))
+            }
+            What::All => Some(selection::all(limits)),
+            What::Feather if self.selection.is_none() => {
+                return Err("`feather` alone softens the selection, but there is none yet".into());
+            }
+            What::None | What::Invert | What::Feather => None,
         };
+        let new = selection::apply(self.selection.as_ref(), &request, mask, limits);
         // As in the app: a selection that comes out empty (everything
         // subtracted, a shape off the canvas) is no selection.
-        if new.is_none() && given.first() != Some(&"none") && !self.options.dry_run {
+        if new.is_none() && request.what != What::None && !self.options.dry_run {
             self.warnings.push(format!(
                 "command {}: the selection came out empty, so it's dropped and painting is no \
                  longer limited",
@@ -5542,6 +5466,46 @@ mod tests {
         );
         assert!(alpha(&d, 25, 18) > 0, "blurred inside");
         assert_eq!(alpha(&d, 75, 18), 0, "untouched outside");
+    }
+
+    /// The app runs each selection change with `selection::run` and
+    /// records the command; replaying the commands in a script must give
+    /// exactly the same picture.
+    #[test]
+    fn the_apps_selections_replay_exactly_in_a_script() {
+        use crate::fill::paint_mask_within;
+        let commands = [
+            r#"{ "cmd": "select", "rect": [10.5, 5.5, 40.2, 30.7] }"#,
+            r#"{ "cmd": "select", "ellipse": [70.3, 30.1, 20.6, 14.2], "mode": "add" }"#,
+            r#"{ "cmd": "select", "polygon": [[0, 0], [30, 50], [5, 55]], "mode": "subtract", "feather": 3 }"#,
+            r#"{ "cmd": "select", "invert": true }"#,
+            r#"{ "cmd": "select", "invert": true }"#,
+            r#"{ "cmd": "select", "feather": 2 }"#,
+        ];
+        // The app's way.
+        let mut app = Document::new(100, 60);
+        for text in commands {
+            let command: SelectCmd = match serde_json::from_str::<Command>(text).unwrap() {
+                Command::Select(c) => c,
+                _ => unreachable!(),
+            };
+            let selection = selection::run(&command, &app).unwrap();
+            app.set_selection(selection);
+        }
+        let clip = app.clip();
+        let limits = app.bounds();
+        paint_mask_within(
+            &mut app.active_layer_mut().surface,
+            &selection::all(limits),
+            &Paint::Color([255, 0, 0, 255]),
+            1.0,
+            BrushMode::Paint,
+            limits,
+            clip.as_deref(),
+        );
+        // The script's way.
+        let script = selected(&format!("{},", commands.join(",\n")));
+        assert_eq!(png(&app), png(&script));
     }
 
     #[test]
