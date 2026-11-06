@@ -17,6 +17,15 @@ Three rules shape everything below:
    colour is out of key, whether a shape survives shrinking: those are measurable. Beauty, charm,
    whether a cloud looks like a cloud: not. The report says so, every time, and points to the
    views, the blind-read test and the person's rating.
+4. **Numbers are warnings, not goals.** A finding is a reason to look, never a target to hit:
+   never trade a better-looking picture for a better number, and the person's rating outranks
+   every number. The process and the report say this in so many words.
+5. **The senses are tested against reality.** Tests check that the known mistakes of the phase 3
+   gallery are flagged (the green lily pads out of key in the sunset, the noisy marbled duck
+   body, the smudge clouds as low-structure areas, the haze band on the far hills) and that a few
+   public-domain reference paintings in `references/` mostly pass. The thresholds are set with
+   those pictures, and `decisions.md` records which findings are false alarms on good pictures,
+   so the next person knows what a report's noise looks like.
 
 ## 1. The intent block (step 1)
 
@@ -97,13 +106,21 @@ more than 50 degrees from every key colour's hue and from the light's hue, with 
 and the nearest part: "a saturated green at x 500, y 985 (lily pads, 2.1% of the picture) is out
 of key with the orange light". Hue names come from a fixed 12-name wheel.
 
-**Texture.** Per named part (its silhouette from the views step) and per 32 x 32 cell: *dirty*:
-detail energy inside the part above 0.12 of its value range while the part is bigger than 1% of
-the canvas ("the duck's body is noisy inside: fine texture over 78% of it; shading wants big
-soft shapes and a few marks, not noise everywhere"); *flat*: cells with value range under 0.02
-making up more than 25% of a part ("the water is flat over 61%"); *detail spread*: the share of
-detail energy within one grid-radius of the focal point versus the rest ("detail gathers at the
-focal point: 34% there, 66% elsewhere; aim for half or more there").
+**Texture.** Two kinds of fineness are measured separately, so noise and deliberate marks
+aren't confused. *Grain* is what a 1-2 px blur removes (the grey picture minus its 1.5 px blur,
+absolute, mean per cell): noise, dither, speckle. *Marks* are what a 3-8 px blur removes beyond
+that (the 1.5 px blur minus the 6 px blur): feathers, grass blades, brush strokes, small shapes.
+Both are measured per named part (its silhouette from the views step) and per 32 x 32 cell.
+*Dirty*: a part bigger than 1% of the canvas whose grain is above 0.06 of its value range over
+more than half of it while its marks there are under twice the grain, i.e. fine grain with no
+structure ("the duck's body is noisy inside: fine grain over 78% of it with no marks; shading
+wants big soft shapes and a few marks, not noise everywhere"). Marks count as *detail*, never
+as dirt. *Flat*: cells with a value range under 0.02 making up more than 25% of a part ("the
+water is flat over 61%"); *low structure*: a part whose squint (section 2) shows under 0.05 of
+value range across it, so it reads as one smudge ("the clouds have no light and dark side: a
+smudge"). *Detail spread*: the share of mark energy within one grid-radius of the focal point
+versus the rest ("detail gathers at the focal point: 34% there, 66% elsewhere; aim for half or
+more there").
 
 **Readability.** At 96 px wide: each named part's silhouette shrunk; *merges* when the part's
 mean value differs from the ring of pixels around it by under 0.12 and its hue by under 30
@@ -201,6 +218,9 @@ match the intent), `process.png`, `notes.md` with a required "Proposed lessons" 
 runs views and critique, writes the folder with a notes.md skeleton (including the blind-read
 questions to ask) and adds it to `index.json` with its tags from the intent and the commands it
 uses. `index.json` keeps tags and ratings so an agent can pick the 2 or 3 most relevant pieces.
+`art-cli gallery rate NAME SCORE "comment"` writes the person's rating (1 to 5) and comment into
+`index.json`, so no JSON is edited by hand; a rating is the person's alone, and the process says
+it outranks every number.
 
 ## 6. The painting process (step 6)
 
@@ -223,9 +243,14 @@ the focal point; a background earns ten commands, a face a hundred.
 **The blind-read test** before calling a painting done: give only the picture to a separate
 agent (or a fresh session) and ask three questions without telling it the intent: *What do you
 see? What's the focal point? What mood?* Compare with the intent; if the answers don't match,
-the picture doesn't read yet. Record the questions, the answers and the verdict in the piece's
-`blind-read.md`. The command line can't run another agent, so this is a procedure with a file
-format, not a tool.
+the picture doesn't read yet. It must be leak-proof: file names, titles, folder names and the
+script all leak the intent, so `art-cli blind-read script.json` prepares a packet in a folder
+of its own: the picture copied under a neutral name (`piece-7f3a.png`, the four hex characters
+from a hash of the pixels, so the same picture gets the same name), no script, no title, and
+`questions.txt` with the three standard questions. The reader gets only that folder. Then
+`art-cli blind-read script.json --record answers.txt --verdict "reads" ` (or `"doesn't read:
+..."`) writes the questions, the answers and the verdict into the piece's `blind-read.md` next
+to the script. The process warns: never send the script, the notes or a named file.
 
 After painting: `notes.md` (what each tool did, what's still weak) and its "Proposed lessons".
 
@@ -262,7 +287,10 @@ first five (fixed mapping in the file, so it's reproducible), a separate agent j
 picture with the guide (not the one that painted it), and the person's rating. Results go in
 `gallery/benchmark.md` as a table: phase, piece, the three sets of scores, the date; so we can
 see whether each phase makes the paintings better, and where the agent's and the person's
-judgments part ways (which is itself a lesson).
+judgments part ways (which is itself a lesson). It starts with the existing pieces as baselines:
+the phase 2 simple pond (`examples/sunset-pond-simple.json`), the phase 3 sunset pond and the
+duck portrait, scored by the numbers and by a separate agent; the person's column waits for
+`gallery rate`.
 
 ## 9. Prove it (step 9)
 
