@@ -195,18 +195,22 @@ sheet, the critique, the blind read, the `.quill` (layers kept) and the script.
   "stops": [[0, "#2A1E48"], [0.35, "#6B3A6E"], [0.7, "#E0704A"], [0.88, "#F7B25A"], [1, "#FFDCA0"]] }
 ```
 
-**Shading that stays inside a shape:** paint the shape on its own layer, then put the shading
-on a clipping layer above it (`"clip": true`, usually `multiply`), and the light on another
-(`screen`). Paint across the whole shape without care; only the shape's part shows. To keep a
-group's paint inside something instead, give it a `mask`: an area, `{"symbol": "duck", ...}`
-(the duck's silhouette, placed like a `use`) or `{"layer": "Water"}` (a reflection only on the
-water).
+**Clipping: shading that stays inside a shape.** Paint the shape on its own layer, then the
+shading on a clipping layer right above it (`"clip": true`, usually `multiply`; light on another,
+`screen`). Paint across the whole shape without care: only the part over the shape shows.
 
 ```json
 { "cmd": "layer", "name": "Duck" },
 { "cmd": "use", "name": "duck", "translate": [300, 400] },
 { "cmd": "layer", "name": "Duck shade", "clip": true, "blend": "multiply", "opacity": 0.6 },
-{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] },
+{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] }
+```
+
+**Masks: a group's paint only inside something.** Give the group a `mask`: an area (`{"ellipse":
+[x, y, rx, ry]}`), a symbol's silhouette placed like a `use` (`{"symbol": "duck", "translate":
+[300, 400]}`) or a layer's paint (`{"layer": "Water"}`). A reflection that stays on the water:
+
+```json
 { "cmd": "layer", "name": "Water" },
 { "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "opacity": 0.4, "commands": [
   { "cmd": "use", "name": "duck", "translate": [300, 560], "mirror": "y" } ] }

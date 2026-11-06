@@ -81,8 +81,7 @@ Define parts around `[0, 0]`, then place them. `mirror` and `rotate` work around
 { "cmd": "define", "name": "hero", "commands": [
   { "cmd": "layer", "name": "Characters" },
   { "cmd": "ellipse", "center": [0, 0], "radius": [24, 30], "fill": "body", "outline": "ink", "outline_size": 2 },
-  { "cmd": "ellipse", "center": [8, -10], "radius": 3, "fill": "ink" }
-] }
+  { "cmd": "ellipse", "center": [8, -10], "radius": 3, "fill": "ink" } ] }
 { "cmd": "use", "name": "hero", "translate": [100, 120] }
 { "cmd": "use", "name": "hero", "translate": [300, 120], "mirror": "x", "colors": { "body": "#C04040" } }
 ```
@@ -99,8 +98,7 @@ A `group` with `translate`, `scale` and `rotate` places whatever is inside it th
 ```json
 { "cmd": "repeat", "count": 4, "step": { "translate": [128, 0] }, "commands": [
   { "cmd": "use", "name": "hero", "translate": [64, 64] },
-  { "cmd": "text", "text": "frame {i}", "at": [64, 104], "size": 14, "color": "ink", "align": "center" }
-] }
+  { "cmd": "text", "text": "frame {i}", "at": [64, 104], "size": 14, "color": "ink", "align": "center" } ] }
 ```
 
 Each copy gets the `step` once more (`translate`, `rotate` and `scale` around `origin`). In `text`, `{i}` is the copy number from 1, `{i0}` from 0.
@@ -188,9 +186,11 @@ Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k"
   `"filter": {"glow": ...}` on a sun's group, `{"shadow": ...}` on a character's `use`; a `"from": "below"`
   layer with a `gradient_map` at 0.3 to unify.
 - One clean line around a character: `"outline": {"color": "ink", "size": 3}` on its `use` (no seams),
-  `"rim": {...}` inside it for rim light. Shading inside a shape: a `"clip": true` layer above it;
-  `"lock": true` recolours a layer without changing its edges; a group's `mask` limits its paint, and so does
-  `{"cmd": "select", "rect": [x, y, w, h]}` for every command after it (`"none": true` ends it).
+  `"rim": {...}` inside it for rim light. **Clipping** (shading stays inside the shape on the layer below):
+  `{"cmd": "layer", "name": "Shade", "clip": true, "blend": "multiply"}`, then paint across the whole shape.
+  **Mask** (a group paints only inside something): `{"cmd": "group", "mask": {"layer": "Water"}, "commands": [...]}`
+  (or `{"symbol": "duck", "translate": [x, y]}`, or an area). `"lock": true` recolours a layer without changing its
+  edges; `{"cmd": "select", "rect": [x, y, w, h]}` limits every command after it (`"none": true` ends it).
 - `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it. The worked example:
   `docs/AI_GUIDE.md`, "Making it beautiful".
 
