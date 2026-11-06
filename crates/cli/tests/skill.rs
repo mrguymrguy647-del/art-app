@@ -12,8 +12,15 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Reads a text file with Unix line endings. On Windows, Git usually checks
+/// files out with Windows line endings ("\r\n"), and the tests below
+/// split text on "\n": without this they'd fail there for no real reason.
+fn read_text(path: impl AsRef<std::path::Path>) -> std::io::Result<String> {
+    std::fs::read_to_string(path).map(|text| text.replace("\r\n", "\n"))
+}
+
 fn skill() -> String {
-    std::fs::read_to_string(root().join("skills/duck-quill/SKILL.md")).unwrap()
+    read_text(root().join("skills/duck-quill/SKILL.md")).unwrap()
 }
 
 /// The text between each pair of single backticks (not in code blocks).
@@ -167,7 +174,7 @@ fn every_quill_cli_command_and_option_it_mentions_exists() {
 fn every_script_command_and_field_it_mentions_exists() {
     // Everything in the script format is in script-format.md, which is
     // itself tested: in `backticks` or "quotes".
-    let format = std::fs::read_to_string(root().join("docs/script-format.md")).unwrap();
+    let format = read_text(root().join("docs/script-format.md")).unwrap();
     let mut known: HashSet<String> = inline_code(&format).into_iter().collect();
     for quoted in format.split('"').skip(1).step_by(2) {
         known.insert(quoted.to_owned());
@@ -216,7 +223,7 @@ fn every_file_it_mentions_exists() {
 #[test]
 fn every_library_part_has_a_clean_example_and_a_preview() {
     let library = root().join("skills/duck-quill/library");
-    let readme = std::fs::read_to_string(library.join("README.md")).unwrap();
+    let readme = read_text(library.join("README.md")).unwrap();
     let mut parts = 0;
     for entry in std::fs::read_dir(&library).unwrap() {
         let path = entry.unwrap().path();
@@ -233,7 +240,7 @@ fn every_library_part_has_a_clean_example_and_a_preview() {
             part == "pond" || readme.contains(&format!("`{part}.json`")),
             "{part} isn't in the README"
         );
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = read_text(&path).unwrap();
         let script =
             quill_engine::script::Script::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
         let options = quill_engine::script::PlayOptions {
@@ -259,8 +266,7 @@ fn every_library_part_has_a_clean_example_and_a_preview() {
 fn every_gallery_piece_is_complete_and_paints_cleanly() {
     let gallery = root().join("skills/duck-quill/gallery");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     let pieces = index["pieces"].as_array().unwrap();
     assert!(pieces.len() >= 2);
     for piece in pieces {
@@ -280,7 +286,7 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
                 folder.display()
             );
         }
-        let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+        let notes = read_text(folder.join("notes.md")).unwrap();
         assert!(
             notes.contains("## Proposed lessons"),
             "{} notes lack the section",
@@ -291,13 +297,13 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
             "{} has no rating field",
             folder.display()
         );
-        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
+        let text = read_text(folder.join("script.json")).unwrap();
         assert!(
             text.contains("\"intent\""),
             "{} has no intent",
             folder.display()
         );
-        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
+        let text = read_text(folder.join("script.json")).unwrap();
         let script = quill_engine::script::Script::parse(&text).unwrap();
         let options = quill_engine::script::PlayOptions {
             folder: Some(folder.clone()),
@@ -375,7 +381,7 @@ fn the_critique_catches_the_gallerys_known_mistakes() {
 fn every_reference_picture_is_licensed_and_studied() {
     let folder = root().join("skills/duck-quill/references");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(folder.join("index.json")).unwrap()).unwrap();
+        serde_json::from_str(&read_text(folder.join("index.json")).unwrap()).unwrap();
     let allowed: Vec<&str> = index["allowed_licences"]
         .as_array()
         .unwrap()
@@ -385,7 +391,7 @@ fn every_reference_picture_is_licensed_and_studied() {
     assert_eq!(allowed, ["public domain", "CC0"]);
     let pictures = index["pictures"].as_array().unwrap();
     assert!(pictures.len() >= 4);
-    let readme = std::fs::read_to_string(folder.join("README.md")).unwrap();
+    let readme = read_text(folder.join("README.md")).unwrap();
     let out = std::env::temp_dir().join(format!("quill-references-{}", std::process::id()));
     for picture in pictures {
         let file = picture["file"].as_str().unwrap();
@@ -412,8 +418,7 @@ fn every_reference_picture_is_licensed_and_studied() {
             picture["breakdown"].as_str().unwrap(),
             format!("{stem}-breakdown.md")
         );
-        let breakdown =
-            std::fs::read_to_string(folder.join(format!("{stem}-breakdown.md"))).unwrap();
+        let breakdown = read_text(folder.join(format!("{stem}-breakdown.md"))).unwrap();
         for heading in [
             "**Shapes.**",
             "**Values**",
@@ -494,7 +499,7 @@ fn the_learning_folder_is_complete() {
     let skill = root().join("skills/duck-quill");
     // Lessons: numbered, one line each, each with a backticked piece or
     // picture, and the rule for adding them.
-    let lessons = std::fs::read_to_string(skill.join("lessons.md")).unwrap();
+    let lessons = read_text(skill.join("lessons.md")).unwrap();
     assert!(lessons.contains("Agents never edit this file directly"));
     let numbered: Vec<&str> = lessons
         .lines()
@@ -522,7 +527,7 @@ fn the_learning_folder_is_complete() {
     }
     // Mistakes: each has a before picture that exists, what was wrong,
     // the critique's finding, and the fix.
-    let mistakes = std::fs::read_to_string(skill.join("mistakes.md")).unwrap();
+    let mistakes = read_text(skill.join("mistakes.md")).unwrap();
     let entries = mistakes.matches("\n## ").count();
     assert!(entries >= 6, "{entries} mistakes");
     for line in mistakes.lines() {
@@ -537,7 +542,7 @@ fn the_learning_folder_is_complete() {
     assert_eq!(mistakes.matches("**Fix:**").count(), entries);
     // Styles: palette rules, settings, what to avoid, pieces.
     for style in ["storybook", "painterly", "pixel"] {
-        let text = std::fs::read_to_string(skill.join(format!("styles/{style}.md"))).unwrap();
+        let text = read_text(skill.join(format!("styles/{style}.md"))).unwrap();
         for heading in [
             "**Palette rules.**",
             "**What to avoid.**",
@@ -548,7 +553,7 @@ fn the_learning_folder_is_complete() {
     }
     // Exercises: a page, a script that paints cleanly and a picture each.
     let exercises = skill.join("exercises");
-    let readme = std::fs::read_to_string(exercises.join("README.md")).unwrap();
+    let readme = read_text(exercises.join("README.md")).unwrap();
     let mut count = 0;
     for entry in std::fs::read_dir(&exercises).unwrap() {
         let path = entry.unwrap().path();
@@ -561,7 +566,7 @@ fn the_learning_folder_is_complete() {
             exercises.join(format!("{stem}.png")).exists(),
             "{stem}.png is missing"
         );
-        let page = std::fs::read_to_string(exercises.join(format!("{stem}.md")))
+        let page = read_text(exercises.join(format!("{stem}.md")))
             .unwrap_or_else(|_| panic!("{stem}.md is missing"));
         for heading in [
             "## Do",
@@ -580,8 +585,7 @@ fn the_learning_folder_is_complete() {
     // Reference studies.
     let references = skill.join("references");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(references.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(references.join("index.json")).unwrap()).unwrap();
     for picture in index["pictures"].as_array().unwrap() {
         let stem = Path::new(picture["file"].as_str().unwrap())
             .file_stem()
@@ -592,8 +596,7 @@ fn the_learning_folder_is_complete() {
         let study = references.join(format!("{stem}-study.json"));
         assert!(study.exists(), "{stem}-study.json is missing");
         paints_cleanly(&study);
-        let breakdown =
-            std::fs::read_to_string(references.join(format!("{stem}-breakdown.md"))).unwrap();
+        let breakdown = read_text(references.join(format!("{stem}-breakdown.md"))).unwrap();
         assert!(
             breakdown.contains("**Study.**"),
             "{stem}'s breakdown has no study line"
@@ -603,7 +606,7 @@ fn the_learning_folder_is_complete() {
 
 /// Plays a script at a quarter size and insists on no mistakes or warnings.
 fn paints_cleanly(path: &Path) {
-    let text = std::fs::read_to_string(path).unwrap();
+    let text = read_text(path).unwrap();
     let script = quill_engine::script::Script::parse(&text)
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let options = quill_engine::script::PlayOptions {
@@ -680,18 +683,17 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ] {
         assert!(folder.join(file).exists(), "{file} is missing: {text}");
     }
-    let critique = std::fs::read_to_string(folder.join("critique.md")).unwrap();
+    let critique = read_text(folder.join("critique.md")).unwrap();
     assert!(
         critique.contains("focal point: the eye goes to"),
         "{critique}"
     );
-    let blind = std::fs::read_to_string(folder.join("blind-read.md")).unwrap();
+    let blind = read_text(folder.join("blind-read.md")).unwrap();
     assert!(blind.contains("What do you see?"));
-    let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+    let notes = read_text(folder.join("notes.md")).unwrap();
     assert!(notes.contains("## Proposed lessons"));
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     let piece = &index["pieces"][0];
     assert_eq!(piece["folder"], "tiny-pond");
     assert_eq!(piece["title"], "Tiny pond");
@@ -721,8 +723,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ]);
     assert!(ok, "{text}");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     assert_eq!(index["pieces"][0]["rating"]["score"], 4);
     assert_eq!(index["pieces"][0]["rating"]["comment"], "the duck reads");
     assert!(index["pieces"][0]["rating"]["date"].as_str().unwrap().len() == 10);
@@ -737,8 +738,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ]);
     assert!(ok);
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     assert_eq!(index["pieces"][0]["rating"]["score"], 4);
     let (ok, text) = run(&[
         "rate",
@@ -758,8 +758,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
 /// separate agent.
 #[test]
 fn the_benchmark_has_its_subjects_guide_and_baselines() {
-    let guide =
-        std::fs::read_to_string(root().join("skills/duck-quill/exercises/benchmark.md")).unwrap();
+    let guide = read_text(root().join("skills/duck-quill/exercises/benchmark.md")).unwrap();
     for subject in [
         "Sunset pond",
         "Forest at dawn",
@@ -784,8 +783,7 @@ fn the_benchmark_has_its_subjects_guide_and_baselines() {
     assert!(guide.contains("## The fixed mapping"));
     assert!(guide.contains("quill critique piece.json --score"));
     assert!(guide.contains("The person's rating outranks every number"));
-    let results =
-        std::fs::read_to_string(root().join("skills/duck-quill/gallery/benchmark.md")).unwrap();
+    let results = read_text(root().join("skills/duck-quill/gallery/benchmark.md")).unwrap();
     for piece in ["sunset-pond-simple", "sunset-pond", "duck-portrait"] {
         let rows: Vec<&str> = results
             .lines()

@@ -20,7 +20,12 @@ fn main() {
     resource.set("ProductName", "Duck Quill");
     resource.set("FileDescription", "Duck Quill");
     if let Err(error) = resource.compile() {
-        // A missing icon is not worth failing the whole build over.
+        // On your own PC a missing icon is not worth failing the whole
+        // build over. On GitHub's build machines (which set CI), it is:
+        // the download must have its icon.
+        if std::env::var_os("CI").is_some() {
+            panic!("Could not add the icon to DuckQuill.exe: {error}");
+        }
         println!("cargo:warning=Could not add the icon to DuckQuill.exe: {error}");
     }
 }

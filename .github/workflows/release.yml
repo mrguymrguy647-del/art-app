@@ -25,7 +25,7 @@ jobs:
     permissions:
       contents: write # to publish the release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust
         shell: bash
         run: |
@@ -86,7 +86,7 @@ jobs:
           "dist/Duck Quill/art-cli.exe" --version
 
       - name: Keep the zip on this run's page
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.ZIP }}
           path: ${{ env.ZIP }}
