@@ -1,0 +1,18 @@
+{
+  "format": "duckquill-preset",
+  "name": "Ink pen",
+  "description": "Solid ink: always fully opaque, pressure only changes how thick the line is. Smoothing keeps long lines clean.",
+  "smoothing": 0.5,
+  "brush": {
+    "size": 6,
+    "opacity": 1,
+    "flow": 1,
+    "hardness": 1,
+    "spacing": 0.05,
+    "pressure_size": true,
+    "pressure_size_min": 0.15,
+    "pressure_opacity": false,
+    "pressure_flow": false,
+    "tip": "round"
+  }
+}

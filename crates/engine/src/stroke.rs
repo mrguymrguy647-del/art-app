@@ -259,6 +259,7 @@ impl Stroke {
         let centre = StrokePoint::new(cx, cy, at.pressure);
         let (sin, cos) = dab.angle.to_radians().sin_cos();
         let varies_color = self.brush.dynamics.varies_color();
+        let grainy = self.brush.grain > 0.0;
 
         for coord in rect.tiles() {
             let (left, top) = coord.origin();
@@ -298,7 +299,10 @@ impl Stroke {
                                 * dab_coverage(distance, reach - 0.5, self.brush.hardness)
                         }
                     };
-                    let target = dab.opacity * shape;
+                    let mut target = dab.opacity * shape;
+                    if grainy {
+                        target *= self.brush.grain_at(x, y, at.pressure);
+                    }
                     let i = tile_index(x - left, y - top);
                     if target > coverage[i] {
                         // Flow 1: jump straight to the target. Lower flow:
@@ -335,6 +339,13 @@ impl Stroke {
                     let mut strength = coverage[i];
                     if let Some(clip) = clip {
                         strength *= f32::from(clip.get(x, y)) / 255.0;
+                    }
+                    // A build-up limit: the layer darkens towards the limit,
+                    // never past it, however often it's gone over.
+                    if self.brush.build_up > 0.0 && self.brush.mode == BrushMode::Paint && !locked {
+                        let a = f32::from(original.a) / 255.0;
+                        let room = (self.brush.build_up - a).max(0.0);
+                        strength *= (room / (1.0 - a).max(1e-3)).min(1.0);
                     }
                     let color = colors.map_or(self.brush.color, |c| c[i]);
                     let pixel = match (self.brush.mode, &self.source) {

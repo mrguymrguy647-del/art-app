@@ -1,0 +1,23 @@
+{
+  "format": "duckquill-preset",
+  "name": "Pencil (graphite)",
+  "description": "A soft graphite pencil: light pressure gives faint grey that catches the paper grain, pressing harder fills it in. Going over it again darkens it only so far.",
+  "smoothing": 0.15,
+  "brush": {
+    "size": 5,
+    "opacity": 0.85,
+    "flow": 1,
+    "hardness": 0.9,
+    "spacing": 0.08,
+    "pressure_size": true,
+    "pressure_size_min": 0.85,
+    "pressure_opacity": true,
+    "pressure_opacity_min": 0.15,
+    "pressure_curve": 1.4,
+    "pressure_flow": false,
+    "grain": 0.75,
+    "grain_scale": 1,
+    "build_up": 0.8,
+    "tip": "round"
+  }
+}

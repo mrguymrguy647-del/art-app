@@ -21,6 +21,7 @@ pub mod layer_transform;
 pub mod noise;
 pub mod pen;
 pub mod pixels;
+pub mod presets;
 pub mod random;
 pub mod script;
 pub mod selection;

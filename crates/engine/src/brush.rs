@@ -164,6 +164,24 @@ pub struct BrushSettings {
     /// number into the list kept by whoever plays the script, which
     /// hands the pattern to the stroke (see `Stroke::with_source`).
     pub source: Option<u32>,
+    /// What the lightest touch still gives, as a fraction of `size` and of
+    /// `opacity` (when pressure changes them). 0: a light touch gives
+    /// almost nothing, as before. A pencil keeps its width (size 0.85)
+    /// but not its darkness (opacity 0.15).
+    pub pressure_size_min: f32,
+    pub pressure_opacity_min: f32,
+    /// How pressure is felt: 1 as it comes; above 1 you must press harder
+    /// to get the full effect (pressure to the power of this).
+    pub pressure_curve: f32,
+    /// Paper grain, 0..1: a light touch only marks the hilltops of a
+    /// paper texture that stays put on the canvas; pressing harder fills
+    /// the valleys too. 0: no grain.
+    pub grain: f32,
+    /// How big the grain is: 1 is fine paper, 2 twice as coarse.
+    pub grain_scale: f32,
+    /// The most a layer darkens however often you go over it, 0..1, as
+    /// graphite goes shiny grey, never black. 0: no limit.
+    pub build_up: f32,
 }
 
 impl Default for BrushSettings {
@@ -183,6 +201,12 @@ impl Default for BrushSettings {
             angle: 0.0,
             dynamics: Dynamics::default(),
             source: None,
+            pressure_size_min: 0.0,
+            pressure_opacity_min: 0.0,
+            pressure_curve: 1.0,
+            grain: 0.0,
+            grain_scale: 1.0,
+            build_up: 0.0,
         }
     }
 }
@@ -213,19 +237,49 @@ impl BrushSettings {
     /// The dab this brush makes at the given pen pressure (0..1).
     pub fn dab(&self, pressure: f32) -> Dab {
         let pressure = pressure.clamp(0.0, 1.0);
-        let scale = |value: f32, use_pressure: bool| {
+        // The pressure as felt: bent by the curve (left exactly as it is
+        // at 1, so every brush made before this setting paints the same).
+        let felt = if self.pressure_curve == 1.0 {
+            pressure
+        } else {
+            pressure.powf(self.pressure_curve.max(0.05))
+        };
+        // From `min` (the lightest touch) up to the full value.
+        let scale = |value: f32, use_pressure: bool, min: f32| {
             if use_pressure {
-                value * pressure
+                value * (min + (1.0 - min) * felt)
             } else {
                 value
             }
         };
         Dab {
             // Never smaller than one pixel across, or very light strokes vanish.
-            radius: (scale(self.size, self.pressure_size) / 2.0).max(0.5),
-            opacity: scale(self.opacity, self.pressure_opacity),
-            flow: scale(self.flow, self.pressure_flow),
+            radius: (scale(self.size, self.pressure_size, self.pressure_size_min) / 2.0).max(0.5),
+            opacity: scale(
+                self.opacity,
+                self.pressure_opacity,
+                self.pressure_opacity_min,
+            ),
+            flow: scale(self.flow, self.pressure_flow, 0.0),
         }
+    }
+
+    /// How much paint lands at canvas pixel (x, y) through the paper
+    /// grain, at this pressure: 1 everywhere when there's no grain. The
+    /// grain is pinned to the canvas, so every stroke meets the same
+    /// hilltops and valleys: the valleys stay white until you press.
+    pub fn grain_at(&self, x: i32, y: i32, pressure: f32) -> f32 {
+        if self.grain <= 0.0 {
+            return 1.0;
+        }
+        let scale = self.grain_scale.max(0.25);
+        let gx = (x as f32 / scale).floor() as i32;
+        let gy = (y as f32 / scale).floor() as i32;
+        let height = GRAIN.at(gx, gy);
+        // How deep the paint reaches: a light touch only the tops, a hard
+        // one most of the way down (never all: graphite always shows grain).
+        let depth = self.grain.min(1.0) * (1.0 - 0.6 * pressure.clamp(0.0, 1.0));
+        smoothstep(depth - 0.15, depth + 0.15, height)
     }
 
     /// Distance between dab centres for a dab of this radius, in pixels.
@@ -247,6 +301,64 @@ pub fn dab_coverage(distance: f32, radius: f32, hardness: f32) -> f32 {
     let t = ((radius - distance) / edge_width + 0.5 / edge_width).clamp(0.0, 1.0);
     // "Smoothstep": an S-shaped curve, so the fade looks natural.
     t * t * (3.0 - 2.0 * t)
+}
+
+fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+    let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// ---- Paper grain -----------------------------------------------------------------
+
+/// How many texels across the grain picture is. It repeats across the
+/// canvas without a seam.
+const GRAIN_SIZE: usize = 256;
+
+/// A paper texture: hills and valleys, 0 (deepest) to 1 (highest), the
+/// same on every machine (made from fixed random numbers, not a file).
+pub struct Grain {
+    heights: Vec<f32>,
+}
+
+/// Made once, the first time a grainy brush paints.
+static GRAIN: LazyLock<Grain> = LazyLock::new(Grain::new);
+
+impl Grain {
+    fn new() -> Grain {
+        // Three layers of bumps (4, 2 and 1 texels apart: paper tooth is
+        // fine, with a little unevenness) on a grid
+        // that wraps around, so the picture tiles; then stretched to 0..1.
+        let mut heights = vec![0.0f32; GRAIN_SIZE * GRAIN_SIZE];
+        let mut random = Random::new(0x00D0_C0FF_EE15_9A1E);
+        for (cell, weight) in [(4usize, 0.4f32), (2, 0.3), (1, 0.3)] {
+            let cells = GRAIN_SIZE / cell;
+            let lattice: Vec<f32> = (0..cells * cells).map(|_| random.unit()).collect();
+            let at = |x: usize, y: usize| lattice[(y % cells) * cells + (x % cells)];
+            for y in 0..GRAIN_SIZE {
+                for x in 0..GRAIN_SIZE {
+                    let (cx, cy) = (x / cell, y / cell);
+                    let fx = smoothstep(0.0, 1.0, (x % cell) as f32 / cell as f32);
+                    let fy = smoothstep(0.0, 1.0, (y % cell) as f32 / cell as f32);
+                    let top = at(cx, cy) + (at(cx + 1, cy) - at(cx, cy)) * fx;
+                    let bottom = at(cx, cy + 1) + (at(cx + 1, cy + 1) - at(cx, cy + 1)) * fx;
+                    heights[y * GRAIN_SIZE + x] += weight * (top + (bottom - top) * fy);
+                }
+            }
+        }
+        let low = heights.iter().copied().fold(f32::MAX, f32::min);
+        let high = heights.iter().copied().fold(f32::MIN, f32::max);
+        for h in &mut heights {
+            *h = (*h - low) / (high - low).max(1e-6);
+        }
+        Grain { heights }
+    }
+
+    /// The height at texel (x, y), repeating in both directions.
+    fn at(&self, x: i32, y: i32) -> f32 {
+        let size = GRAIN_SIZE as i32;
+        let (x, y) = (x.rem_euclid(size) as usize, y.rem_euclid(size) as usize);
+        self.heights[y * GRAIN_SIZE + x]
+    }
 }
 
 // ---- Tip shapes ----------------------------------------------------------------

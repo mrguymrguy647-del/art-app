@@ -1,0 +1,19 @@
+{
+  "format": "duckquill-preset",
+  "name": "Soft eraser",
+  "description": "A big soft eraser for lifting pencil and fading edges; pressing harder makes it bigger.",
+  "eraser": true,
+  "smoothing": 0.1,
+  "brush": {
+    "size": 60,
+    "opacity": 1,
+    "flow": 1,
+    "hardness": 0,
+    "spacing": 0.05,
+    "pressure_size": true,
+    "pressure_size_min": 0.3,
+    "pressure_opacity": false,
+    "pressure_flow": false,
+    "tip": "round"
+  }
+}

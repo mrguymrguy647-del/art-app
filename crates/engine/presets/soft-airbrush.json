@@ -1,0 +1,17 @@
+{
+  "format": "duckquill-preset",
+  "name": "Soft airbrush",
+  "description": "A big soft spray that builds up slowly where you linger or go over it. For shading and glows.",
+  "smoothing": 0,
+  "brush": {
+    "size": 120,
+    "opacity": 1,
+    "flow": 0.08,
+    "hardness": 0,
+    "spacing": 0.05,
+    "pressure_size": false,
+    "pressure_opacity": false,
+    "pressure_flow": true,
+    "tip": "round"
+  }
+}

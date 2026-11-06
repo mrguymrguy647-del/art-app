@@ -1330,3 +1330,48 @@ fn version_and_the_old_format_note() {
         .unwrap();
     assert!(!String::from_utf8_lossy(&check.stdout).contains("old name"));
 }
+
+#[test]
+fn presets_lists_every_built_in_preset_and_a_script_can_use_them() {
+    let out = quill().arg("presets").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    for name in [
+        "Pencil (graphite)",
+        "Ink pen",
+        "Marker",
+        "Soft airbrush",
+        "Chalk",
+        "Soft eraser",
+    ] {
+        assert!(text.contains(&format!("\n{name}")), "{name}: {text}");
+    }
+    assert!(
+        text.contains("\"grain\":0.75"),
+        "the settings are shown: {text}"
+    );
+    // The example line it prints is a brush command that works.
+    let folder = folder("presets");
+    std::fs::create_dir_all(&folder).unwrap();
+    let script = folder.join("pencil.json");
+    std::fs::write(
+        &script,
+        r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 60 },
+            {"cmd": "brush", "preset": "Pencil (graphite)", "color": "#2A2A30"},
+            { "cmd": "stroke", "points": [[10, 30], [110, 30]] }
+        ] }"##,
+    )
+    .unwrap();
+    let check = quill()
+        .args(["check", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let extra = quill().args(["presets", "pencil"]).output().unwrap();
+    assert_eq!(extra.status.code(), Some(2));
+}

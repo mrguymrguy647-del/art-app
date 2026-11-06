@@ -3125,6 +3125,24 @@ impl Player {
             self.brush_alpha = 255;
         }
         let mut brush = self.brush;
+        // A preset first (keeping the colour), then the fields given here.
+        if let Some(name) = &command.preset {
+            let preset = crate::presets::find(name).ok_or_else(|| {
+                let names: Vec<&str> = crate::presets::built_in()
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                format!(
+                    "unknown preset \"{name}\"; the presets are: {}",
+                    names.join(", ")
+                )
+            })?;
+            let (color, source) = (brush.color, brush.source);
+            brush = preset.settings()?;
+            brush.mode = BrushMode::Paint; // `stroke` or `erase` says which
+            brush.color = color;
+            brush.source = source;
+        }
         match &command.color {
             Some(Value::String(color)) => {
                 let [r, g, b, a] = self.color(color)?;
@@ -3141,43 +3159,9 @@ impl Player {
             }
             None => {}
         }
-        if let Some(size) = command.size {
-            brush.size = brush_size(size)?;
-        }
-        if let Some(opacity) = command.opacity {
-            brush.opacity = unit("opacity", opacity)?;
-        }
-        if let Some(flow) = command.flow {
-            brush.flow = unit("flow", flow)?.max(0.01);
-        }
-        if let Some(hardness) = command.hardness {
-            brush.hardness = unit("hardness", hardness)?;
-        }
-        if let Some(spacing) = command.spacing {
-            if !(0.01..=5.0).contains(&spacing) {
-                return Err(format!(
-                    "`spacing` must be between 0.01 and 5, not {spacing}"
-                ));
-            }
-            brush.spacing = spacing;
-        }
-        if let Some(on) = command.pressure_size {
-            brush.pressure_size = on;
-        }
-        if let Some(on) = command.pressure_opacity {
-            brush.pressure_opacity = on;
-        }
-        if let Some(on) = command.pressure_flow {
-            brush.pressure_flow = on;
-        }
+        apply_brush_fields(&mut brush, command)?;
         if let Some(tip) = &command.tip {
             brush.tip = self.tip(tip)?;
-        }
-        if let Some(angle) = command.angle {
-            brush.angle = finite("angle", angle)?;
-        }
-        if let Some(dynamics) = &command.dynamics {
-            brush.dynamics = read_dynamics(dynamics)?;
         }
         self.brush = brush;
         Ok(())
@@ -4925,6 +4909,79 @@ fn paints_or_structures(command: &Command) -> bool {
             | Command::Snapshot(_)
             | Command::Filter(_)
     )
+}
+
+/// The settings a `brush` command sets besides its colour, tip and
+/// preset: the same for scripts and for presets (which are `brush`
+/// commands with a name), so a preset paints the same in both.
+pub(crate) fn apply_brush_fields(
+    brush: &mut BrushSettings,
+    command: &BrushCmd,
+) -> Result<(), String> {
+    if let Some(size) = command.size {
+        brush.size = brush_size(size)?;
+    }
+    if let Some(opacity) = command.opacity {
+        brush.opacity = unit("opacity", opacity)?;
+    }
+    if let Some(flow) = command.flow {
+        brush.flow = unit("flow", flow)?.max(0.01);
+    }
+    if let Some(hardness) = command.hardness {
+        brush.hardness = unit("hardness", hardness)?;
+    }
+    if let Some(spacing) = command.spacing {
+        if !(0.01..=5.0).contains(&spacing) {
+            return Err(format!(
+                "`spacing` must be between 0.01 and 5, not {spacing}"
+            ));
+        }
+        brush.spacing = spacing;
+    }
+    if let Some(on) = command.pressure_size {
+        brush.pressure_size = on;
+    }
+    if let Some(on) = command.pressure_opacity {
+        brush.pressure_opacity = on;
+    }
+    if let Some(on) = command.pressure_flow {
+        brush.pressure_flow = on;
+    }
+    if let Some(angle) = command.angle {
+        brush.angle = finite("angle", angle)?;
+    }
+    if let Some(dynamics) = &command.dynamics {
+        brush.dynamics = read_dynamics(dynamics)?;
+    }
+    if let Some(min) = command.pressure_size_min {
+        brush.pressure_size_min = unit("pressure_size_min", min)?;
+    }
+    if let Some(min) = command.pressure_opacity_min {
+        brush.pressure_opacity_min = unit("pressure_opacity_min", min)?;
+    }
+    if let Some(curve) = command.pressure_curve {
+        if !(0.1..=10.0).contains(&curve) {
+            return Err(format!(
+                "`pressure_curve` must be between 0.1 and 10, not {curve}"
+            ));
+        }
+        brush.pressure_curve = curve;
+    }
+    if let Some(grain) = command.grain {
+        brush.grain = unit("grain", grain)?;
+    }
+    if let Some(scale) = command.grain_scale {
+        if !(0.25..=16.0).contains(&scale) {
+            return Err(format!(
+                "`grain_scale` must be between 0.25 and 16, not {scale}"
+            ));
+        }
+        brush.grain_scale = scale;
+    }
+    if let Some(limit) = command.build_up {
+        brush.build_up = unit("build_up", limit)?;
+    }
+    Ok(())
 }
 
 fn layer_props(document: &Document, id: LayerId) -> LayerProps {
@@ -8606,5 +8663,192 @@ mod tests {
             focal_point(&point, &report, (200, 100)).unwrap(),
             Some((5.0, 6.0))
         );
+    }
+
+    // ---- Brush presets and the pencil (phase 5, step 5) ----------------------
+
+    const PENCIL_SCRIPT: &str = r##"{ "commands": [
+        { "cmd": "canvas", "width": 300, "height": 60, "paper": "#FFFFFF" },
+        { "cmd": "brush", "preset": "Pencil (graphite)", "color": "#000000", "size": 12 },
+        { "cmd": "stroke", "points": [[20, 30, PRESSURE], [280, 30, PRESSURE]] }
+      ] }"##;
+
+    /// Of the pixels in the middle of the pencil line, how many got no
+    /// graphite at all, and the darkest one.
+    fn holes_and_darkest(document: &Document) -> (usize, u8) {
+        let layer = &document.layers()[0].surface;
+        let mut holes = 0;
+        let mut darkest = 0;
+        for y in 27..=33 {
+            for x in 40..260 {
+                let a = layer.pixel(x, y).a;
+                holes += usize::from(a == 0);
+                darkest = darkest.max(a);
+            }
+        }
+        (holes, darkest)
+    }
+
+    #[test]
+    fn a_light_pencil_touch_shows_the_paper_grain_and_pressing_fills_it() {
+        let light = play(&PENCIL_SCRIPT.replace("PRESSURE", "0.2"));
+        let hard = play(&PENCIL_SCRIPT.replace("PRESSURE", "1"));
+        let (light_holes, light_dark) = holes_and_darkest(&light);
+        let (hard_holes, hard_dark) = holes_and_darkest(&hard);
+        assert!(light_holes > 7 * 220 / 5, "light: grainy ({light_holes})");
+        assert!(
+            hard_holes < light_holes / 4,
+            "hard: filled in ({hard_holes})"
+        );
+        assert!(light_dark < hard_dark / 2, "{light_dark} vs {hard_dark}");
+        // The grain stays put on the canvas: the same stroke a little
+        // further along leaves holes in exactly the same places.
+        let moved = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "0.2")
+                .replace("[20, 30", "[10, 30"),
+        );
+        let hole = |d: &Document, x, y| d.layers()[0].surface.pixel(x, y).a == 0;
+        for y in 28..=32 {
+            for x in 60..240 {
+                assert_eq!(hole(&light, x, y), hole(&moved, x, y), "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn going_over_pencil_again_darkens_it_only_so_far() {
+        let again = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "brush", "preset": "Pencil (graphite)", "color": "#000000", "size": 20, "grain": 0 },
+            REPEATS
+          ] }"##;
+        let darkest = |times: usize| {
+            let stroke = r#"{ "cmd": "stroke", "points": [[20, 30], [80, 30]] }"#;
+            let document = play(&again.replace("REPEATS", &vec![stroke; times].join(",")));
+            document.layers()[0].surface.pixel(50, 30).a
+        };
+        let limit = (find_preset("Pencil (graphite)").build_up * 255.0) as u8;
+        assert!(darkest(1) < darkest(3), "it does build up");
+        let many = darkest(12);
+        assert!(many <= limit + 1 && many + 6 >= limit, "{many} vs {limit}");
+        // Without a limit (the plain brush) it goes all the way.
+        let plain = play(&again.replace("REPEATS", r#"{ "cmd": "brush", "build_up": 0, "opacity": 0.5 },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] }"#));
+        assert!(plain.layers()[0].surface.pixel(50, 30).a > limit + 20);
+    }
+
+    fn find_preset(name: &str) -> BrushSettings {
+        crate::presets::find(name).unwrap().settings().unwrap()
+    }
+
+    #[test]
+    fn a_preset_in_a_script_is_the_same_as_its_settings_written_out() {
+        for preset in crate::presets::built_in() {
+            let with_preset = format!(
+                r##"{{ "commands": [
+                    {{ "cmd": "canvas", "width": 200, "height": 80, "paper": "#FFFFFF" }},
+                    {{ "cmd": "brush", "color": "#3050A0" }},
+                    {{ "cmd": "brush", "preset": "{}" }},
+                    {{ "cmd": "stroke", "points": [[20, 40, 0.3], [100, 30, 0.7], [180, 40, 1]] }}
+                  ] }}"##,
+                preset.name
+            );
+            let mut written = preset.brush.clone();
+            written.color = Some(Value::String("#3050A0".into()));
+            let settings = serde_json::to_string(&Command::Brush(written)).unwrap();
+            let reset = if preset.eraser {
+                // The eraser preset's own starting point (the `erase`
+                // command makes any brush erase).
+                r#"{ "cmd": "brush", "reset": true, "size": 40, "hardness": 0.6, "pressure_opacity": false },"#
+            } else {
+                r#"{ "cmd": "brush", "reset": true },"#
+            };
+            let by_hand = with_preset
+                .replace(r##"{ "cmd": "brush", "color": "#3050A0" },"##, reset)
+                .replace(
+                    &format!(r#"{{ "cmd": "brush", "preset": "{}" }}"#, preset.name),
+                    &settings,
+                );
+            assert_eq!(
+                png(&play(&with_preset)),
+                png(&play(&by_hand)),
+                "{}: the colour stays, the rest is the preset's",
+                preset.name
+            );
+        }
+        // Fields after the preset change it; capitals don't matter.
+        let bigger = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("\"size\": 12", "\"size\": 30"),
+        );
+        let pencil = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("Pencil (graphite)", "PENCIL (GRAPHITE)"),
+        );
+        assert_ne!(png(&bigger), png(&pencil));
+    }
+
+    #[test]
+    fn an_unknown_preset_lists_the_ones_there_are() {
+        let problem = error(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("Pencil (graphite)", "Biro"),
+        );
+        assert!(problem.contains("unknown preset \"Biro\""), "{problem}");
+        assert!(problem.contains("Pencil (graphite), Ink pen"), "{problem}");
+        let problem = error(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("\"size\": 12", "\"grain\": 2"),
+        );
+        assert!(problem.contains("`grain` must be from 0 to 1"), "{problem}");
+    }
+
+    #[test]
+    fn a_recorded_brush_after_the_pencil_loses_its_grain() {
+        // The app records every brush change; after the pencil, a plain
+        // brush must come out plain when the recording is played.
+        let pencil = find_preset("Pencil (graphite)");
+        let plain = BrushSettings::default();
+        let line = |settings: &BrushSettings, y: f32| {
+            crate::script::record::stroke(
+                "Ink",
+                settings,
+                &[
+                    StrokePoint::new(20.0, y, 0.5),
+                    StrokePoint::new(180.0, y, 0.5),
+                ],
+                None,
+            )
+        };
+        let mut both = vec![crate::script::record::brush(&pencil, true)];
+        both.extend(line(&pencil, 10.0));
+        both.push(crate::script::record::brush(&plain, true));
+        both.extend(line(&plain, 40.0));
+        let mut only_plain = vec![crate::script::record::brush(&plain, true)];
+        only_plain.extend(line(&plain, 40.0));
+        let render = |commands: Vec<Command>| {
+            let script = crate::script::record::script(200, 80, Rgba8::WHITE, commands, None, None);
+            let text = script.to_json();
+            play(&text)
+        };
+        let both = render(both);
+        let plain_only = render(only_plain);
+        // The second line (drawn plain) is the same in both.
+        for x in 30..170 {
+            for y in 30..50 {
+                assert_eq!(
+                    both.layers()[0].surface.pixel(x, y),
+                    plain_only.layers()[0].surface.pixel(x, y)
+                );
+            }
+        }
     }
 }

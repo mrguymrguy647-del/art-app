@@ -71,6 +71,8 @@ USAGE
                                            painted on each layer
   quill measure \"some text\" [--size n]     how wide and high a text would be
                                            (and the size that fits --fit width)
+  quill presets                            the built-in brush presets, for
+                                           {\"cmd\": \"brush\", \"preset\": \"...\"}
   quill views <script.json> [options]      the picture seven ways on one sheet
                                            (<name>-views.png): as painted, gray,
                                            squinted, a thumbnail, flipped, the
@@ -184,17 +186,17 @@ EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
   --animation <name> only this animation
 
 EXAMPLES
-  quill render                             examples/sunset.json --preview --sheet
-  quill render                             examples/sunset.json --out render --snapshots
-  quill render                             examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
-  quill render                             examples/sunset.json --preview --layers \"Sky,Sun\"
-  quill export                             examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
-  quill views                              examples/sunset.json
-  quill critique                           examples/sunset.json
-  quill palette                            skills/duck-quill/references/coffee.png --colors 6
-  quill compare                            out/study.png skills/duck-quill/references/coffee.png
-  quill gallery add                        out/forest.json --name forest-at-dawn
-  quill blind-read                         out/forest.json
+  quill render examples/sunset.json --preview --sheet
+  quill render examples/sunset.json --out render --snapshots
+  quill render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
+  quill render examples/sunset.json --preview --layers \"Sky,Sun\"
+  quill export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
+  quill views examples/sunset.json
+  quill critique examples/sunset.json
+  quill palette skills/duck-quill/references/coffee.png --colors 6
+  quill compare out/study.png skills/duck-quill/references/coffee.png
+  quill gallery add out/forest.json --name forest-at-dawn
+  quill blind-read out/forest.json
 
 The script format is described in docs/script-format.md.";
 
@@ -218,6 +220,7 @@ pub fn run(args: &[String]) -> ExitCode {
             )),
         },
         Some("measure") => measure(&args[1..]),
+        Some("presets") => presets(&args[1..]),
         Some("views") => views::parse_views(&args[1..]).and_then(|options| views::views(&options)),
         Some("critique") => {
             critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
@@ -248,6 +251,32 @@ pub fn run(args: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `quill presets`: each built-in brush preset with what it's for and
+/// its settings, so an agent knows what `"preset"` gives.
+fn presets(args: &[String]) -> Result<(), Problem> {
+    if let Some(extra) = args.first() {
+        return Err(Problem::Usage(format!(
+            "presets takes nothing more (got \"{extra}\")"
+        )));
+    }
+    say!("The built-in brush presets. In a script:");
+    say!("  {{\"cmd\": \"brush\", \"preset\": \"Pencil (graphite)\", \"color\": \"#2A2A30\"}}");
+    say!("(the colour stays as it was unless given; other fields change the preset)");
+    for preset in quill_engine::presets::built_in() {
+        say!("");
+        let eraser = if preset.eraser {
+            " (an eraser: paint with `erase`)"
+        } else {
+            ""
+        };
+        say!("{}{eraser}", preset.name);
+        say!("  {}", preset.description);
+        let settings = serde_json::to_string(&preset.brush).unwrap_or_default();
+        say!("  {settings}");
+    }
+    Ok(())
 }
 
 /// Why quill stopped.

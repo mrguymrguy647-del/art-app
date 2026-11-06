@@ -1,0 +1,20 @@
+{
+  "format": "duckquill-preset",
+  "name": "Chalk",
+  "description": "Broken, grainy chalk that varies a little dab to dab. Good for texture and rough fills.",
+  "smoothing": 0.1,
+  "brush": {
+    "size": 30,
+    "opacity": 0.9,
+    "flow": 1,
+    "hardness": 0.6,
+    "spacing": 0.1,
+    "pressure_size": true,
+    "pressure_size_min": 0.5,
+    "pressure_opacity": true,
+    "pressure_opacity_min": 0.3,
+    "pressure_flow": false,
+    "tip": "chalk",
+    "dynamics": { "follow": true, "angle": 40, "size": 0.15, "opacity": 0.2 }
+  }
+}

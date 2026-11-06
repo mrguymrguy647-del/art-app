@@ -1,0 +1,17 @@
+{
+  "format": "duckquill-preset",
+  "name": "Marker",
+  "description": "A felt marker: even, a little see-through, the same width however hard you press. Overlapping strokes darken.",
+  "smoothing": 0.2,
+  "brush": {
+    "size": 24,
+    "opacity": 0.7,
+    "flow": 1,
+    "hardness": 0.95,
+    "spacing": 0.05,
+    "pressure_size": false,
+    "pressure_opacity": false,
+    "pressure_flow": false,
+    "tip": "round"
+  }
+}

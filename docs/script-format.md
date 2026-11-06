@@ -197,8 +197,24 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 | `tip` | The dab's shape: `"round"` (default), `"square"`, `"bristle"`, `"chalk"`, `"leaf"`, `"grass"`, `"sparkle"`, or `{ "file": "tips/splat.png" }`. See [Brushes with character](#brushes-with-character). |
 | `angle` | How far the tip is turned, degrees clockwise. |
 | `dynamics` | How dabs vary along a stroke (see below). Replaces the dynamics as a whole: `{}` turns them all off. |
+| `pressure_size_min`, `pressure_opacity_min` | What the lightest touch still gives, 0 to 1, of the size and the opacity (default 0). A pencil keeps its width (0.85) but not its darkness (0.15). |
+| `pressure_curve` | How pressure is felt (0.1 to 10, default 1). Above 1, you must press harder for the full effect. |
+| `grain` | Paper grain, 0 to 1 (default 0). A light touch marks only the paper's bumps; pressing harder fills the dips. The grain is fixed to the canvas, so every stroke meets the same bumps. |
+| `grain_scale` | How coarse the grain is (0.25 to 16, default 1, which is fine paper). |
+| `build_up` | The most the layer darkens however often you go over it, 0 to 1 (default 0: no limit), as graphite turns shiny grey and never black. |
+| `preset` | A built-in preset by name: all its settings except the colour, then any other fields in this command on top. List the presets with `quill presets`. |
 
 Only the settings given change.
+
+```json
+{ "cmd": "brush", "preset": "Pencil (graphite)", "color": "#2A2A30" }
+{ "cmd": "brush", "preset": "Ink pen", "size": 3 }
+```
+
+The built-in presets are **Pencil (graphite)**, **Ink pen**, **Marker**, **Soft airbrush**,
+**Chalk** and **Soft eraser**. They're part of the program, so a script that names one paints
+the same on every machine. Presets you make in the app aren't available to scripts: give the
+settings themselves instead. For the eraser preset, paint with `erase`.
 
 ### `stroke` and `erase` — like a pen
 

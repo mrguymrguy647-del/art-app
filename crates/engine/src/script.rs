@@ -19,7 +19,7 @@
 
 pub mod animate;
 pub(crate) mod geometry;
-mod player;
+pub(crate) mod player;
 pub mod record;
 pub mod reuse;
 
@@ -643,6 +643,10 @@ pub struct BrushCmd {
     /// `true`: back to the plain brush first (then any settings given).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<bool>,
+    /// A built-in preset by name, e.g. "Pencil (graphite)": all its
+    /// settings (not the colour), then any others given here on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     /// A colour, or a pattern to paint with: `{"noise": {...}}` or
     /// `{"texture": ...}` (see `fill`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -675,6 +679,23 @@ pub struct BrushCmd {
     /// (`{}` turns them all off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamics: Option<DynamicsCmd>,
+    /// What the lightest touch still gives, 0..1, of the size and of the
+    /// opacity (see `brush::BrushSettings`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_size_min: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_opacity_min: Option<f32>,
+    /// Above 1: press harder for the full effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_curve: Option<f32>,
+    /// Paper grain, 0..1, and how coarse it is (1: fine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain_scale: Option<f32>,
+    /// The most a layer darkens from going over it again, 0..1 (0: no limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_up: Option<f32>,
 }
 
 /// `select`: from here on, every painting command stays inside the
