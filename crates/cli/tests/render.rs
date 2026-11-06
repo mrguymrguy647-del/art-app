@@ -1501,3 +1501,64 @@ fn tile_shows_the_picture_two_by_two_and_where_edges_do_not_meet() {
     assert!(text.contains("tile: opposite edges meet"), "{text}");
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn atlas_packs_tiles_into_one_png_with_their_places() {
+    let out = folder("atlas");
+    std::fs::create_dir_all(&out).unwrap();
+    let tile = |name: &str, color: &str, size: u32| {
+        let path = out.join(format!("{name}.json"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{ "commands": [ {{ "cmd": "canvas", "width": {size}, "height": {size}, "paper": "{color}" }},
+                   {{ "cmd": "rect", "x": 0, "y": 0, "width": {size}, "height": {size}, "fill": "{color}" }} ] }}"#
+            ),
+        )
+        .unwrap();
+        path.to_str().unwrap().to_owned()
+    };
+    let (grass, water, rock) = (
+        tile("grass", "#40A040", 16),
+        tile("water", "#3070D0", 16),
+        tile("rock", "#808080", 16),
+    );
+    let run = quill()
+        .args([
+            "atlas",
+            &grass,
+            &water,
+            &rock,
+            "--name",
+            "ground",
+            "--columns",
+            "3",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("ground.json")).unwrap()).unwrap();
+    assert_eq!(json["columns"], 3);
+    assert_eq!(json["tile"]["width"], 16);
+    assert_eq!(json["tiles"]["water"]["x"], 16);
+    assert_eq!(json["tiles"]["rock"]["index"], 2);
+    let image = quill_engine::image::Image::load(&out.join("ground.png")).unwrap();
+    assert_eq!((image.width(), image.height()), (48, 16));
+    // Each tile's pixels are where the JSON says.
+    assert_eq!(image.pixel(20, 5), [0x30, 0x70, 0xD0, 255]);
+    // Two tiles with one name is a mistake.
+    let again = quill()
+        .args(["atlas", &grass, &grass, "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(1));
+    std::fs::remove_dir_all(out).ok();
+}

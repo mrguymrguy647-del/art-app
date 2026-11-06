@@ -619,6 +619,10 @@ The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as t
 colours at both edges, or let a gradient run the same at top and bottom) until it says the edges
 meet.
 
+**Tilesets:** one small script per tile or sprite, then `quill atlas grass.json water.json --name
+ground` packs them into `ground.png` with `ground.json` saying where each one is (see
+`docs/sprite-sheet-format.md`, "Tilesets").
+
 ## 11. Speed
 
 - A 1600×1000 render takes well under a second; `--preview` about a third of that. `check`

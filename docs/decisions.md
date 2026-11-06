@@ -2003,3 +2003,8 @@ two false alarms. Every finding, before and after:
   pixels (its median), and at least 24 of 255: a noisy texture isn't a
   seam for being noisy. Edges where more than 5% jump are reported,
   with the longest stretch, in canvas pixels.
+- **`quill atlas`**: one script per tile or sprite (so each can be
+  checked and critiqued on its own), packed in the order given. Tiles
+  of one size make an exact grid (with `tile`, `columns` and `rows` in
+  the JSON, so a game can cut by size); mixed sizes go in rows as tall
+  as their tallest tile. Tiles are named after their script files.

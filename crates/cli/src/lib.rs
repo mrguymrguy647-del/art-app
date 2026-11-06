@@ -21,6 +21,7 @@ macro_rules! complain {
     };
 }
 
+mod atlas;
 mod blind_read;
 mod critique;
 mod export;
@@ -72,6 +73,9 @@ USAGE
                                            painted on each layer
   quill measure \"some text\" [--size n]     how wide and high a text would be
                                            (and the size that fits --fit width)
+  quill atlas <a.json> <b.json> ...        tiles or sprites (one script each)
+                                           packed into one PNG with a JSON of
+                                           where each one is, for a game
   quill presets                            the built-in brush presets, for
                                            {\"cmd\": \"brush\", \"preset\": \"...\"}
   quill views <script.json> [options]      the picture seven ways on one sheet
@@ -192,12 +196,20 @@ EXPORT OPTIONS (for scripts with animations; docs/sprite-sheet-format.md)
                      the paper colour if not given)
   --animation <name> only this animation
 
+ATLAS OPTIONS (docs/sprite-sheet-format.md, \"Tilesets\")
+  --out <folder>     where to save (default: out)
+  --name <name>      <name>.png and <name>.json (default: atlas)
+  --columns <n>      tiles per row (default: about a square)
+  --padding <n>      see-through pixels between tiles (default 0)
+  --scale <n>        n times bigger, with sharp pixels (for pixel art)
+
 EXAMPLES
   quill render examples/sunset.json --preview --sheet
   quill render examples/sunset.json --out render --snapshots
   quill render examples/sunset.json --crop 700,450,200,150 --zoom 3 --grid 50
   quill render examples/sunset.json --preview --layers \"Sky,Sun\"
   quill export examples/duck-animated.json --gif --scale 2 --bg \"#4080A0\"
+  quill atlas tiles/grass.json tiles/water.json tiles/sand.json --name ground
   quill views examples/sunset.json
   quill critique examples/sunset.json
   quill palette skills/duck-quill/references/coffee.png --colors 6
@@ -221,6 +233,7 @@ const COMMANDS: &[(&str, Option<&str>)] = &[
     ("info", None),
     ("measure", None),
     ("presets", None),
+    ("atlas", Some("ATLAS OPTIONS")),
     ("views", Some("VIEWS OPTIONS")),
     ("critique", Some("CRITIQUE OPTIONS")),
     ("palette", Some("PALETTE, VALUES AND COMPARE OPTIONS")),
@@ -317,6 +330,7 @@ pub fn run(args: &[String]) -> ExitCode {
         },
         Some("measure") => measure(&args[1..]),
         Some("presets") => presets(&args[1..]),
+        Some("atlas") => atlas::parse_atlas(&args[1..]).and_then(|options| atlas::atlas(&options)),
         Some("views") => views::parse_views(&args[1..]).and_then(|options| views::views(&options)),
         Some("critique") => {
             critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
