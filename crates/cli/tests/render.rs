@@ -1145,3 +1145,105 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
     assert_eq!(output.status.code(), Some(2));
     std::fs::remove_dir_all(out).ok();
 }
+
+#[test]
+fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
+    let out = folder("blind");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sunset-duck.json");
+    std::fs::write(
+        &script,
+        r##"{ "title": "A duck at sunset", "palette": { "sky": "#F0A050", "ink": "#202020" },
+          "intent": { "subject": "a duck at sunset", "focal": "duck", "mood": "calm" },
+          "commands": [
+            { "cmd": "canvas", "width": 120, "height": 80, "paper": "sky" },
+            { "cmd": "group", "name": "duck", "commands": [
+              { "cmd": "ellipse", "center": [60, 50], "radius": [18, 10], "fill": "ink" } ] } ] }"##,
+    )
+    .unwrap();
+    let packets = out.join("packets");
+    let output = art_cli()
+        .args(["blind-read", script.to_str().unwrap(), "--out"])
+        .arg(&packets)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    let packet = std::fs::read_dir(&packets)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let name = packet.file_name().unwrap().to_str().unwrap().to_owned();
+    assert!(
+        name.starts_with("blind-read-") && name.len() == 15,
+        "{name}"
+    );
+    let code = &name[11..];
+    let mut files: Vec<String> = std::fs::read_dir(&packet)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        [format!("piece-{code}.png"), "questions.txt".to_owned()]
+    );
+    let questions = std::fs::read_to_string(packet.join("questions.txt")).unwrap();
+    assert!(questions.contains("What do you see?") && questions.contains("mood"));
+    for leak in ["duck", "sunset", "script", "intent", "calm"] {
+        assert!(
+            !questions.to_lowercase().contains(leak),
+            "the questions leak {leak:?}"
+        );
+        assert!(!name.contains(leak));
+    }
+    // The same picture gets the same name.
+    let again = art_cli()
+        .args(["blind-read", script.to_str().unwrap(), "--out"])
+        .arg(&packets)
+        .output()
+        .unwrap();
+    assert!(again.status.success());
+    assert_eq!(std::fs::read_dir(&packets).unwrap().count(), 1);
+    // Recording the answers writes blind-read.md next to the script.
+    let answers = out.join("answers.txt");
+    std::fs::write(
+        &answers,
+        "1. A dark oval on orange.\n2. The oval.\n3. Warm, quiet.\n",
+    )
+    .unwrap();
+    let output = art_cli()
+        .args([
+            "blind-read",
+            script.to_str().unwrap(),
+            "--record",
+            answers.to_str().unwrap(),
+            "--verdict",
+            "doesn't read: it saw an oval, not a duck",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    let record = std::fs::read_to_string(out.join("blind-read.md")).unwrap();
+    assert!(record.contains("A dark oval on orange."));
+    assert!(record.contains("subject: a duck at sunset"), "{record}");
+    assert!(
+        record.contains("**doesn't read: it saw an oval, not a duck**"),
+        "{record}"
+    );
+    assert!(record.contains(&format!("piece-{code}.png")));
+    let output = art_cli()
+        .args([
+            "blind-read",
+            script.to_str().unwrap(),
+            "--record",
+            answers.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "--record needs --verdict");
+    std::fs::remove_dir_all(out).ok();
+}

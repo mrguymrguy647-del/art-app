@@ -146,24 +146,42 @@ Areas: `{"rect": [x, y, w, h]}`, `{"ellipse": [cx, cy, rx, ry]}`, `{"circle": [c
 Drawing commands can change the brush just for themselves: `color`, `size`, `opacity`, `hardness`,
 `flow`. Add `jitter` (pixels) for a hand-made wobble.
 
-## 4. A workflow that works
+## 4. The painting process
 
-1. **Plan before painting.** Choose the canvas size and the composition: where's the horizon,
-   where's the main subject (a third of the way across often works better than the middle),
-   where does the light come from? Write a **palette of 8–15 colours** with names that say what
-   they're for (`sky_top`, `shadow`, `rim`), and the **intent block** (subject, focal point,
-   light, mood, key colours): the measure the senses hold the picture to. A small palette looks
-   deliberate.
-2. **Block in, back to front**, each part on its own layer: sky → far things → middle → near
-   things. Big shapes only: gradients, `polygon`, closed `path`s, `ellipse`s. `snapshot`.
-3. **Check:** `--preview --sheet`. Does the picture read at a glance? Are the darks and lights in
-   the right places? Fix the big things now; it's cheap.
-4. **Light and shadow** on their own layers: a `multiply` layer for shadows, `screen` or `add`
-   for glows, a few thin `screen` strokes for rim light. `snapshot`.
-5. **Texture and detail**: `scatter`, `hatch`, `jitter`, small strokes. Mostly near the focal
-   point and in front; far things need less. `snapshot`.
-6. **Inspect details** with `--crop … --zoom 3`. Then the full render.
-7. **Deliver** the PNG, the `.artapp` (layers kept, can be opened in the app) and the script.
+The stages a good painter follows, with what to check at each. After every stage: `art-cli
+views` and `art-cli critique`, and fix before moving on. The numbers are warnings, never goals:
+never trade a better-looking picture for a better number, and the person's rating outranks
+every number.
+
+| Stage | Do | Check |
+|---|---|---|
+| 1. Intent | Write the intent block and the palette (8–15 colours, named for their jobs: `sky_top`, `shadow`, `rim`). Read `skills/art-app/lessons.md` and the 2–3 nearest gallery pieces (`skills/art-app/gallery/index.json` has tags). | `check` prints the intent back; the key colours exist; no warnings. |
+| 2. Thumbnail | At `render --scale 0.1`: three to five big value shapes, nothing else. Where's the horizon, where's the subject (a third of the way across usually beats the middle), where's the light from? | views: the thumb reads; critique: 3+ value groups when squinted, the focal point near where it's wanted. |
+| 3. Values | Full size, still mostly grey or one hue: light and dark decided for every shape, each part on its own layer, back to front. `snapshot`. | critique values and readability: no part merges at thumbnail size; the focal point has the strongest contrast. |
+| 4. Colour blocking | Flat local colours in key, back to front. | critique colour: nothing out of key; warm/cool as the mood wants. |
+| 5. Light and form | Clipped shadow (`multiply`) and light (`screen`) layers, the light's direction kept; rim light where the light grazes. `snapshot`. | views: the squint shows form; critique: the focal point has the strongest contrast, no smudge. |
+| 6. Detail at the focal point | Texture, edges, marks, mostly within four cells of the focal point; far things need less. `snapshot`. | critique texture: detail gathers at the focal point; nothing noisy, blotchy, or flat that shouldn't be; no soft edge letting the background through. |
+| 7. Finish | Glow, shadow, mood pass (gradient map at 0.2), paper. `--crop … --zoom 3` on the focal point. | views and critique again (the mood pass shifts hues: check `out of key` after it); then the blind-read test. |
+
+**The detail budget.** A finished 1080p painting is usually hundreds of commands, and most of
+the detail commands are at the focal point; a background earns ten commands, a face a hundred.
+
+**The blind-read test** before calling a painting done: give only the picture to a separate
+agent (or a fresh session) and ask three questions without telling it the intent: *What do you
+see? What's the focal point? What mood?* Compare with the intent; if the answers don't match,
+the picture doesn't read yet. It must be leak-proof: file names, titles, folder names and the
+script all leak the intent, so `art-cli blind-read picture.json` prepares a packet in a folder
+of its own (`out/blind-read-7f3a/`): the picture copied as `piece-7f3a.png` (the four hex
+characters come from a hash of the pixels, so the same picture gets the same name), no script,
+no title, and `questions.txt` with the three standard questions. The reader gets only that
+folder. Then `art-cli blind-read picture.json --record answers.txt --verdict "reads"` (or
+`--verdict "doesn't read: it called the duck a rock"`) writes the questions, the answers, the
+intent and the verdict into `blind-read.md` next to the script. Never send the script, the
+notes or a named file.
+
+**After painting:** `notes.md` (what each tool did, what's still weak) with its "Proposed
+lessons" section, `art-cli gallery add`, and the person's rating. Deliver the PNG, the views
+sheet, the critique, the blind read, the `.artapp` (layers kept) and the script.
 
 ## 5. Techniques that work (all from the examples)
 

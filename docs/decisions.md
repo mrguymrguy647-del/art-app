@@ -1542,3 +1542,31 @@ two false alarms. Every finding, before and after:
   study is the value structure; the colour score says whether the key
   is the same, not whether the study is good.
 
+## 75. The painting process and the leak-proof blind read (phase 4, step 6)
+
+- **Seven stages, each with its check.** The process in the skill and
+  the guide is the order a painter who knows the craft works in: intent,
+  thumbnail, values, colour, light and form, detail at the focal point,
+  finish. Each stage names what `views` and `critique` should show
+  before the next one starts, so the senses are used as a painter uses
+  a mirror and a squint, not as a score at the end. The detail budget
+  is written down because it's the mistake the agent makes most: detail
+  everywhere, little at the focal point.
+- **The blind read leaks nothing by construction.** The packet is a
+  folder of its own with two files: the picture as `piece-<4 hex>.png`
+  and `questions.txt`. The four characters are an FNV-1a hash of the
+  pixels (the same picture gets the same packet; nothing in the name
+  says what the picture is), and a test checks that neither the folder
+  name nor the questions contain the subject, the title, the mood or the
+  word "script". The reader is given the folder and nothing else; the
+  skill and the guide say in so many words never to send the script,
+  the notes or a named file. The record (`--record` with `--verdict`)
+  writes the questions, the answers as given, the intent they're
+  measured against and the verdict into `blind-read.md` next to the
+  script, so the gallery keeps it; the verdict is "reads" or "doesn't
+  read: why", and a free-form verdict is refused so the record stays
+  comparable.
+- **No model calls from art-cli.** The reader is another agent or a
+  fresh session by procedure (the design's rule): art-cli only makes
+  the packet and keeps the record.
+

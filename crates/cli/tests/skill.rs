@@ -152,7 +152,7 @@ fn every_art_cli_command_and_option_it_mentions_exists() {
     for (i, _) in code.match_indices("art-cli ") {
         let command: String = code[i + 8..]
             .chars()
-            .take_while(char::is_ascii_lowercase)
+            .take_while(|c| c.is_ascii_lowercase() || *c == '-')
             .collect();
         if !command.is_empty() {
             assert!(
@@ -456,6 +456,33 @@ fn every_reference_picture_is_licensed_and_studied() {
         assert!(output.status.success());
     }
     std::fs::remove_dir_all(out).ok();
+}
+
+/// The skill tells the painting process: seven stages with a check for
+/// each, the detail budget, and the blind-read test with its warning.
+#[test]
+fn it_tells_the_painting_process() {
+    let skill = skill();
+    for stage in [
+        "| 1 Intent",
+        "| 2 Thumbnail",
+        "| 3 Values",
+        "| 4 Colour",
+        "| 5 Light and form",
+        "| 6 Detail",
+        "| 7 Finish",
+    ] {
+        assert!(skill.contains(stage), "the process lacks {stage:?}");
+    }
+    for phrase in [
+        "Detail budget",
+        "art-cli blind-read picture.json",
+        "never the script, the notes or a named file",
+        "Numbers are warnings, never goals",
+        "rating outranks every number",
+    ] {
+        assert!(skill.contains(phrase), "the skill doesn't say {phrase:?}");
+    }
 }
 
 /// The learning folder: lessons each name a piece or picture that shows

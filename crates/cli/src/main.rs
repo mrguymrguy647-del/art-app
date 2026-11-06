@@ -21,6 +21,7 @@ macro_rules! complain {
     };
 }
 
+mod blind_read;
 mod critique;
 mod export;
 mod font;
@@ -92,6 +93,12 @@ USAGE
                                            blind-read skeleton, notes and an
                                            index entry with tags
   art-cli gallery rate <name> <1-5> \"why\"  the person's rating into index.json
+  art-cli blind-read <script.json>         the leak-proof blind-read test: a packet
+                                           (the picture under a neutral name and
+                                           the three questions, nothing else) for
+                                           a reader who wasn't told the intent;
+                                           --record answers.txt --verdict \"reads\"
+                                           writes blind-read.md next to the script
   art-cli help                             show this
 
 RENDER OPTIONS
@@ -141,6 +148,11 @@ PALETTE, VALUES AND COMPARE OPTIONS
   --out <folder>     where to save (default: out)
   --colors <n>       for palette: this many colours (default 8)
 
+BLIND-READ OPTIONS
+  --out <folder>     where the packet goes (default: out)
+  --record <file>    the reader's answers, to write into blind-read.md
+  --verdict \"...\"    with --record: \"reads\", or \"doesn't read: why\"
+
 GALLERY OPTIONS
   --out <folder>     the gallery (default: skills/art-app/gallery)
   --title \"...\"      for add: the piece's title (default: the script's)
@@ -177,6 +189,7 @@ EXAMPLES
   art-cli palette skills/art-app/references/coffee.png --colors 6
   art-cli compare out/study.png skills/art-app/references/coffee.png
   art-cli gallery add out/forest.json --name forest-at-dawn
+  art-cli blind-read out/forest.json
 
 The script format is described in docs/script-format.md.";
 
@@ -203,6 +216,7 @@ fn main() -> ExitCode {
             critique::parse_critique(&args[1..]).and_then(|options| critique::critique(&options))
         }
         Some("gallery") => gallery::gallery(&args[1..]),
+        Some("blind-read") => blind_read::blind_read(&args[1..]),
         Some("palette") => study::palette(&args[1..]),
         Some("values") => study::values(&args[1..]),
         Some("compare") => study::compare(&args[1..]),
