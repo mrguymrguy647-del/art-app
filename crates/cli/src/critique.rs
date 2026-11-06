@@ -24,6 +24,8 @@ pub struct CritiqueOptions {
     pub frames: (u32, Option<u32>),
     /// Also every part's numbers.
     pub detail: bool,
+    /// Also the benchmark's five scores from the numbers.
+    pub score: bool,
 }
 
 pub fn parse_critique(args: &[String]) -> Result<CritiqueOptions, Problem> {
@@ -32,6 +34,7 @@ pub fn parse_critique(args: &[String]) -> Result<CritiqueOptions, Problem> {
         animation: None,
         frames: (0, None),
         detail: false,
+        score: false,
     };
     let mut script = None;
     let mut rest = args.iter();
@@ -44,6 +47,7 @@ pub fn parse_critique(args: &[String]) -> Result<CritiqueOptions, Problem> {
         match arg.as_str() {
             "--animation" => options.animation = Some(value("--animation")?),
             "--detail" => options.detail = true,
+            "--score" => options.score = true,
             "--frame" => {
                 let text = value("--frame")?;
                 let n = text.parse::<u32>().map_err(|_| {
@@ -79,8 +83,8 @@ pub fn parse_critique(args: &[String]) -> Result<CritiqueOptions, Problem> {
     }
     options.script = script.ok_or_else(|| {
         Problem::Usage(
-            "critique needs one script file (and maybe --detail, --frame n, --frames a-b, \
-             --animation)"
+            "critique needs one script file (and maybe --detail, --score, --frame n, \
+             --frames a-b, --animation)"
                 .into(),
         )
     })?;
@@ -232,6 +236,13 @@ pub fn critique(options: &CritiqueOptions) -> Result<(), Problem> {
                 for line in critique.detail_lines() {
                     say!("    {line}");
                 }
+            }
+            if options.score {
+                say!(
+                    "  benchmark scores from the numbers (skills/art-app/exercises/benchmark.md; \
+                     overall appeal is not a number's to give): {}",
+                    critique.scores().line()
+                );
             }
         }
         Some(last) => {

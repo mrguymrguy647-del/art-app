@@ -485,7 +485,9 @@ haze band); *readability* at 96 px (a part merges when its value differs from th
 it by under 0.12 and its hue by under 30 degrees); *composition* (the heat's centre of weight,
 a dead-centre focal point, a focal part cut by the edge, a part called `horizon` in the middle).
 `--detail` prints every part's and layer's numbers; `--frames 0-7` gives one line per frame of
-an animation and names the worst.
+an animation and names the worst; `--score` maps the critique to the benchmark's five scores
+(`skills/art-app/exercises/benchmark.md`: four fixed subjects, a scoring guide, three scorers:
+the numbers, a separate agent, the person).
 
 The numbers are warnings, never goals. Never trade a better-looking picture for a better
 number, and a person's rating outranks every number. They can't tell whether a cloud looks

@@ -1020,6 +1020,17 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
     assert!(text.contains("the focal point is dead centre"), "{text}");
     assert!(text.contains("every part's numbers:"), "{text}");
     assert!(text.contains("Numbers can't judge beauty"), "{text}");
+    let scored = art_cli()
+        .args(["critique", script.to_str().unwrap(), "--score"])
+        .output()
+        .unwrap();
+    let scored = String::from_utf8_lossy(&scored.stdout);
+    // A flat picture whose eye goes elsewhere scores low by the numbers.
+    assert!(
+        scored.contains("benchmark scores from the numbers")
+            && scored.contains("readability 1, values 1, colour 2, focal point 2, detail 3"),
+        "{scored}"
+    );
     let again = art_cli()
         .args(["critique", script.to_str().unwrap(), "--detail"])
         .output()

@@ -751,3 +751,57 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     assert!(!ok && text.contains("1 to 5"), "{text}");
     std::fs::remove_dir_all(out).ok();
 }
+
+/// The benchmark: four subjects with briefs and intents, a scoring guide
+/// with a sentence per score, three scorers and the fixed mapping; and
+/// the results table with the baselines scored by the numbers and by a
+/// separate agent.
+#[test]
+fn the_benchmark_has_its_subjects_guide_and_baselines() {
+    let guide =
+        std::fs::read_to_string(root().join("skills/art-app/exercises/benchmark.md")).unwrap();
+    for subject in [
+        "Sunset pond",
+        "Forest at dawn",
+        "Character portrait",
+        "Pixel walk",
+    ] {
+        assert!(
+            guide.contains(&format!("| {subject} |")),
+            "no subject {subject}"
+        );
+    }
+    for thing in [
+        "**Readability**",
+        "**Values**",
+        "**Colour**",
+        "**Focal point**",
+        "**Detail**",
+        "**Overall appeal**",
+    ] {
+        assert!(guide.contains(thing), "the guide lacks {thing}");
+    }
+    assert!(guide.contains("## The fixed mapping"));
+    assert!(guide.contains("art-cli critique piece.json --score"));
+    assert!(guide.contains("The person's rating outranks every number"));
+    let results =
+        std::fs::read_to_string(root().join("skills/art-app/gallery/benchmark.md")).unwrap();
+    for piece in ["sunset-pond-simple", "sunset-pond", "duck-portrait"] {
+        let rows: Vec<&str> = results
+            .lines()
+            .filter(|l| l.contains(&format!("| {piece} |")))
+            .collect();
+        assert!(
+            rows.iter().any(|r| r.contains("| numbers |")),
+            "{piece}: no numbers row"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("| agent |")),
+            "{piece}: no agent row"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains("| person |")),
+            "{piece}: no person row"
+        );
+    }
+}

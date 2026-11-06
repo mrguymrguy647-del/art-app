@@ -1610,3 +1610,27 @@ two false alarms. Every finding, before and after:
   commands were skipped. The per-layer restore point (restore after the
   last painter, not at the start of the frame) is what makes a layer
   read by a later effect still static.
+
+## 77. The benchmark (phase 4, step 8)
+
+- **Four fixed subjects, six scores, three scorers.** The subjects
+  (sunset pond, forest at dawn, character portrait, pixel walk) have a
+  brief and the intent to use, so a phase 5 pond is comparable with a
+  phase 4 pond. Each score has a sentence per step so the numbers, a
+  separate agent and the person mean the same thing by a 3. The
+  person's rating outranks every number, as everywhere in phase 4.
+- **The numbers' mapping is fixed and written down** in
+  `exercises/benchmark.md`, and `critique --score` implements it, so a
+  score can be re-derived from the critique and a change to the critique
+  shows up as a change in the baseline rows.
+- **The baselines show the gap the numbers can't close.** The numbers
+  give the flat phase 3 example pond 5, 5, 3, 5, 4; the agent gives it
+  3, 3, 3, 3, 2 and overall 2 ("a clean diagram"). The numbers give the
+  duck portrait readability 2 because two small named parts don't read
+  at 96 px; the agent gives it 5. Both are recorded in
+  `gallery/benchmark.md` with the reason, as the design said: where the
+  scorers part ways is a lesson. The lesson from the portrait is for
+  the process (name the parts that must read), not a change to the
+  measure.
+- **Overall appeal is never a number.** The numbers' row leaves it
+  blank; only the agent and the person give it.

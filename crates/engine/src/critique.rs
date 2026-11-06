@@ -357,8 +357,30 @@ pub struct Composition {
     pub horizon: Option<f32>,
 }
 
+/// The benchmark's scores from the numbers, 1 to 5 each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scores {
+    pub readability: u8,
+    pub values: u8,
+    pub colour: u8,
+    pub focal: u8,
+    pub detail: u8,
+}
+
+impl Scores {
+    /// "readability 4, values 5, colour 3, focal point 5, detail 2".
+    pub fn line(&self) -> String {
+        format!(
+            "readability {}, values {}, colour {}, focal point {}, detail {}",
+            self.readability, self.values, self.colour, self.focal, self.detail
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Critique {
+    /// The canvas's diagonal in pixels (for distances as shares of it).
+    pub diagonal: f32,
     pub values: Values,
     pub focal: Focal,
     pub colour: Colour,
@@ -531,6 +553,7 @@ impl Critique {
                 .filter_map(|layer| texture_of(&m, layer, radius)),
         );
         Critique {
+            diagonal: (m.width as f32).hypot(m.height as f32),
             values: values(&m, subject, focal_cell),
             focal: focal(&m, subject),
             colour: colour(&m, subject),
@@ -874,6 +897,101 @@ impl Critique {
             ));
         }
         out
+    }
+
+    /// The benchmark's five scores from the numbers (1 to 5 each), by
+    /// the fixed mapping in `skills/art-app/exercises/benchmark.md`:
+    /// readability, values, colour, focal point, detail. Overall appeal
+    /// is not a number's to give.
+    pub fn scores(&self) -> Scores {
+        let readability = if self.readability.is_empty() {
+            3
+        } else {
+            let read = self
+                .readability
+                .iter()
+                .filter(|r| !r.too_small && !r.merges)
+                .count() as f32
+                / self.readability.len() as f32;
+            match read {
+                r if r >= 0.9 => 5,
+                r if r >= 0.75 => 4,
+                r if r >= 0.5 => 3,
+                r if r >= 0.25 => 2,
+                _ => 1,
+            }
+        };
+        let mut values = match self.values.groups.len() {
+            0 | 1 => 1,
+            2 => 2,
+            3 => 4,
+            _ => 5,
+        };
+        if self.values.flat {
+            values = (values - 1).max(1);
+        }
+        let colour = if self.colour.key_hues.is_empty() {
+            3
+        } else if self.colour.out_of_key.is_empty() {
+            if (2..=4).contains(&self.colour.hues) {
+                5
+            } else {
+                4
+            }
+        } else {
+            let share: f32 = self.colour.out_of_key.iter().map(|b| b.share).sum();
+            if share <= 0.02 {
+                3
+            } else if share <= 0.05 {
+                2
+            } else {
+                1
+            }
+        };
+        let focal = match (self.focal.distance, self.focal.inside) {
+            (None, _) => 2,
+            (Some(_), Some(true)) => {
+                let strongest = self
+                    .values
+                    .focal_contrast
+                    .as_ref()
+                    .is_some_and(|fc| fc.near >= fc.elsewhere);
+                if strongest { 5 } else { 4 }
+            }
+            (Some(distance), _) => {
+                let diagonal = self.diagonal.max(1.0);
+                match distance / diagonal {
+                    d if d <= 0.05 => 4,
+                    d if d <= 0.15 => 3,
+                    d if d <= 0.30 => 2,
+                    _ => 1,
+                }
+            }
+        };
+        let detail = match self.detail_at_focal {
+            None => 2,
+            Some((near, area)) => {
+                let ratio = if area > 0.0 { near / area } else { 0.0 };
+                let mut score = match ratio {
+                    r if r >= 3.0 => 5,
+                    r if r >= 2.0 => 4,
+                    r if r >= 1.5 => 3,
+                    r if r >= 1.0 => 2,
+                    _ => 1,
+                };
+                if self.textures.iter().any(|t| t.dirty || t.blotchy) {
+                    score = (score - 1).max(1);
+                }
+                score
+            }
+        };
+        Scores {
+            readability,
+            values,
+            colour,
+            focal,
+            detail,
+        }
     }
 
     /// The findings that are warnings (the lines a painter should act on).

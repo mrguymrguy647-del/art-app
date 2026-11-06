@@ -2,6 +2,7 @@
   "title": "Sunset pond, the simple way (before phase 3)",
   "notes": "Flat fills, gradients, scatter and a symbol: what the tools could do before clipping, noise, brushes with tips and filters. The gallery piece sunset-pond repaints this scene with them.",
   "seed": 4,
+  "intent": { "subject": "a duck on a pond at sunset", "focal": "duck", "light": "top right", "mood": "calm, warm", "key_colors": ["sky_low", "sun", "water_dark"] },
   "palette": { "sky_top": "#2A2448", "sky_mid": "#C4583C", "sky_low": "#F7B25A", "sun": "#FFE9A8", "hill_far": "#6B4B6E", "hill": "#3A3A4E",
                "water_dark": "#2E3A66", "water_light": "#D08A5A", "pad": "#3F6A3A", "reed": "#4A4A32", "yellow": "#F2C230", "beak": "#E8892B", "ink": "#1A1410" },
   "commands": [
