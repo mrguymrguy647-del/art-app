@@ -1176,3 +1176,21 @@ put it:
   a sprite without looking at it; the app's Text tool starts at a
   twelfth of the canvas height instead of a fixed 48 pixels.
 
+## 67. The app catches up with the scripts (phase 3, step 8)
+
+- **Tip and dynamics in the brush panel**, not a new tool: a `Tip`
+  dropdown, an angle slider for shaped tips, and a collapsed "Dynamics"
+  section with one slider per setting and a "No dynamics" button. They
+  live on the same `BrushSettings` the scripts use, so Export strokes
+  writes them through `record::brush` with nothing new.
+- **Strokes get a seed** in the app: each stroke's number, seeded the
+  way the player seeds a recorded `"seed"` (`record::stroke_seed`), and
+  written down only when dynamics are on. A test paints a chalk stroke
+  with dynamics, exports it and replays it to the same pixels.
+- **Clip and lock are two small toggles** on each layer row, each one
+  undo step ("Clip layer", "Lock layer paint"), recorded like show and
+  hide. (The undo step naming had no case for them before: a clip-only
+  change applied but left no undo step.)
+- Checked on a virtual screen: the panel fits, the toggles light up,
+  and the tip list shows all seven tips.
+

@@ -65,6 +65,13 @@ fn plain_brush() -> BrushCmd {
     }
 }
 
+/// The random numbers a `stroke` command with `"seed": seed` gets when
+/// the script's own seed is `script_seed` (the default 1): the app seeds
+/// its strokes this way, so Export strokes replays them exactly.
+pub fn stroke_seed(script_seed: u64, seed: u64) -> u64 {
+    crate::random::Random::mix(crate::random::Random::mix(script_seed, seed), 1)
+}
+
 /// Selects (or creates) the layer called `name`.
 pub fn select_layer(name: &str) -> Command {
     Command::Layer(LayerCmd {
@@ -97,7 +104,12 @@ pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
 
 /// A brush or eraser stroke on `layer`, through `points` exactly as
 /// they went into the stroke (after smoothing).
-pub fn stroke(layer: &str, settings: &BrushSettings, points: &[StrokePoint]) -> Vec<Command> {
+pub fn stroke(
+    layer: &str,
+    settings: &BrushSettings,
+    points: &[StrokePoint],
+    seed: Option<u64>,
+) -> Vec<Command> {
     let erase = settings.mode == BrushMode::Erase;
     let points = points
         .iter()
@@ -108,6 +120,10 @@ pub fn stroke(layer: &str, settings: &BrushSettings, points: &[StrokePoint]) -> 
         .collect();
     let stroke = StrokeCmd {
         points,
+        // With dynamics, the seed makes the replay the same stroke.
+        seed: seed
+            .filter(|_| !settings.dynamics.is_off())
+            .map(|seed| Value::Number(seed.into())),
         ..StrokeCmd::default()
     };
     vec![
@@ -691,7 +707,7 @@ mod tests {
         settings: &BrushSettings,
         points: &[StrokePoint],
     ) -> Vec<Command> {
-        stroke(name, settings, points)
+        stroke(name, settings, points, None)
     }
 
     #[test]
@@ -807,13 +823,13 @@ mod tests {
     fn tidying_drops_repeated_layers_and_brush_settings() {
         let settings = BrushSettings::default();
         let point = [StrokePoint::new(1.0, 2.0, 1.0)];
-        let mut commands = stroke("A", &settings, &point);
-        commands.extend(stroke("A", &settings, &point));
+        let mut commands = stroke("A", &settings, &point, None);
+        commands.extend(stroke("A", &settings, &point, None));
         let bigger = BrushSettings {
             size: 50.0,
             ..settings
         };
-        commands.extend(stroke("A", &bigger, &point));
+        commands.extend(stroke("A", &bigger, &point, None));
         let tidy = tidy(commands);
         let kinds: Vec<&str> = tidy.iter().map(Command::kind).collect();
         assert_eq!(
@@ -855,6 +871,7 @@ mod tests {
             "A",
             &BrushSettings::default(),
             &[StrokePoint::new(1.23456, 7.891, 0.33333)],
+            None,
         );
         let Command::Stroke(stroke) = &commands[2] else {
             panic!()
@@ -1077,5 +1094,64 @@ mod tests {
         );
         let parsed = crate::script::Script::parse(&script).unwrap();
         assert_eq!(parsed.commands[1], commands[1]);
+    }
+
+    #[test]
+    fn a_stroke_with_dynamics_records_its_seed_and_replays_the_same() {
+        use crate::brush::{Dynamics, Tip};
+        let settings = BrushSettings {
+            size: 20.0,
+            color: [200, 40, 40],
+            tip: Tip::Chalk,
+            dynamics: Dynamics {
+                size: 0.4,
+                scatter: 6.0,
+                ..Dynamics::default()
+            },
+            ..BrushSettings::default()
+        };
+        let mut document = Document::new(200, 100);
+        let id = document.active_id();
+        let points = [
+            StrokePoint::new(20.0, 50.0, 1.0),
+            StrokePoint::new(100.0, 40.0, 0.8),
+            StrokePoint::new(180.0, 50.0, 1.0),
+        ];
+        let mut painting = Stroke::new(settings, document.bounds()).seeded(stroke_seed(1, 7));
+        for &p in &points {
+            painting.add_point(&mut document.active_layer_mut().surface, p);
+        }
+        painting.finish(&mut document.active_layer_mut().surface);
+        let commands = stroke("Layer 1", &settings, &points, Some(7));
+        let json = serde_json::to_string(&commands[2]).unwrap();
+        assert!(json.contains("\"seed\":7"), "{json}");
+        // Played back, the script paints the same pixels.
+        let script = Script {
+            commands: {
+                let mut all = vec![Command::Canvas(CanvasCmd {
+                    width: Some(200),
+                    height: Some(100),
+                    ..CanvasCmd::default()
+                })];
+                all.extend(commands);
+                all
+            },
+            ..Script::parse(r#"{ "commands": [ { "cmd": "canvas", "width": 1, "height": 1 } ] }"#)
+                .unwrap()
+        };
+        let mut player =
+            crate::script::Player::new(script, crate::script::PlayOptions::default()).unwrap();
+        let mut replayed = player.create_document().unwrap();
+        player.run(&mut replayed, |_, _| {}).unwrap();
+        let a = &document.layer(id).unwrap().surface;
+        let b = &replayed.layers()[0].surface;
+        for y in 20..80 {
+            for x in 0..200 {
+                assert_eq!(a.pixel(x, y), b.pixel(x, y), "({x}, {y})");
+            }
+        }
+        // Without dynamics, no seed is written.
+        let plain = stroke("Layer 1", &BrushSettings::default(), &points, Some(7));
+        assert!(!serde_json::to_string(&plain[2]).unwrap().contains("seed"));
     }
 }

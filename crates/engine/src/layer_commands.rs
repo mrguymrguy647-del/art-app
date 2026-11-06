@@ -205,6 +205,18 @@ impl LayerPropsCommand {
             "Layer opacity"
         } else if before.blend != after.blend {
             "Blend mode"
+        } else if before.clip != after.clip {
+            if after.clip {
+                "Clip layer"
+            } else {
+                "Unclip layer"
+            }
+        } else if before.lock != after.lock {
+            if after.lock {
+                "Lock layer paint"
+            } else {
+                "Unlock layer paint"
+            }
         } else {
             return None;
         };
@@ -476,5 +488,29 @@ mod tests {
         );
         history.undo(&mut doc);
         assert_eq!(doc.active_layer().blend(), crate::layer::BlendMode::Normal);
+    }
+
+    #[test]
+    fn clip_and_lock_are_undo_steps_with_names() {
+        let mut doc = Document::new(100, 100);
+        let id = doc.active_id();
+        let clipped = LayerProps {
+            clip: true,
+            ..doc.active_layer().props()
+        };
+        let step = LayerPropsCommand::apply(&mut doc, id, clipped).expect("a change");
+        assert_eq!(step.name(), "Clip layer");
+        assert!(doc.active_layer().clip());
+        let locked = LayerProps {
+            lock: true,
+            ..doc.active_layer().props()
+        };
+        let step = LayerPropsCommand::apply(&mut doc, id, locked).expect("a change");
+        assert_eq!(step.name(), "Lock layer paint");
+        assert!(doc.active_layer().lock());
+        let mut history = History::default();
+        history.push(Box::new(step));
+        history.undo(&mut doc);
+        assert!(!doc.active_layer().lock());
     }
 }
