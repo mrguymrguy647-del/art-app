@@ -7,8 +7,8 @@
 
 use std::f32::consts::TAU;
 
-use art_engine::color::{Hsv, from_hex, to_hex};
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Stroke, TextEdit, vec2};
+use quill_engine::color::{Hsv, from_hex, to_hex};
 
 /// The widest the wheel gets, in screen points.
 const WHEEL_SIZE: f32 = 230.0;

@@ -1,4 +1,4 @@
-//! Text: letters drawn from a font that comes with Art App.
+//! Text: letters drawn from a font that comes with Duck Quill.
 //!
 //! The font is Inter (Regular) by The Inter Project Authors, under the SIL
 //! Open Font License (see `assets/fonts/OFL.txt`). Because it's built in,

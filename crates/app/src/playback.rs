@@ -6,10 +6,10 @@
 //! moving around still work). When it's done, everything it painted
 //! becomes one undo step.
 
-use art_engine::document::Document;
-use art_engine::history::CommandGroup;
-use art_engine::script::{Command as ScriptCommand, Player, Progress, Script, record};
 use eframe::egui::{self, Button, ProgressBar, Slider, vec2};
+use quill_engine::document::Document;
+use quill_engine::history::CommandGroup;
+use quill_engine::script::{Command as ScriptCommand, Player, Progress, Script, record};
 
 /// Speed limits, in pixels of brush travel per second.
 const SLOWEST: f32 = 50.0;
@@ -62,7 +62,7 @@ impl Playback {
             if let Some(ScriptCommand::Canvas(canvas)) = commands.first()
                 && let Some(paper) = &canvas.paper
             {
-                preamble.push(ScriptCommand::Paper(art_engine::script::PaperCmd {
+                preamble.push(ScriptCommand::Paper(quill_engine::script::PaperCmd {
                     color: paper.clone(),
                 }));
             }

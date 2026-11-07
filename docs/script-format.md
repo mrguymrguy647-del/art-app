@@ -1,4 +1,4 @@
-# Art App painting scripts
+# Duck Quill painting scripts
 
 A painting script describes a picture as a list of steps, in a JSON text file. Playing the script
 paints the picture. Scripts are made to be written by hand (or by an AI assistant), rendered,
@@ -11,14 +11,14 @@ checked, and improved.
 - **Big shapes are one command**: rectangles, ellipses, polygons, smooth paths, tapered lines,
   hatching and scattering.
 
-Render scripts with `art-cli` (see the README), or watch them being painted in the app with
+Render scripts with `quill` (see the README), or watch them being painted in the app with
 **File → Play strokes…**.
 
 ## A first script
 
 ```json
 {
-  "format": "artapp-script",
+  "format": "duckquill-script",
   "version": 1,
   "title": "Sun over the sea",
   "seed": 1,
@@ -45,7 +45,7 @@ Render scripts with `art-cli` (see the README), or watch them being painted in t
 | Field | Needed? | What it is |
 |---|---|---|
 | `commands` | yes | The steps, in order. The first one must be `canvas`. |
-| `format` | no | `"artapp-script"`. Recommended, so the file is recognisable. |
+| `format` | no | `"duckquill-script"`. Recommended, so the file is recognisable. |
 | `version` | no | `1`. A newer version is refused with a clear message. |
 | `title` | no | A title for people. |
 | `notes` | no | Anything for people (text, a list, …). Ignored. |
@@ -113,7 +113,7 @@ brush for themselves only (`color`, `size`, `opacity`, `hardness`, `flow`).
 
 ```json
 { "cmd": "canvas", "width": 1600, "height": 1000, "paper": "#FDF8F0" }
-{ "cmd": "canvas", "open": "my-drawing.artapp" }
+{ "cmd": "canvas", "open": "my-drawing.quill" }
 ```
 
 | Field | |
@@ -143,7 +143,7 @@ another layer). Then applies any settings given:
 | Field | |
 |---|---|
 | `opacity` | 0 to 1. |
-| `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. |
+| `blend` | Blend mode: `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `add`, `hue`, `saturation`, `color`, `luminosity`. The darkening ones (`multiply`, `darken`, `color-burn`) only darken what's below: where nothing is below, a transparent export stays transparent (no dark band beside a sprite). |
 | `visible` | `true` / `false`. |
 | `clip` | `true`: a clipping layer, shown only where the nearest unclipped layer below it has paint. See [Clipping and masks](#clipping-and-masks). |
 | `lock` | `true`: the alpha lock. Painting only recolours what's already on the layer; the eraser does nothing. |
@@ -197,8 +197,24 @@ The app's **Layer → Flip** and **Layer → Transform…** are written down as 
 | `tip` | The dab's shape: `"round"` (default), `"square"`, `"bristle"`, `"chalk"`, `"leaf"`, `"grass"`, `"sparkle"`, or `{ "file": "tips/splat.png" }`. See [Brushes with character](#brushes-with-character). |
 | `angle` | How far the tip is turned, degrees clockwise. |
 | `dynamics` | How dabs vary along a stroke (see below). Replaces the dynamics as a whole: `{}` turns them all off. |
+| `pressure_size_min`, `pressure_opacity_min` | What the lightest touch still gives, 0 to 1, of the size and the opacity (default 0). A pencil keeps its width (0.85) but not its darkness (0.15). |
+| `pressure_curve` | How pressure is felt (0.1 to 10, default 1). Above 1, you must press harder for the full effect. |
+| `grain` | Paper grain, 0 to 1 (default 0). A light touch marks only the paper's bumps; pressing harder fills the dips. The grain is fixed to the canvas, so every stroke meets the same bumps. |
+| `grain_scale` | How coarse the grain is (0.25 to 16, default 1, which is fine paper). |
+| `build_up` | The most the layer darkens however often you go over it, 0 to 1 (default 0: no limit), as graphite turns shiny grey and never black. |
+| `preset` | A built-in preset by name: all its settings except the colour, then any other fields in this command on top. List the presets with `quill presets`. |
 
 Only the settings given change.
+
+```json
+{ "cmd": "brush", "preset": "Pencil (graphite)", "color": "#2A2A30" }
+{ "cmd": "brush", "preset": "Ink pen", "size": 3 }
+```
+
+The built-in presets are **Pencil (graphite)**, **Ink pen**, **Marker**, **Soft airbrush**,
+**Chalk** and **Soft eraser**. They're part of the program, so a script that names one paints
+the same on every machine. Presets you make in the app aren't available to scripts: give the
+settings themselves instead. For the eraser preset, paint with `erase`.
 
 ### `stroke` and `erase` — like a pen
 
@@ -210,7 +226,16 @@ Only the settings given change.
 
 Paints (or erases) through the points with the brush, exactly as if a pen moved through them: a
 smooth curve through every point, with no gaps. Optional: `color`, `size`, `opacity`,
-`hardness`, `flow` (this stroke only), `jitter` (a gentle hand-drawn wobble, in pixels), `seed`.
+`hardness`, `flow` (this stroke only), `jitter` (a gentle hand-drawn wobble, in pixels), `seed`,
+and `symmetry`: mirror lines the stroke is painted again across, as one stroke (where the copies
+overlap they don't darken each other). `"x"` is a line going down at that x (left and right mirror
+each other), `"y"` a line going across; both give four copies. Inside a group the lines move and
+turn with it. The app's symmetry strokes are saved this way by Export strokes.
+
+```json
+{ "cmd": "stroke", "points": [[300, 200], [380, 260, 0.5]], "symmetry": { "x": 512 } }
+{ "cmd": "erase", "points": [[100, 100], [140, 120]], "symmetry": { "x": 512, "y": 384 } }
+```
 
 ### `line` — a tapered straight line
 
@@ -356,7 +381,7 @@ Sizes, opacities, lengths and angles can be one number or `[min, max]` (picked a
 { "cmd": "text", "text": "First line\nsecond line", "at": [20, 500], "size": 24, "color": "ink", "rotate": -5 }
 ```
 
-Writes `text` in Art App's own font, [Inter](https://rsms.me/inter/), which is built into the
+Writes `text` in Duck Quill's own font, [Inter](https://rsms.me/inter/), which is built into the
 program, so it looks the same on every computer. `"\n"` starts a new line. The letters are
 filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-and-mirror) or a
 [symbol](#symbols-define-once-use-many-times) they move, turn, resize and mirror like everything else.
@@ -372,7 +397,7 @@ filled shapes with smooth edges, so inside a [group](#groups-move-turn-resize-an
 | `outline_size` | How wide that border is, in pixels (default 2). |
 | `rotate` | Degrees clockwise, around `at`. |
 | `opacity` | Default 1. |
-| `fit` | A width in pixels: the text is shrunk (never enlarged) so its widest line fits. `art-cli measure "the text" --size 32 --fit 180` says the size beforehand. |
+| `fit` | A width in pixels: the text is shrunk (never enlarged) so its widest line fits. `quill measure "the text" --size 32 --fit 180` says the size beforehand. |
 
 Inside a [`repeat`](#repeat--copies-with-a-step), `{i}` in the text becomes the copy number (1, 2,
 3...) and `{i0}` the same counted from 0.
@@ -388,7 +413,7 @@ next line's top at 121. Letters with a tail (g, p, y) go down to about 1.2 × `s
 { "cmd": "snapshot", "name": "blocked in" }
 ```
 
-A named checkpoint. `art-cli render --snapshots` saves a picture here, so you can check the
+A named checkpoint. `quill render --snapshots` saves a picture here, so you can check the
 picture at each stage. It doesn't change the picture.
 
 ## Groups: move, turn, resize and mirror
@@ -409,14 +434,15 @@ of `hatch` and `scatter`.
 | Field | |
 |---|---|
 | `commands` | The commands to draw inside the group (needed). Groups can hold groups. |
-| `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. |
+| `name` | A name for messages, like `command 12 (group "left wing") > 3 (ellipse): ...`. A single shape or stroke (`rect`, `ellipse`, `polygon`, `path`, `line`, `stroke`, `erase`, `text`, `hatch`, `scatter`, `stamp`, `pixels`) can have a `name` too, without a group around it: `check`, `critique` and `views` list it as a part (`rect "door"`), and it paints exactly the same. |
 | `translate` | Move by `[x, y]`. |
-| `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. Above 0. |
+| `scale` | Resize: one number (`1.5`), or `[across, down]` like `[2, 1]`. `0` shrinks the part to nothing (it paints nothing, with no error: handy for something that grows in, in an animation); below 0 is an error (use `mirror`). |
 | `rotate` | Turn by this many degrees, clockwise. |
 | `mirror` | `"x"` swaps left and right, `"y"` swaps up and down, `"xy"` both. |
 | `origin` | The point the group mirrors, resizes and turns around, in the group's own coordinates. Default `[0, 0]`. |
 | `opacity` | 0 to 1: everything inside is drawn fainter (overlapping parts inside show through each other). |
 | `scale_brush` | `true` (default): brush and outline sizes resize with the group. `false`: they stay as written. |
+| `stretch_brush` | With a scale different across and down, brush and outline sizes follow the *smaller* of the two, so lines don't look fattened (`[3, 1]` keeps a 2-wide line 2 wide). `true`: they follow the average instead, as before phase 5. `check` warns when the two differ by 1.5 times or more. |
 | `mask` | Paint only inside this: an area, a symbol's silhouette, a layer's paint, or `not` one of those. See [Clipping and masks](#clipping-and-masks). |
 | `filter` | Filters on what the group draws, on its own, before it lands on the layers: `{ "glow": {...} }`, `{ "shadow": {...} }`... See [Filters](#filters). |
 | `outline` | A line around the silhouette of everything the group draws, behind it, with optional rim light: `{ "color": "ink", "size": 3, "rim": { "color": "cream", "size": 2, "angle": -45 } }`. See [Outlines for whole shapes](#outlines-for-whole-shapes). |
@@ -447,7 +473,10 @@ Round gradients stay round when a group is stretched more one way than the other
 
 `define` stores a drawing as a **symbol** without painting anything. `use` paints it, placed with the
 same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `opacity`,
-`scale_brush`). Draw symbols around `[0, 0]`, so `translate` says where they go.
+`scale_brush`). Draw symbols around `[0, 0]`, so `translate` says where they go. On a `use`,
+`origin` is in the symbol's own coordinates, not the canvas's: `"mirror": "x"` with no `origin` flips
+the symbol in place around its own `[0, 0]`, and `"origin": [10, 0]` flips it around the symbol's x 10,
+wherever `translate` puts it.
 
 | | |
 |---|---|
@@ -473,7 +502,7 @@ same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `o
 ## `include` — symbols from another file
 
 ```json
-{ "cmd": "include", "file": "../skills/art-app/library/cloud.json" }
+{ "cmd": "include", "file": "../skills/duck-quill/library/cloud.json" }
 { "cmd": "use", "name": "cloud", "translate": [200, 80], "with": { "puff": 1.3 } }
 ```
 
@@ -485,7 +514,7 @@ symbol name it (`command 9 (use "cloud" (from cloud.json, command 2)) > 3 (ellip
 Included symbols and colours aren't "never used" warnings: a library holds more than one picture
 needs.
 
-**The library** in `skills/art-app/library/` holds ready parts, each with parameters, an example
+**The library** in `skills/duck-quill/library/` holds ready parts, each with parameters, an example
 script and a preview: cloud, water, grass, reed, tree, lily pad and the duck. Its `README.md`
 lists them.
 
@@ -684,6 +713,32 @@ fill and dab inside is multiplied by the mask. A mask is one of:
   warning too (`painted 100% of the canvas, but its shapes cover 1%`): usually a `gradient` or
   `fill` without an `area` inside a `not` mask. Give it an `area`.
 
+### `select`: a selection, like the app's
+
+From a `select` on, every command that paints (strokes, shapes, fills, gradients, text, filters)
+stays inside the selection, as inside a group's `mask`, until the next `select`. It's the same as
+selecting in the app, and Export strokes writes the app's selections this way.
+
+```json
+{ "cmd": "select", "rect": [100, 80, 300, 200] }
+{ "cmd": "select", "ellipse": [400, 300, 120, 80], "mode": "add" }
+{ "cmd": "select", "circle": [250, 180, 40], "mode": "subtract", "feather": 6 }
+{ "cmd": "select", "layer": "Duck" }
+{ "cmd": "select", "invert": true }
+{ "cmd": "select", "none": true }
+```
+
+| Field | |
+|---|---|
+| `rect`, `ellipse`, `circle`, `polygon` | A shape, written like an [area](#areas); placed by the groups around it. |
+| `layer` | Where that layer has paint (as much as each pixel is opaque). |
+| `all`, `none`, `invert` | `true`: everything; no selection (paint anywhere again); everything not selected. |
+| `mode` | `"replace"` (the default), `"add"` or `"subtract"`: how the shape combines with the selection there is. |
+| `feather` | Pixels the shape's edge fades over. On its own, it softens the selection there is. |
+
+One shape (or `layer`, `all`, `none`, `invert`) per command. A selection that comes out empty is
+dropped, with a warning. Unlike a group's `mask`, a selection stays after the group that made it.
+
 ## Filters
 
 ```json
@@ -823,8 +878,10 @@ each seed until the next key (a pattern changes at a key, never half way): a twi
 ```
 
 `define` takes `params`: names and their defaults. Inside the symbol, `"$angle"` stands for the
-value, anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`), and in any
-colour field (`"fill": "$paint"`), so a symbol can take its colours as parameters. A `use` gives
+value in any field: anywhere a keyframe could go (a `use`'s `name` too: `"name": "$mouth"`), any
+colour field (`"fill": "$paint"`), and points, centres and sizes (`"center": "$spot"`,
+`"points": "$path"`, `"width": "$w"`, `"size": "$w"`), so a symbol can take its colours, shape and
+line widths as parameters. A `"$name"` outside a define with that parameter is a mistake. A `use` gives
 values with `with`; a name the symbol doesn't have is a mistake. A value in `with` may be
 keyframes, so one symbol covers every pose of a walk. There's no arithmetic (`"-$angle"`): use
 `shift`, a second parameter or `mirror`.
@@ -835,7 +892,7 @@ mirrors and resizes with the groups around it.
 
 ### Seeing an animation without watching it
 
-`art-cli render` paints frame 0 of the first animation written unless told otherwise:
+`quill render` paints frame 0 of the first animation written unless told otherwise:
 `--frame 3`, `--frames 0-7` or `--all-frames`, and `--animation walk` to choose the animation.
 Frames are saved as `name-walk-003.png`. A thing that is off the canvas in some frames but on
 it in others (an entrance, an exit) isn't warned about; one that never is, is. Then:
@@ -847,12 +904,12 @@ it in others (an entrance, an exit) isn't warned about; one that never is, is. T
 - `--gif`: the animation as `name-walk.gif`, at its fps, looping if it loops, for showing a
   person. `--bg` puts a colour behind see-through frames; `--zoom 4` enlarges with sharp pixels.
 
-`art-cli export script.json` writes the animations for a game or a video: a sprite sheet with
+`quill export script.json` writes the animations for a game or a video: a sprite sheet with
 its JSON (`--sheet`, the default: see [sprite-sheet-format.md](sprite-sheet-format.md)), every
 frame as a PNG (`--frames`), a GIF (`--gif`) and an MP4 (`--mp4`, through ffmpeg), with `--scale 8`
 for sharp enlargement and `--bg` behind see-through parts.
 
-`art-cli check` plays every frame of every animation, so a mistake in any of them is found
+`quill check` plays every frame of every animation, so a mistake in any of them is found
 (`animation "walk" > command 2 (use "duck"): ...`), and prints a **motion summary**: for each
 named group and `use`, where its middle is in the first and last frame and its biggest step
 between two frames. Warnings follow: a part that jumps more than a quarter of the canvas between
@@ -869,12 +926,20 @@ are geometry, so a part faded to `opacity` 0 still counts as drawn.
 
 A **pixel canvas** gives crisp pixel art from ordinary commands. It's painted `supersample` times
 bigger (4 unless given; up to 16) with everything the script says, shapes, strokes, text, symbols
-and transforms alike, then shrunk to its real size: each pixel is painted if more than half of its
-samples were, in the palette colour that the most of them had. So every pixel is whole, there are
+and transforms alike, then shrunk to its real size by one rule: **a pixel is painted when its
+centre (x + 0.5, y + 0.5) is inside the paint, in the palette colour at its centre** (exactly on
+an edge counts as outside). **A line, path or stroke 1 pixel wide or less** is drawn one whole
+pixel per step instead, from each point to the next (never broken, never two pixels side by side,
+no "L" at a turn), so thin lines and crossing lines stay clean. So every pixel is whole, there are
 no blurry or half see-through edges, and the picture only ever has the palette's colours. An
 `outline` colour (a palette name) is put on every see-through pixel next to a painted one, on each
 layer, after shrinking. Positions are in canvas pixels, decimals allowed (`"radius": 5.5`).
 
+- **Small shapes, worked out in advance:** a circle centred on a pixel's centre (`[4.5, 4.5]`)
+  covers 1 pixel at radius 0.5 or 1, 3 × 3 at 1.5 or 2, 5 × 5 without the corners at 2.5; centred
+  on a pixel's corner (`[4, 4]`), nothing at 0.5, 2 × 2 at 1 or 1.5, 4 × 4 without the corners at
+  2, a full 4 × 4 at 2.5. A rectangle covers the pixels whose centres are inside it: whole-number
+  `x`, `y`, `width` and `height` cover exactly those pixels.
 - **The palette is locked:** on a pixel canvas every colour is a palette name; a `#RRGGBB` is a
   mistake, and a pixel canvas needs a palette. `transparent` is allowed.
 - **Animation moves by whole pixels:** `translate` is rounded, so a moving sprite stays crisp.
@@ -947,7 +1012,7 @@ the script's 12th.
 
 ## Scripts from the app
 
-**File → Export strokes…** in Art App writes everything painted since the picture was started or
+**File → Export strokes…** in Duck Quill writes everything painted since the picture was started or
 opened as a script. It uses only `canvas`, `layer`, `brush`, `stroke`, `erase`, `fill`, `gradient`,
 `clear_layer`, `delete_layer`, `move_layer` and `rename_layer` (plus the commands of any script that
 was played), with every stroke point exactly where the pen went: `[x, y, pressure]`. It's an easy

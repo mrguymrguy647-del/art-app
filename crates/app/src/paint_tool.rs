@@ -18,21 +18,26 @@
 
 use std::time::{Duration, Instant};
 
-use art_engine::brush::{BrushMode, BrushSettings};
-use art_engine::document::Document;
-use art_engine::fill::{self, FloodFill, Gradient, GradientShape, Paint, SampleFrom, flood_fill};
-use art_engine::history::{History, TileCommand};
-use art_engine::layer::LayerId;
-use art_engine::pen::InputKind;
-use art_engine::script::record;
-use art_engine::smoothing::Smoother;
-use art_engine::stroke::{Stroke, StrokePoint};
-use art_engine::view::{Point, View};
 use eframe::egui::{self, PointerButton, Pos2, Rect, pos2};
+use quill_engine::brush::{BrushMode, BrushSettings};
+use quill_engine::document::Document;
+use quill_engine::fill::{
+    self, FloodFill, Gradient, GradientShape, Paint, SampleFrom, flood_fill_within,
+};
+use quill_engine::history::{History, TileCommand};
+use quill_engine::layer::LayerId;
+use quill_engine::pen::InputKind;
+use quill_engine::script::record;
+use quill_engine::smoothing::Smoother;
+use quill_engine::stroke::{Stroke, StrokePoint, Symmetry};
+use quill_engine::view::{Point, View};
 
 use crate::color_panel::MAX_RECENT_COLORS;
 use crate::pen_input::InkEvent;
+use crate::select_tool::{SelectDrag, SelectShape};
+use crate::symmetry_view::SymmetrySettings;
 use crate::text_tool::{TextEdit, TextSettings, Typing};
+use quill_engine::selection::Combine;
 
 /// After the pen or a finger was used, ignore the mouse for this long.
 /// (Windows also moves the mouse pointer when you use the pen or a finger.)
@@ -56,6 +61,14 @@ pub enum Tool {
     Fill,
     Gradient,
     Text,
+    /// Draws a selection (Shift adds, Alt takes away).
+    Select(SelectShape),
+}
+
+impl Tool {
+    pub fn is_select(self) -> bool {
+        matches!(self, Tool::Select(_))
+    }
 }
 
 /// The paint bucket's settings.
@@ -123,6 +136,18 @@ enum Source {
     Mouse,
 }
 
+/// Which way a new selection shape combines, from the keys held when it
+/// starts: Shift adds, Alt takes away.
+fn combine(alt: bool, shift: bool) -> Combine {
+    if alt {
+        Combine::Subtract
+    } else if shift {
+        Combine::Add
+    } else {
+        Combine::Replace
+    }
+}
+
 /// Where the canvas is on screen, and what the user is doing with it.
 pub struct CanvasPlacement<'a> {
     /// The canvas area on screen.
@@ -152,6 +177,8 @@ struct ActiveStroke {
     seed: u64,
     /// The latest point from the pen or mouse (before smoothing).
     last_point: StrokePoint,
+    /// Mirror lines it's painted across too.
+    symmetry: Option<Symmetry>,
 }
 
 impl ActiveStroke {
@@ -182,7 +209,12 @@ impl ActiveStroke {
         if !tiles_before.is_empty() {
             history.push_recorded(
                 Box::new(TileCommand::new(self.name, self.layer, tiles_before)),
-                record::stroke(&name, &self.settings, &self.fed, Some(self.seed)),
+                {
+                    let mut commands =
+                        record::stroke(&name, &self.settings, &self.fed, Some(self.seed));
+                    record::mirror(&mut commands, self.symmetry.as_ref());
+                    commands
+                },
             );
         }
     }
@@ -198,6 +230,8 @@ pub struct PaintTool {
     pub eraser: BrushSettings,
     /// How much lines are steadied: 0 = not at all, 1 = the most.
     pub smoothing: f32,
+    /// Mirror lines for the brush and eraser.
+    pub symmetry: SymmetrySettings,
     pub fill: FillSettings,
     pub gradient: GradientSettings,
     pub text: TextSettings,
@@ -210,6 +244,8 @@ pub struct PaintTool {
     tool_before_pen_flip: Option<Tool>,
     stroke: Option<ActiveStroke>,
     gradient_drag: Option<GradientDrag>,
+    /// A selection being drawn, and with what.
+    selecting: Option<(Source, SelectDrag)>,
     /// The pen or mouse button is still down after a click that already
     /// did its job (a fill): wait for it to be lifted.
     waiting_for_lift: Option<Source>,
@@ -232,6 +268,7 @@ impl Default for PaintTool {
             brush: BrushSettings::default(),
             eraser: BrushSettings::eraser(),
             smoothing: 0.25,
+            symmetry: SymmetrySettings::default(),
             fill: FillSettings::default(),
             gradient: GradientSettings::default(),
             text: TextSettings::default(),
@@ -240,6 +277,7 @@ impl Default for PaintTool {
             tool_before_pen_flip: None,
             stroke: None,
             gradient_drag: None,
+            selecting: None,
             waiting_for_lift: None,
             picking: None,
             last_ink_event: None,
@@ -265,6 +303,11 @@ impl PaintTool {
             Tool::Eraser => &mut self.eraser,
             _ => &mut self.brush,
         }
+    }
+
+    /// True for the tools symmetry mirrors (the brush and the eraser).
+    pub fn uses_symmetry(&self) -> bool {
+        matches!(self.tool, Tool::Brush | Tool::Eraser)
     }
 
     /// True for the tools that work at one point (paint bucket, gradient)
@@ -337,7 +380,7 @@ impl PaintTool {
     pub fn eyedropper_active(&self, ui: &egui::Ui) -> bool {
         self.tool == Tool::Eyedropper
             || self.picking.is_some()
-            || ui.input(|i| i.modifiers.alt)
+            || (ui.input(|i| i.modifiers.alt) && !self.tool.is_select())
             || (self.pen_side_button && self.pen_position.is_some())
     }
 
@@ -387,11 +430,24 @@ impl PaintTool {
             self.pen_side_button = event.barrel_button;
             let point = to_canvas(pos, event.sample.pressure);
 
+            let zoom = view.zoom();
+            let pen_is_selecting = matches!(&self.selecting, Some((Source::Pen, _)));
             let pen_is_painting =
                 matches!(&self.stroke, Some(active) if active.source == Source::Pen);
             let pen_is_dragging =
                 matches!(&self.gradient_drag, Some(drag) if drag.source == Source::Pen);
-            if pen_is_dragging {
+            if pen_is_selecting {
+                let lifted = !event.in_contact;
+                if let Some((_, drag)) = &mut self.selecting {
+                    drag.drag_to(Point::new(point.x, point.y), zoom);
+                    if lifted && drag.ends_on_lift() {
+                        self.finish_selecting(zoom, document, history);
+                    } else if lifted {
+                        // A polygon corner was put down; wait for the next.
+                        self.waiting_for_lift = None;
+                    }
+                }
+            } else if pen_is_dragging {
                 if event.in_contact {
                     self.drag_gradient_to(point, shift_held);
                 } else {
@@ -417,11 +473,13 @@ impl PaintTool {
                 }
             } else if self.is_free() && event.in_contact && !navigating && on_canvas(pos) {
                 // The pen touched the canvas: pick a colour, or start painting.
-                if self.tool == Tool::Eyedropper || alt_held || event.barrel_button {
+                let picks = alt_held && !self.tool.is_select();
+                if self.tool == Tool::Eyedropper || picks || event.barrel_button {
                     self.picking = Some(Source::Pen);
                     self.pick(document, point);
                 } else {
-                    self.press(Source::Pen, view, document, history, point);
+                    let how = combine(alt_held, shift_held);
+                    self.press(Source::Pen, view, document, history, point, how);
                 }
             }
         }
@@ -430,7 +488,8 @@ impl PaintTool {
         let ink_is_recent = self
             .last_ink_event
             .is_some_and(|time| now - time < INK_TAKES_PRIORITY_FOR);
-        let pen_is_busy = matches!(&self.stroke, Some(active) if active.source == Source::Pen)
+        let pen_is_busy = matches!(&self.selecting, Some((Source::Pen, d)) if d.ends_on_lift())
+            || matches!(&self.stroke, Some(active) if active.source == Source::Pen)
             || matches!(&self.gradient_drag, Some(drag) if drag.source == Source::Pen)
             || self.waiting_for_lift == Some(Source::Pen)
             || self.picking == Some(Source::Pen);
@@ -449,16 +508,23 @@ impl PaintTool {
                 } => {
                     if self.is_free() && !navigating && on_canvas(pos) {
                         let point = to_canvas(pos, 1.0);
-                        if self.tool == Tool::Eyedropper || alt_held {
+                        if self.tool == Tool::Eyedropper || (alt_held && !self.tool.is_select()) {
                             self.picking = Some(Source::Mouse);
                             self.pick(document, point);
                         } else {
-                            self.press(Source::Mouse, view, document, history, point);
+                            let how = combine(alt_held, shift_held);
+                            self.press(Source::Mouse, view, document, history, point, how);
                         }
                     }
                 }
                 egui::Event::PointerMoved(pos) => {
-                    if let Some(active) = &mut self.stroke {
+                    if let Some((_, drag)) = &mut self.selecting {
+                        let at = to_canvas(pos, 1.0);
+                        // A polygon follows the mouse between clicks.
+                        if primary_down || !drag.ends_on_lift() {
+                            drag.drag_to(Point::new(at.x, at.y), view.zoom());
+                        }
+                    } else if let Some(active) = &mut self.stroke {
                         active.add(document, to_canvas(pos, 1.0));
                     } else if self.gradient_drag.is_some() {
                         self.drag_gradient_to(to_canvas(pos, 1.0), shift_held);
@@ -472,27 +538,81 @@ impl PaintTool {
                     ..
                 }
                 | egui::Event::PointerGone => {
-                    self.release_mouse(document, history);
+                    self.release_mouse(view.zoom(), document, history);
                 }
                 _ => {}
             }
         }
         // In case the button was let go outside the window.
         if !primary_down {
-            self.release_mouse(document, history);
+            self.release_mouse(view.zoom(), document, history);
         }
+        self.polygon_keys(ui, view.zoom(), document, history);
+    }
+
+    /// While a polygon is drawn: Enter closes it, Backspace takes the last
+    /// corner away, Esc gives up. (Esc also drops a lasso being drawn.)
+    fn polygon_keys(
+        &mut self,
+        ui: &egui::Ui,
+        zoom: f32,
+        document: &mut Document,
+        history: &mut History,
+    ) {
+        if self.selecting.is_none() {
+            return;
+        }
+        let (enter, backspace, escape) = ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        });
+        if escape {
+            self.selecting = None;
+        } else if enter {
+            self.finish_selecting(zoom, document, history);
+        } else if backspace
+            && let Some((_, drag)) = &mut self.selecting
+            && !drag.undo_corner()
+        {
+            self.selecting = None;
+        }
+    }
+
+    /// The selection being drawn is done: it becomes the selection.
+    fn finish_selecting(&mut self, zoom: f32, document: &mut Document, history: &mut History) {
+        if let Some((_, drag)) = self.selecting.take() {
+            drag.finish(zoom, document, history);
+        }
+    }
+
+    /// The selection being drawn, to show: its outline, and whether it's
+    /// closed yet (a polygon in progress isn't).
+    pub fn selection_preview(&self) -> Option<(Vec<Point>, bool)> {
+        self.selecting
+            .as_ref()
+            .map(|(_, drag)| (drag.preview(), drag.ends_on_lift()))
     }
 
     /// Nothing is going on: a new press can start something.
     fn is_free(&self) -> bool {
-        self.stroke.is_none()
+        // A polygon being drawn waits for its next corner: that press
+        // goes to it (see `press`).
+        let polygon = matches!(&self.selecting, Some((_, d)) if !d.ends_on_lift());
+        (self.selecting.is_none() || polygon)
+            && self.stroke.is_none()
             && self.gradient_drag.is_none()
             && self.picking.is_none()
             && self.waiting_for_lift.is_none()
     }
 
     /// The mouse button was let go: finish whatever it was doing.
-    fn release_mouse(&mut self, document: &mut Document, history: &mut History) {
+    fn release_mouse(&mut self, zoom: f32, document: &mut Document, history: &mut History) {
+        if matches!(&self.selecting, Some((Source::Mouse, d)) if d.ends_on_lift()) {
+            self.finish_selecting(zoom, document, history);
+        }
         self.finish_stroke(document, history);
         self.finish_gradient(document, history);
         self.finish_picking();
@@ -510,7 +630,23 @@ impl PaintTool {
         document: &mut Document,
         history: &mut History,
         point: StrokePoint,
+        how: Combine,
     ) {
+        // Selecting doesn't paint, so it works on hidden layers too.
+        if let Tool::Select(shape) = self.tool {
+            let at = Point::new(point.x, point.y);
+            let zoom = view.zoom();
+            match &mut self.selecting {
+                // The next corner of a polygon.
+                Some((_, drag)) => {
+                    if drag.click(at, zoom) {
+                        self.finish_selecting(zoom, document, history);
+                    }
+                }
+                None => self.selecting = Some((source, SelectDrag::new(shape, how, at))),
+            }
+            return;
+        }
         // You can't see what you paint on a hidden layer, so don't.
         if !document.active_layer().visible() {
             self.hidden_layer_attempt = Some(Instant::now());
@@ -567,7 +703,9 @@ impl PaintTool {
         let name = document.active_layer().name().to_owned();
         let opacity = settings.opacity;
         let paint = Paint::Color([r, g, b, 255]);
-        let tiles_before = flood_fill(document, layer, &fill, &paint, opacity);
+        let clip = document.clip();
+        let tiles_before =
+            flood_fill_within(document, layer, &fill, &paint, opacity, clip.as_deref());
         if !tiles_before.is_empty() {
             history.push_recorded(
                 Box::new(TileCommand::new("Fill", layer, tiles_before)),
@@ -622,11 +760,13 @@ impl PaintTool {
         let layer = document.active_id();
         let name = document.active_layer().name().to_owned();
         let script = record::gradient(&name, &gradient, settings.opacity);
-        let tiles_before = fill::fill_layer(
+        let clip = document.clip();
+        let tiles_before = fill::fill_layer_within(
             document,
             layer,
             &Paint::Gradient(gradient),
             settings.opacity,
+            clip.as_deref(),
         );
         if !tiles_before.is_empty() {
             history.push_recorded(
@@ -634,6 +774,15 @@ impl PaintTool {
                 script,
             );
             self.remember_color(self.brush.color);
+        }
+    }
+
+    /// Takes a colour picked somewhere else (a reference picture) as the
+    /// brush colour; the Pick tool then hands over to the brush.
+    pub fn take_color(&mut self, color: [u8; 3]) {
+        self.brush.color = color;
+        if self.tool == Tool::Eyedropper {
+            self.tool = Tool::Brush;
         }
     }
 
@@ -688,6 +837,7 @@ impl PaintTool {
         if settings.mode == BrushMode::Paint {
             self.remember_color(settings.color);
         }
+        let symmetry = self.symmetry.on_canvas(document.width(), document.height());
         let mut active = ActiveStroke {
             name: match settings.mode {
                 BrushMode::Paint => "Brush stroke",
@@ -695,13 +845,25 @@ impl PaintTool {
             },
             layer: document.active_id(),
             settings,
-            stroke: Stroke::new(settings, document.bounds())
-                .seeded(record::stroke_seed(1, self.strokes_started)),
+            stroke: {
+                let stroke = Stroke::new(settings, document.bounds())
+                    .seeded(record::stroke_seed(1, self.strokes_started));
+                let stroke = match symmetry {
+                    Some(symmetry) => stroke.mirrored(symmetry),
+                    None => stroke,
+                };
+                // Inside the selection, if there is one.
+                match document.clip() {
+                    Some(clip) => stroke.clipped(clip),
+                    None => stroke,
+                }
+            },
             fed: Vec::new(),
             smoother: Smoother::new(string_length),
             source,
             last_point: point,
             seed: self.strokes_started,
+            symmetry,
         };
         self.strokes_started += 1;
         active.add(document, point);

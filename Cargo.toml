@@ -1,11 +1,11 @@
 # The Cargo "workspace": one project made of several crates (Rust libraries
 # and programs) that are built together.
 #
-#   crates/engine - the painting engine (plain Rust, no window or UI code)
-#   crates/app    - the program you run: window, interface, pen input
-#   crates/cli    - art-cli: renders painting scripts without a window
+#   crates/engine - quill_engine: the painting engine (plain Rust, no window or UI code)
+#   crates/app    - quill_app: Duck Quill itself, with its window, panels and pen input
+#   crates/cli    - quill_cli: the `quill` command, which paints scripts without a window
 #
-# The app and art-cli use the engine, but the engine never uses them.
+# The app and quill use the engine, but the engine never uses them.
 
 [workspace]
 resolver = "3"
@@ -13,12 +13,14 @@ members = ["crates/engine", "crates/app", "crates/cli"]
 
 # Settings shared by every crate in the workspace.
 [workspace.package]
-version = "0.1.0"
+# The one place the version number is written: the app's About window,
+# `quill --version` and the release zip's name all read it from here.
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 
 [workspace.dependencies]
-art_engine = { path = "crates/engine" }
+quill_engine = { path = "crates/engine" }
 
 # While developing ("debug" builds), still optimise the libraries we use.
 # Our own code stays quick to recompile, but egui and friends run at full speed.
@@ -28,5 +30,5 @@ opt-level = 2
 # The engine does the heavy pixel work: optimise it in debug builds and
 # tests too, so tests (and test.bat) run quickly. It recompiles a little
 # slower, which is worth it.
-[profile.dev.package.art_engine]
+[profile.dev.package.quill_engine]
 opt-level = 2

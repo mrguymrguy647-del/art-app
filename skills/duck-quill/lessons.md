@@ -1,0 +1,140 @@
+# Lessons
+
+Short rules, one line each, each with the piece or picture that shows it. Read them before
+painting; read the two or three nearest gallery pieces after.
+
+**How a lesson gets in (or out).** Agents never edit this file directly. A lesson is added
+when (a) the person agrees, or (b) a reviewer agent that did not paint the piece proposes it in
+that piece's `notes.md` under "Proposed lessons" *and* the critique numbers of a before/after
+pair improved on the thing the lesson claims; the lesson then carries the piece and the number.
+A lesson is retired the same way. The first lessons below come from phase 3's notes and phase
+4's critique and references, agreed with the person at the design review.
+
+## Values first
+
+1. Decide three to five big value shapes before any colour; if the squint shows one grey mush,
+   fix values, not detail. (`gallery/sunset-pond` views: four groups; Friedrich's Wanderer: two.)
+2. The focal point gets the strongest contrast in the picture; check `focal contrast` says so.
+   (`gallery/sunset-pond`: the duck 1.5x the sun's reflection.)
+3. Save the lightest light and the darkest dark for the focal point. (Vermeer in `references/`:
+   the face and the pearl; the rest sits in the darkest band.)
+4. Mostly mid-greys reads flat unless one small accent carries it. (Monet's Impression,
+   Sunrise is "flat" by the numbers and works because of one orange sun: most pictures don't.)
+5. A night or a dusk is two dark values and a little light spent sparingly. (The rocket
+   reference: 93% dark, 2% light, and the light is the subject.)
+
+## Shapes and edges
+
+6. A shape that does not read as a silhouette will not read with shading on top; check the
+   silhouette view. (`gallery/sunset-pond`: the duck's silhouette; Hokusai's wave.)
+7. Run backgrounds and big shapes past the canvas edge; a shape that stops at an edge leaves a
+   sliver. (`examples/two-ducks.json`.)
+8. Blur the fill, not the silhouette: a blur on a whole group softens its edge and lets the
+   background through, which reads as haze. (`gallery/sunset-pond` far hills: the haze band;
+   `mistakes.md`.) Before/after: `edge: ... shows through (+0.08)` on the far hills, none in `gallery/sunset-pond-v3`.
+9. Give every soft shape a crisp side somewhere, or it is a smudge. (`gallery/sunset-pond`
+   clouds: soft blobs with no direction, "blotchy" by the critique.) Before/after: clouds blotchy over 42%, no finding in `gallery/sunset-pond-v3`.
+10. Outline a character once, around the whole group, not part by part. (`gallery/duck-portrait`:
+    one `outline` on the group; `library/duck.json`.)
+
+## Colour
+
+11. Pick a key of two to six palette colours and keep every saturated colour within 40 degrees
+    of one, or between two of them; what is outside reads as foreign. (`gallery/sunset-pond`:
+    the green lily pads in an orange and blue key; `mistakes.md`.) Before/after: four out-of-key blobs (2.1% of the picture), none in `gallery/sunset-pond-v3`.
+12. One hue in many values beats many hues in one value. (The coffee cup reference: one warm
+    key, five values; the chelsea cat: eight browns.)
+13. Cool key, warm accents at the focal point, or the reverse: the oldest trick. (The rocket
+    reference; Van Gogh's Starry Night: blue over 80%, yellow accents.)
+14. A pale colour is a value, not a hue: do not count it as part of the key. (The critique
+    ignores key colours under 0.35 saturation; `gallery/sunset-pond`'s cream sun.)
+15. The mood pass (gradient map, vignette) shifts every hue; check `out of key` after it, not
+    before. (`gallery/sunset-pond`: the pads went yellow-green under the warm pass.)
+
+## Texture and marks
+
+16. Shade with big soft shapes and a few directed marks, not noise everywhere. (`gallery/
+    duck-portrait` body: soft blobs with no direction; `mistakes.md`.) Before/after: the body blotchy over 42% (coherence 0.43), no finding in `gallery/duck-portrait-v2`.
+17. Marks have a direction and an edge; a noise fill has neither. Feathers, grass and strokes
+    follow the form. (The chelsea cat's fur; Van Gogh's strokes; `library/grass.json`.)
+18. Texture changes where the material changes; it is what tells the eye what things are.
+    (The coffee cup: coarse wood, smooth porcelain.)
+19. Stamped feathers in rows read as rope; vary length, overlap and lightness, and add a second
+    lighter pass. (`gallery/duck-portrait` wing; `mistakes.md`.) Before/after: not a number's to catch; the reader of `gallery/duck-portrait-v2` no longer says rope, but still calls the wing a smear.
+20. A few bright sparkles are marks, not noise; a field of fine grain with no marks is dirt.
+    (The critique's grain is a median per cell for this reason.)
+21. A light source may be flat; everything else that is flat needs a gradient, a fill or a mark.
+    (`gallery/sunset-pond` sun; `examples/two-ducks.json` duck is flat and shows it.)
+
+## Composition
+
+22. Not dead centre, unless it is the point. (Friedrich's Wanderer is centred on purpose; a
+    duck at the centre of a pond is not.)
+23. The horizon off the middle. (`gallery/sunset-pond`: 65% down.)
+24. Put the detail where the eye should go; a background earns ten commands, a face a hundred.
+    (`gallery/duck-portrait`: 16% of the marks within four cells of the focal point, an area of
+    8%, and still spread too thin.)
+25. A focal part cut by the canvas edge looks like a mistake unless the cut is bold. (The
+    critique warns; Hokusai's wave is cut boldly.)
+
+## Process
+
+26. Write the intent first; the picture is judged against it, not against what you meant later.
+    (Every gallery piece's `script.json`.)
+27. Judge at thumbnail size before judging detail; if it does not read at 96 px it does not
+    read. (`quill views`, the thumb panel.)
+28. Numbers are warnings, never goals: never trade a better-looking picture for a better number,
+    and the person's rating outranks every number. (`gallery/index.json` ratings.)
+29. The blind read is the real test: if a reader who was not told the intent names another
+    focal point or mood, the picture does not read yet. (`gallery/*/blind-read.md`.)
+30. Write honest notes: what each tool did and what is still weak; the next painter learns
+    from the weak list. (`gallery/sunset-pond/notes.md`.)
+31. When copying a reference, overlay your render on it (`quill compare`, or a 50% blend)
+    before showing anyone; guessing coordinates from one look gets the nose 60 px too long and
+    the knob in the wrong place. (The face-door copy, rated 0/5.)
+32. A pencil drawing is built from strokes: darkness is stroke density and pressure, never a
+    flat filled shape with hatching laid on top. Random jitter on a smooth line is not a hand;
+    a hand varies weight, overshoots corners and re-traces. (The face-door copy.)
+33. Copy, don't restyle: a ragged scribbled edge copied as neat even drips, or puffy shaded
+    lips copied as flat ovals, changes the character. (The face-door copy.)
+34. Match the value structure first: squint at both with `quill values`; a copy that is 82%
+    white against a reference with real mids has lost the drawing before any detail.
+    (The face-door copy.)
+
+## Pencil and ink
+
+The person asked for these with the brush presets (phase 5); they come from their sketchbook,
+`references/sketchbook/`. Try both presets with `quill presets`.
+
+35. Choose the tool by the job the mark does: **Ink pen** for contours and solid blacks that must
+    read at a glance, **Pencil (graphite)** for tone, hatching and anything that stays soft.
+    (`pen-hero-head`: an ink contour and black hair in front, light pencil hatching behind; two
+    tools give two depths.)
+36. Ink never goes grey, so its only weight is its width. Press harder (wider) on the shadow
+    side and where lines meet, lighter at the light side and at tips. Blacks are filled solid
+    or left white; ink is not for tone. (`pen-hero-head`: the hair spikes taper to points.)
+37. Pencil tone is pressure and passes. Shade with many light strokes (pressure 0.3 to 0.5) in
+    one direction along the form, and press hard (0.8 to 1) only in the core shadow and the
+    accents. Going over again darkens only to a shiny grey (`build_up`), never ink black.
+    (`prince-profile`: hair shaded along each spike, the arm as one block on the shadow side.)
+38. Light pencil shows the paper grain; that is what makes it read as pencil. Flat, even grey
+    reads as a marker, and white dots punched in a hard-edged line read as a speckled marker.
+    Graphite has a soft, ragged edge; pressure and extra passes fill the valleys. (The "after"
+    half of `lessons/pencil-aim-for.png`; `face-door`'s stucco is the grain.)
+39. Pencil first, ink last: sketch the construction lightly in pencil on its own layer, ink the
+    final contour on a layer above, then fade or hide the pencil layer, or keep it as shading
+    on purpose. (`pen-hero-head`: the pencil sky hatching stays.)
+
+**Aim for this.** `lessons/pencil-aim-for.png`: the bottom half is the Pencil preset at a light,
+medium and hard touch, and 1, 2, 4 and 8 passes over the same line (the top half is the old pencil,
+a speckled marker). `lessons/pencil-test.json` paints the bottom half: render your own pencil
+marks the same way and `quill compare` them with it.
+
+```json
+{ "cmd": "layer", "name": "Sketch" },
+{ "cmd": "brush", "preset": "Pencil (graphite)", "color": "#3A3A44" },
+{ "cmd": "stroke", "points": [[100, 200, 0.3], [180, 150, 0.4], [260, 160, 0.3]] },
+{ "cmd": "layer", "name": "Ink" },
+{ "cmd": "brush", "preset": "Ink pen", "color": "#141418" },
+{ "cmd": "stroke", "points": [[100, 205, 0.4], [180, 152, 1], [262, 162, 0.3]] }
+```

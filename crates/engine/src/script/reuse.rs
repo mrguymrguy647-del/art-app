@@ -280,9 +280,13 @@ impl Sequence {
         let mut document = player.create_document()?;
         player.run(&mut document, on_event)?;
         let report = player.report();
-        // ART_NO_REUSE paints every frame in full (for measuring, and for
+        // QUILL_NO_REUSE paints every frame in full (for measuring, and for
         // checking a picture against the reused one).
-        if self.reuse.is_none() && std::env::var_os("ART_NO_REUSE").is_none() {
+        // (ART_NO_REUSE is its name from before the rename.)
+        let switched_off = ["QUILL_NO_REUSE", "ART_NO_REUSE"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some());
+        if self.reuse.is_none() && !switched_off {
             self.reuse = Some(Arc::new(Reuse::analyse(&self.script, &report, &document)));
         }
         Ok((document, report))

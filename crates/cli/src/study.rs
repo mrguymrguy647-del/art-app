@@ -1,15 +1,15 @@
-//! `art-cli palette`, `values` and `compare`: learning from pictures.
+//! `quill palette`, `values` and `compare`: learning from pictures.
 //! They take PNG or JPEG files, or a painting script (its first frame),
-//! and never need the picture to have been made with Art App.
+//! and never need the picture to have been made with Duck Quill.
 
 use std::path::{Path, PathBuf};
 
-use art_engine::critique::{BAND_NAMES, GROUP_BAND};
-use art_engine::document::Background;
-use art_engine::image::{Color, Image};
-use art_engine::script::PlayOptions;
-use art_engine::senses::Grey;
-use art_engine::study::{self, PALETTE_COLORS, VALUE_BANDS, hex_of};
+use quill_engine::critique::{BAND_NAMES, GROUP_BAND};
+use quill_engine::document::Background;
+use quill_engine::image::{Color, Image};
+use quill_engine::script::PlayOptions;
+use quill_engine::senses::Grey;
+use quill_engine::study::{self, PALETTE_COLORS, VALUE_BANDS, hex_of};
 
 use crate::font::{draw_text, text_height, text_width};
 use crate::{Problem, failed, load, paint_frame};
@@ -112,7 +112,7 @@ const TEXT_SCALE: u32 = 2;
 const DARK: Color = [38, 38, 38, 255];
 const LIGHT: Color = [230, 230, 230, 255];
 
-/// `art-cli palette picture [--colors n] [--out folder]`.
+/// `quill palette picture [--colors n] [--out folder]`.
 pub fn palette(args: &[String]) -> Result<(), Problem> {
     let args = parse("palette", args, false)?;
     let image = open_picture(&args.picture)?;
@@ -182,7 +182,7 @@ fn band_words(shares: &[f32; VALUE_BANDS]) -> String {
         .join(", ")
 }
 
-/// `art-cli values picture [--out folder]`.
+/// `quill values picture [--out folder]`.
 pub fn values(args: &[String]) -> Result<(), Problem> {
     let args = parse("values", args, false)?;
     let image = open_picture(&args.picture)?;
@@ -221,7 +221,7 @@ pub fn values(args: &[String]) -> Result<(), Problem> {
     Ok(())
 }
 
-/// `art-cli compare mine ref [--out folder]`.
+/// `quill compare mine ref [--out folder]`.
 pub fn compare(args: &[String]) -> Result<(), Problem> {
     let args = parse("compare", args, true)?;
     let second = args.second.as_ref().expect("two pictures");

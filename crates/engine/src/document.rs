@@ -5,6 +5,11 @@
 //! combined; `composite_tile` works that out one tile at a time, and
 //! `take_dirty_tiles` says which tiles need working out again.
 
+use std::sync::Arc;
+
+use crate::fill::Mask;
+use crate::reference::Reference;
+use crate::selection::Selection;
 use std::collections::HashSet;
 
 use crate::color::over_paper;
@@ -33,6 +38,11 @@ pub struct Document {
     /// Tiles of layers that were removed: the screen must update them,
     /// but the removed layer can't report them any more.
     removed_tiles: HashSet<TileCoord>,
+    /// What's selected, if anything: painting stays inside it. Not saved
+    /// in the file.
+    selection: Option<Selection>,
+    /// Pictures pinned beside the painting (saved in the file, never painted).
+    references: Vec<Reference>,
 }
 
 impl Document {
@@ -47,6 +57,8 @@ impl Document {
             layers: vec![first],
             next_layer_number: 2,
             removed_tiles: HashSet::new(),
+            selection: None,
+            references: Vec::new(),
         }
     }
 
@@ -69,6 +81,8 @@ impl Document {
             active,
             next_layer_number,
             removed_tiles: HashSet::new(),
+            selection: None,
+            references: Vec::new(),
         }
     }
 
@@ -76,6 +90,42 @@ impl Document {
     /// names keep counting up after you open a picture again).
     pub(crate) fn next_layer_number(&self) -> u64 {
         self.next_layer_number
+    }
+
+    /// What's selected (`None`: nothing is, so everything can be painted).
+    pub fn selection(&self) -> Option<&Selection> {
+        self.selection.as_ref()
+    }
+
+    /// Changes the selection, and returns the one there was. For undo, use
+    /// `SelectionCommand::set` instead.
+    pub fn set_selection(&mut self, selection: Option<Selection>) -> Option<Selection> {
+        std::mem::replace(&mut self.selection, selection)
+    }
+
+    /// The pinned reference pictures, oldest first.
+    pub fn references(&self) -> &[Reference] {
+        &self.references
+    }
+
+    /// For changing how a reference is shown (zoom, opacity...). To pin
+    /// or remove one, use `ReferenceCommand`, which can be undone.
+    pub fn references_mut(&mut self) -> &mut [Reference] {
+        &mut self.references
+    }
+
+    pub(crate) fn insert_reference(&mut self, index: usize, reference: Reference) {
+        let index = index.min(self.references.len());
+        self.references.insert(index, reference);
+    }
+
+    pub(crate) fn remove_reference(&mut self, index: usize) -> Option<Reference> {
+        (index < self.references.len()).then(|| self.references.remove(index))
+    }
+
+    /// The mask painting must stay inside: the selection's, if any.
+    pub fn clip(&self) -> Option<Arc<Mask>> {
+        self.selection.as_ref().map(|s| Arc::clone(s.mask()))
     }
 
     pub fn width(&self) -> u32 {

@@ -164,6 +164,24 @@ pub struct BrushSettings {
     /// number into the list kept by whoever plays the script, which
     /// hands the pattern to the stroke (see `Stroke::with_source`).
     pub source: Option<u32>,
+    /// What the lightest touch still gives, as a fraction of `size` and of
+    /// `opacity` (when pressure changes them). 0: a light touch gives
+    /// almost nothing, as before. A pencil keeps its width (size 0.85)
+    /// but not its darkness (opacity 0.15).
+    pub pressure_size_min: f32,
+    pub pressure_opacity_min: f32,
+    /// How pressure is felt: 1 as it comes; above 1 you must press harder
+    /// to get the full effect (pressure to the power of this).
+    pub pressure_curve: f32,
+    /// Paper grain, 0..1: a light touch only marks the hilltops of a
+    /// paper texture that stays put on the canvas; pressing harder fills
+    /// the valleys too. 0: no grain.
+    pub grain: f32,
+    /// How big the grain is: 1 is fine paper, 2 twice as coarse.
+    pub grain_scale: f32,
+    /// The most a layer darkens however often you go over it, 0..1, as
+    /// graphite goes shiny grey, never black. 0: no limit.
+    pub build_up: f32,
 }
 
 impl Default for BrushSettings {
@@ -183,6 +201,12 @@ impl Default for BrushSettings {
             angle: 0.0,
             dynamics: Dynamics::default(),
             source: None,
+            pressure_size_min: 0.0,
+            pressure_opacity_min: 0.0,
+            pressure_curve: 1.0,
+            grain: 0.0,
+            grain_scale: 1.0,
+            build_up: 0.0,
         }
     }
 }
@@ -212,20 +236,61 @@ pub struct Dab {
 impl BrushSettings {
     /// The dab this brush makes at the given pen pressure (0..1).
     pub fn dab(&self, pressure: f32) -> Dab {
-        let pressure = pressure.clamp(0.0, 1.0);
-        let scale = |value: f32, use_pressure: bool| {
+        let felt = self.felt(pressure);
+        // From `min` (the lightest touch) up to the full value.
+        let scale = |value: f32, use_pressure: bool, min: f32| {
             if use_pressure {
-                value * pressure
+                value * (min + (1.0 - min) * felt)
             } else {
                 value
             }
         };
         Dab {
             // Never smaller than one pixel across, or very light strokes vanish.
-            radius: (scale(self.size, self.pressure_size) / 2.0).max(0.5),
-            opacity: scale(self.opacity, self.pressure_opacity),
-            flow: scale(self.flow, self.pressure_flow),
+            radius: (scale(self.size, self.pressure_size, self.pressure_size_min) / 2.0).max(0.5),
+            opacity: scale(
+                self.opacity,
+                self.pressure_opacity,
+                self.pressure_opacity_min,
+            ),
+            flow: scale(self.flow, self.pressure_flow, 0.0),
         }
+    }
+
+    /// The pressure as felt: bent by the curve (left exactly as it is at
+    /// 1, so every brush made before this setting paints the same).
+    fn felt(&self, pressure: f32) -> f32 {
+        let pressure = pressure.clamp(0.0, 1.0);
+        if self.pressure_curve == 1.0 {
+            pressure
+        } else {
+            pressure.powf(self.pressure_curve.max(0.05))
+        }
+    }
+
+    /// The paper tooth for a dab at this pressure (`None` with no grain):
+    /// where on the paper the graphite catches.
+    pub fn tooth(&self, pressure: f32) -> Option<Tooth> {
+        if self.grain <= 0.0 {
+            return None;
+        }
+        let grain = self.grain.min(1.0);
+        let felt = self.felt(pressure);
+        Some(Tooth {
+            along: {
+                let per_texel = 1.0 / self.grain_scale.max(0.25);
+                let (sin, cos) = FIBRE_ANGLE.to_radians().sin_cos();
+                (cos * per_texel, sin * per_texel)
+            },
+            // The share of the paper left white: about half at a light
+            // touch, a few specks pressing hard (with grain 0.75).
+            threshold: grain * (0.78 - 0.74 * felt),
+            // Towards the dab's edge only the highest bumps catch, so the
+            // outline breaks up instead of being a clean capsule.
+            edge: grain * 1.0,
+            // Graphite already there fills the valleys a little.
+            fill: grain * 0.6,
+        })
     }
 
     /// Distance between dab centres for a dab of this radius, in pixels.
@@ -247,6 +312,122 @@ pub fn dab_coverage(distance: f32, radius: f32, hardness: f32) -> f32 {
     let t = ((radius - distance) / edge_width + 0.5 / edge_width).clamp(0.0, 1.0);
     // "Smoothstep": an S-shaped curve, so the fade looks natural.
     t * t * (3.0 - 2.0 * t)
+}
+
+fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+    let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// ---- Paper grain -----------------------------------------------------------------
+
+/// Where the paper tooth catches graphite for one dab, worked out once
+/// per dab (see `BrushSettings::tooth`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tooth {
+    /// Grain texels per canvas pixel, along the fibres' two directions:
+    /// (cos, sin) of the fibre angle, times the texels per pixel.
+    along: (f32, f32),
+    /// Bumps lower than this stay white (heights are spread evenly 0..1,
+    /// so this is the share of paper left white).
+    threshold: f32,
+    /// How much higher the threshold is at the dab's very edge.
+    edge: f32,
+    /// How much lower it is where the layer is already fully dark.
+    fill: f32,
+}
+
+/// How soft each grain's edge is (in height).
+const TOOTH_SOFTNESS: f32 = 0.07;
+
+impl Tooth {
+    /// How much graphite catches at canvas pixel (x, y), 0..1. `inside` is
+    /// how far inside the dab the pixel is (1 in the solid middle, 0 at
+    /// the edge); `already` how dark the layer was there before this
+    /// stroke (0..1).
+    pub fn at(&self, x: i32, y: i32, inside: f32, already: f32) -> f32 {
+        let height = GRAIN.at_canvas(x, y, self.along);
+        let threshold = self.threshold + self.edge * (1.0 - inside) - self.fill * already;
+        smoothstep(
+            threshold - TOOTH_SOFTNESS,
+            threshold + TOOTH_SOFTNESS,
+            height,
+        )
+    }
+}
+
+/// How many texels across the grain picture is (a power of two). It
+/// repeats across the canvas without a seam.
+const GRAIN_SIZE: usize = 256;
+
+/// A paper texture: hills and valleys, 0 (deepest) to 1 (highest), the
+/// same on every machine (made from fixed random numbers, not a file).
+pub struct Grain {
+    heights: Vec<f32>,
+}
+
+/// Made once, the first time a grainy brush paints.
+static GRAIN: LazyLock<Grain> = LazyLock::new(Grain::new);
+
+/// The paper's fibres run this way (degrees): tooth is streaky, but not
+/// along the canvas edges, where it would line up with straight strokes.
+const FIBRE_ANGLE: f32 = 30.0;
+
+impl Grain {
+    fn new() -> Grain {
+        // Bumps stretched about three times longer than wide (fibres), from
+        // coarse to single texels, on grids that wrap around so the
+        // picture tiles.
+        let mut heights = vec![0.0f32; GRAIN_SIZE * GRAIN_SIZE];
+        let mut random = Random::new(0x00D0_C0FF_EE15_9A1E);
+        for (cell_x, cell_y, weight) in [
+            (6usize, 2usize, 0.25f32),
+            (3, 1, 0.3),
+            (2, 1, 0.25),
+            (1, 1, 0.2),
+        ] {
+            let (cells_x, cells_y) = (GRAIN_SIZE / cell_x, GRAIN_SIZE / cell_y);
+            let lattice: Vec<f32> = (0..cells_x * cells_y).map(|_| random.unit()).collect();
+            let at = |x: usize, y: usize| lattice[(y % cells_y) * cells_x + (x % cells_x)];
+            for y in 0..GRAIN_SIZE {
+                for x in 0..GRAIN_SIZE {
+                    let (cx, cy) = (x / cell_x, y / cell_y);
+                    let fx = smoothstep(0.0, 1.0, (x % cell_x) as f32 / cell_x as f32);
+                    let fy = smoothstep(0.0, 1.0, (y % cell_y) as f32 / cell_y as f32);
+                    let top = at(cx, cy) + (at(cx + 1, cy) - at(cx, cy)) * fx;
+                    let bottom = at(cx, cy + 1) + (at(cx + 1, cy + 1) - at(cx, cy + 1)) * fx;
+                    heights[y * GRAIN_SIZE + x] += weight * (top + (bottom - top) * fy);
+                }
+            }
+        }
+        // Spread the heights evenly from 0 to 1 (by rank), so a threshold
+        // of 0.3 leaves exactly 30% of the paper white.
+        let mut order: Vec<usize> = (0..heights.len()).collect();
+        order.sort_by(|&a, &b| heights[a].total_cmp(&heights[b]));
+        let last = (order.len() - 1) as f32;
+        let mut spread = vec![0.0f32; heights.len()];
+        for (rank, &index) in order.iter().enumerate() {
+            spread[index] = rank as f32 / last;
+        }
+        Grain { heights: spread }
+    }
+
+    /// The height at texel (x, y), repeating in both directions.
+    fn at(&self, x: i32, y: i32) -> f32 {
+        // (The size is a power of two, so wrapping round is a bit mask,
+        // which is right for negative numbers too.)
+        let mask = GRAIN_SIZE as i32 - 1;
+        let (x, y) = ((x & mask) as usize, (y & mask) as usize);
+        self.heights[y * GRAIN_SIZE + x]
+    }
+
+    /// The height under canvas pixel (x, y), with the fibres turned.
+    fn at_canvas(&self, x: i32, y: i32, (cos, sin): (f32, f32)) -> f32 {
+        let (x, y) = (x as f32, y as f32);
+        let u = x * cos + y * sin;
+        let v = y * cos - x * sin;
+        self.at(u.floor() as i32, v.floor() as i32)
+    }
 }
 
 // ---- Tip shapes ----------------------------------------------------------------
@@ -571,5 +752,48 @@ mod tests {
         // Halfway out, a fully soft brush is clearly see-through.
         let middle = dab_coverage(10.0, 20.0, 0.0);
         assert!(middle > 0.2 && middle < 0.8, "{middle}");
+    }
+
+    #[test]
+    fn paper_grain_is_spread_evenly_and_runs_along_the_fibres() {
+        let grain = &*GRAIN;
+        // Evenly spread: a threshold of 0.3 leaves 30% of the paper white.
+        let below = grain.heights.iter().filter(|&&h| h < 0.3).count();
+        let share = below as f32 / grain.heights.len() as f32;
+        assert!((share - 0.3).abs() < 0.005, "{share}");
+        // Streaky: neighbours along a fibre are more alike than across.
+        let (mut along, mut across) = (0.0, 0.0);
+        for y in 0..GRAIN_SIZE as i32 {
+            for x in 0..GRAIN_SIZE as i32 {
+                along += (grain.at(x + 1, y) - grain.at(x, y)).abs();
+                across += (grain.at(x, y + 1) - grain.at(x, y)).abs();
+            }
+        }
+        assert!(across > along * 1.3, "along {along}, across {across}");
+    }
+
+    #[test]
+    fn pressing_harder_leaves_less_paper_white() {
+        let pencil = BrushSettings {
+            grain: 0.75,
+            pressure_curve: 1.4,
+            ..BrushSettings::default()
+        };
+        let white = |pressure: f32| {
+            let tooth = pencil.tooth(pressure).unwrap();
+            let mut white = 0;
+            for y in 0..200 {
+                for x in 0..200 {
+                    white += usize::from(tooth.at(x, y, 1.0, 0.0) < 0.5);
+                }
+            }
+            white as f32 / 40_000.0
+        };
+        assert!(white(0.2) > 0.45, "light: {}", white(0.2));
+        assert!(white(1.0) < 0.06, "hard: {}", white(1.0));
+        assert!(
+            BrushSettings::default().tooth(1.0).is_none(),
+            "no grain, no tooth"
+        );
     }
 }

@@ -1700,3 +1700,323 @@ two false alarms. Every finding, before and after:
   rope feathers) is only half closed: no rope, but the wing still reads
   as a smear. Lessons 8, 9, 11, 16 and 19 carry their before/after
   numbers.
+
+## 79. Art App becomes Duck Quill (phase 5, step 1)
+
+- **New names, old names still work.** The app is Duck Quill
+  (`DuckQuill.exe`), the command line tool `quill`, pictures `.quill`
+  (`"format": "duckquill"` inside), scripts `"format":
+  "duckquill-script"`, the agents' folder `skills/duck-quill/`, the
+  crates `quill_engine`, `quill_app` and `quill_cli` (folders unchanged).
+  `.artapp` pictures open, and Ctrl+S writes them back under their own
+  name; Save As offers `.quill` but keeps a typed `.artapp`. Scripts
+  saying `artapp-script` play with no warning; only `quill check` adds a
+  note. Everything above this entry describes the past and keeps the old
+  names.
+- **`art-cli` is a second program, not a copy.** The CLI's code moved
+  into a library (`lib.rs`) with one `run` function; `quill` and `art-cli`
+  are three-line programs that call it, so they can't drift apart.
+  `art-cli` prints `art-cli is now called quill` on stderr, not stdout,
+  so programs that read its output see what they always saw.
+- **Fixtures made before the rename** (`crates/engine/tests/fixtures`):
+  an `.artapp` picture with a clipped multiply layer, a screen layer and
+  an alpha-locked layer, the PNG it exported, and the `artapp-script`
+  that painted it, all made with the old `art-cli`. Tests open the
+  picture, play the script and compare every pixel with that PNG, and
+  run `art-cli` and `quill` side by side.
+- **The brand, lightly.** The exe's icon (`build.rs`, Windows only) and
+  the window icon come from `brand/`; Help → About shows the logo shrunk
+  to 700 px (about 300 KB each) so the exe stays small; View → Theme
+  offers dark, light or the system's. Only "chosen" things (selected
+  tool, selected layer) use night indigo, and the main button of a
+  dialog duck yellow: the canvas stays the star.
+- **The version** (0.5.0) is written once, in the workspace
+  `Cargo.toml`; About and `quill --version` read it.
+
+## 80. Download and run (phase 5, step 2)
+
+- **CI** (`.github/workflows/ci.yml`) builds, tests and runs clippy with
+  warnings as errors on Windows and Linux for every push and pull request,
+  with the Rust version pinned (1.97.0) so a new Rust can't turn it red
+  on its own.
+- **The release** (`release.yml`) runs on a `v*` tag: it checks the tag
+  matches the version in `Cargo.toml`, builds on Windows and publishes
+  `DuckQuill-<version>-windows.zip` with `gh release create` (no
+  third-party release action). A push that changes the release files
+  builds the same zip as a run artifact without publishing, so the zip
+  can be checked before any tag.
+- **The sketchbook stays out of the zip.** The zip carries
+  `skills/duck-quill/` for agents, minus `references/sketchbook/`: those
+  are the owner's own drawings, kept in the repository to study but not
+  shipped in an app.
+- **Unsigned for now:** `READ ME FIRST.txt` explains SmartScreen's "Run
+  anyway".
+
+## 81. Selections (phase 5, step 3)
+
+- **One code path for the app and scripts.** A selection is the same
+  8-bit `Mask` a script's group `mask` already used, so soft edges come
+  free and every painting job takes one clip. The app makes each change
+  as a `select` command and runs it with `selection::run`; the script
+  player reads the command with the same `Request::read` and combines with
+  the same `selection::apply` (it only builds the shape itself, because a
+  script's shape takes parameters and is placed by its groups). A test
+  replays the app's selections as a script and compares the pictures.
+- **Undoable, not saved.** Each change is an undo step (the owner's
+  choice), recorded as a `select` command for Export strokes. The
+  selection lives on the document but not in the file.
+- **What obeys it:** brush, eraser, paint bucket, gradient, text, the
+  Filters window, Clear layer (which then clears only the selection), and
+  in scripts every painting command. The script `filter` command obeys a
+  `select` selection but still not a group's mask, so old scripts paint
+  the same pixels.
+- **An empty selection is no selection**, in the app and in scripts
+  (with a warning there): subtracting everything deselects.
+- **Alt means two things.** With a selection tool it takes away from the
+  selection; with every other tool it still picks a colour.
+- **Marching ants** are the selection's edge along pixel sides (from half
+  selected up), joined into rings once per selection change and drawn as
+  white with black dashes that move: visible on any colour, and smooth
+  around curves.
+- **Copy, cut, paste.** Copy takes the selected pixels (each as much as
+  it's selected) and puts them on the Windows clipboard too, with
+  `arboard`, which egui already used for text. Paste goes onto a new layer
+  at the place it was copied from; a picture from another program goes in
+  the middle of the view. Ctrl+X, C and V arrive from egui as Cut, Copy
+  and Paste events, not keys, so the shortcut reader takes those.
+- **Moving a selection** lifts its pixels onto a temporary layer and uses
+  the existing transform tool; Enter puts them down, moves the selection's
+  mask the same way, and removes the temporary layer, all one undo step.
+- **Not everything is a script.** Paste and moving a selection have no
+  script command. They're marked when recorded (`push_unrecordable`), and
+  Export strokes says in its notes how many changes are missing, instead
+  of silently replaying a different picture.
+- **Speed, 4000 x 3000 with 20 layers** (`tests/big_canvas.rs`, release):
+  a long size-60 stroke 96 ms without a selection and 88 ms inside a
+  feathered ellipse (no measurable cost); a blur 549 ms plain and 681 ms
+  inside a selection (the mixing pass); making a canvas-sized ellipse
+  selection 190 ms, feathering it 150 ms, its outline 48 ms: once per
+  change, not per stroke.
+
+## 82. Layers you can see (phase 5, step 4)
+
+- **Thumbnails from changed tiles only.** A surface keeps a second list
+  of changed tiles for the thumbnails, apart from the screen's (which the
+  canvas empties every frame). The Layers panel redoes only the
+  thumbnail pixels over those tiles, and only when no stroke is in
+  progress. A thumbnail fits 44 x 32 points; on a 4000-pixel-wide canvas
+  a tile is about three thumbnail pixels, each the average of 16
+  samples, so a whole thumbnail is about 22,000 lookups.
+- **Drag by a handle.** Each row starts with a grip of dots to drag;
+  dragging the whole row would fight with click-to-select and
+  double-click-to-rename. A line in night indigo shows where it will
+  land; the move is `MoveLayerCommand`, undoable and recorded.
+- **Drawn icons.** The eye and the padlock are drawn with lines, not
+  emoji or font symbols, so they look the same on every machine. The
+  Layers panel is 50 points wider for them.
+
+## 83. Brush presets and the pencil (phase 5, step 5)
+
+- **A preset is a `brush` command with a name.** The file holds a name,
+  a description, whether it's an eraser, the smoothing and a `brush`
+  block written exactly as in a script, so there's one way to read and
+  check settings (`apply_brush_fields`, shared with the player). A preset
+  has no colour: choosing one keeps the colour you had.
+- **Built-in presets live inside the program** (`crates/engine/presets`,
+  read with `include_str!`), so `{"cmd": "brush", "preset": "..."}` paints
+  the same on every machine. Your own presets are not available to
+  scripts for the same reason; Export strokes writes their settings out.
+- **Your presets are files** in `%APPDATA%\Duck Quill\presets` (on Linux
+  `~/.config/duck-quill/presets`), one `.json` each, named after the
+  preset with characters Windows forbids replaced; `order.json` keeps the
+  grid's order. A file that can't be read is reported and skipped.
+  Built-in ones can't be renamed or deleted; Duplicate makes a copy you
+  can change.
+- **What makes the pencil a pencil.** Four new brush settings, all off
+  by default so older brushes paint exactly as before:
+  - `pressure_size_min` / `pressure_opacity_min`: what the lightest
+    touch keeps. The pencil keeps 85% of its width but only 15% of its
+    darkness, so pressure is shading, not thickness.
+  - `pressure_curve`: 1.4 for the pencil, so you press harder for dark.
+  - `grain`: paper tooth, fixed to the canvas (not the stroke), so every
+    stroke meets the same bumps. Revised after the owner's review (the
+    first version read as a speckled marker: a crisp capsule with round
+    white dots, and the hard stroke as speckled as the light one):
+    - the bumps are 1 to 6 pixels, stretched about 3:1 and turned 30°,
+      like paper fibres, instead of round;
+    - their heights are spread evenly by rank, so a threshold is simply
+      the share of paper left white: about half at a light touch, a few
+      specks pressing hard (`BrushSettings::tooth`);
+    - the threshold rises towards the dab's edge (and the pencil's
+      hardness is 0.1), so the outline is ragged and soft;
+    - graphite already on the layer, at the pixel or around it, lowers
+      the threshold, so going over it again fills the valleys, as
+      graphite smears into the tooth.
+    The aim is `skills/duck-quill/lessons/pencil-aim-for.png`.
+  - `build_up`: the most the layer darkens when you go over it again
+    (0.8 for the pencil: shiny grey, never black).
+- **Recorded brushes always carry the new settings** (and `tidy` drops
+  them while they stay plain): writing them only when used meant a plain
+  brush after the pencil played back still grainy.
+- **Previews** are real strokes painted with the engine on a 144 x 64
+  surface (shown at half size), light-hard-light, sizes squeezed to fit;
+  each is drawn once and again only when its settings change.
+- **Cost.** On the 4000 x 3000, 20-layer test (`tests/big_canvas.rs`), a
+  3600-pixel stroke at size 60 takes about 230 ms with the pencil against
+  115 ms with the plain brush (the limit is 2.5 times): the tooth is
+  only worked out where a dab could still darken a pixel, its angle
+  once per dab, and the pencil's dabs are as far apart as the plain
+  brush's. That stroke takes seconds to draw by hand, so the pen never
+  waits; at the pencil's own size (5) it is a small fraction of that.
+
+## 84. Symmetry (phase 5, step 6)
+
+- **Mirrored dabs, one stroke.** `Stroke::mirrored(Symmetry)` stamps
+  each dab again across the lines, with the same random variation and a
+  mirrored angle. Because the copies belong to the same stroke they
+  share its coverage: where they overlap near a line they don't darken
+  each other, which separate mirrored strokes would. Undo is one step.
+- **Scripts get it too** (`"symmetry": {"x": .., "y": ..}` on `stroke`
+  and `erase`), so Export strokes replays the app's mirrored strokes
+  exactly. Inside a group the lines move and turn with the group.
+- **The lines live as fractions of the canvas**, so they stay in the
+  middle (or wherever they were put) on a new or resized picture. They
+  are dragged by a round handle at the line's top or left end (or where
+  the line comes into view), never by grabbing the line itself, which
+  would fight with painting next to it. The grab uses where the button
+  went down, not where the pointer is a frame later.
+- **Brush and eraser only**: a mirrored fill or gradient would be
+  surprising, and the lines are only shown for those two tools.
+- **Cost.** A four-way stroke costs four times a plain one (421 ms vs
+  110 ms for the 3600-pixel size-60 stroke on the 4000 x 3000 test).
+
+## 85. Reference pictures (phase 5, step 6)
+
+- **Kept in the document, not painted.** Each reference keeps the file's
+  bytes as they were (PNG or JPEG), the decoded picture and how it's
+  shown (zoom, centre, opacity, window). Scripts, exports and the
+  layers never see them.
+- **Saved in the `.quill` file** as `references/<n>.png|jpg` beside the
+  layers, with a `references` list in `document.json` written only when
+  there are some. The format version stays 1: older versions of the app
+  ignore both, as they ignore anything they don't know, so files keep
+  opening both ways. A reference that can't be read is left out rather
+  than refusing to open the painting.
+- **Pinning and removing are undo steps** that write no script (they
+  aren't changes to the painting, so Export strokes doesn't count them
+  as missing). Zooming and moving a reference aren't undo steps.
+- **Own windows, not a panel**, so a reference can sit right next to the
+  part being painted, and several can be open. Pictures over 4096
+  pixels are shown shrunk (graphics cards limit texture sizes); colours
+  are picked from the full picture. The wheel over a reference zooms the
+  reference, not the canvas.
+
+## 86. Autosave, recent files, what's remembered, the shortcut sheet (phase 5, step 7)
+
+- **Autosave copies, it never saves.** Copies go into the settings
+  folder's `recovery` folder, never next to (or over) your files, and
+  are deleted when you save or choose not to. A copy is made only when
+  the picture has changes the last copy doesn't have
+  (`History::generation`), at most every two minutes, and only after two
+  seconds without input and with no stroke or script running. The
+  document is cloned in that quiet moment (about 100 ms for 4000 x 3000
+  with 20 layers) and compressed and written by a background thread, so
+  painting never waits for it.
+- **Telling a crash from a running Duck Quill.** Each run holds a lock
+  on its own `<session>.lock` file (`File::try_lock`); the system lets go
+  of it when Duck Quill stops, even in a crash. A copy whose lock can be
+  taken was left behind, so it's offered at once on the next start, and
+  two Duck Quills open together never offer each other's work. (A first
+  version used a "still alive" time stamp, which made a crash wait three
+  minutes before its copy was offered.)
+- **Restoring** opens the copy as unsaved (`History::mark_unsaved`), tied
+  to the file it came from, so Save writes there; the copy becomes the
+  new run's own, so it stays safe until then. Every remembered file
+  (the note, the open picture, the recent list) is kept as a full path,
+  so "../r/pen.quill" from a command line still means the same file
+  when Duck Quill starts in another folder.
+- **Tidying:** a run that crashes with nothing unsaved leaves only its
+  lock file. On start, locks that nobody holds and that have no copy
+  beside them are deleted.
+- **Settings** are one readable `settings.json`: the window's size, the
+  brush and eraser (stored as presets, so they're checked like any
+  preset), colours, theme, the Presets section and Hide reference
+  pictures, and the recent files. Written on closing, when the recent
+  list changes, and every 30 seconds in a quiet moment if anything
+  changed (so a crash doesn't forget the brush). A broken file means
+  the defaults; unknown fields are ignored.
+- **The shortcut sheet** is one table in `shortcut_sheet.rs`; a test
+  checks every tool key and the main shortcuts are on it once.
+
+## 87. Fixes from the game tests (phase 5, step 7b)
+
+- **Darkening layers in transparent exports.** Multiply, Darken and
+  Color Burn now only darken what's below them: over an empty pixel
+  they leave it empty, and over a half-see-through edge they keep it as
+  see-through. The usual compositing rule paints a multiply layer's own
+  colour where there's nothing below, which left a dark band beside
+  sprites whose shadow layer was painted a little too big. Over paper
+  (always solid) the formula is exactly the old one, so every picture
+  rendered on paper is unchanged; only the transparent reference of the
+  all-commands script changed, where a multiply texture used to show
+  over empty sky.
+- **Uneven scales keep lines unstretched.** Brush and outline sizes in
+  a group used to grow by the average of the two scales (the square
+  root of their product), so a part stretched [3, 1] got lines 1.73
+  times fatter all round. They now follow the smaller scale (the
+  transform's smaller singular value, so turning doesn't change it):
+  [3, 1] keeps lines as drawn, and an even scale is exactly as before.
+  `"stretch_brush": true` on a group or `use` brings back the average.
+  `check` warns once per group when its scales differ by 1.5 times or
+  more. Squash-and-stretch frames have slightly thinner outlines on the
+  squashed frames: the duck-walk, duck-sheet and title references were
+  updated for it.
+- **Scale 0** shrinks a part to nothing instead of being an error: its
+  commands still run (a layer it makes, a symbol it defines) but paint
+  at no opacity, and `check` reports no area for it. For
+  `transform_layer` it stays an error (squashing a whole layer can't be
+  undone; `clear_layer` empties one).
+- **Symbol parameters in any field.** A `define` with `params` keeps its
+  commands as written; one that can't be read with its `"$name"`s in
+  place (a point, a width, a brush size) is read with the values put
+  in: the defaults when the script is read, each `use`'s own values
+  when it plays (cached per set of values, so a repeat or an animation
+  reads it once per value). Commands that read fine as written are
+  unchanged, so their messages are too. Scripts are written back out
+  from the commands as written, so the `"$name"`s survive Export
+  strokes. A `"$name"` where a number is expected outside such a define
+  now says it would be a parameter, and where.
+- **Names on single shapes.** Shape and stroke commands take a `name`.
+  A named one is played as a named part of its own (a frame holding
+  just that command), so the report, the critique and the views
+  silhouettes treat it like a named group. That frame hands its command
+  the very seed it would have had without the name (`keep_seed`), so
+  naming a jittered shape doesn't change a pixel.
+- **Outline colours count as used.** A pixel canvas's `"outline": "ink"`
+  outlines every shape, but no command names it, so `check` called it
+  "never used". It's now counted from the canvas command. (Shape,
+  group and text outlines were already counted; the test covers them
+  all.)
+- **`render --tile`** saves the picture 2 x 2 and compares opposite
+  edges. A row (or column) jumps when the difference across the seam is
+  more than three times the picture's usual step between neighbouring
+  pixels (its median), and at least 24 of 255: a noisy texture isn't a
+  seam for being noisy. Edges where more than 5% jump are reported,
+  with the longest stretch, in canvas pixels.
+- **`quill atlas`**: one script per tile or sprite (so each can be
+  checked and critiqued on its own), packed in the order given. Tiles
+  of one size make an exact grid (with `tile`, `columns` and `rows` in
+  the JSON, so a game can cut by size); mixed sizes go in rows as tall
+  as their tallest tile. Tiles are named after their script files.
+- **Pixel art by a rule you can work out.** The shrink used to paint a
+  pixel when more than half of its samples were painted, and gave it
+  the colour most of them had. Thin lines at a slant fall just under
+  half in some pixels and broke into specks; small shapes whose edge
+  crossed near half a pixel came out either way. Now a pixel is painted
+  when its centre is inside the paint, in the colour at its centre (the
+  samples nearest the centre vote; on the edge counts as outside, which
+  keeps outlines from growing bumps), and lines, paths and strokes 1
+  pixel wide or less are drawn whole pixel by whole pixel (Bresenham,
+  with the corner pixel of an "L" dropped). The circle table in
+  script-format and a test pin it down. The pixel duck's walk frame 2
+  changed by 11 pixels (a slightly flatter crown and tail tip).

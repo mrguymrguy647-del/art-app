@@ -13,12 +13,12 @@
 
 use std::path::{Path, PathBuf};
 
-use art_engine::document::{Background, Document};
-use art_engine::gif::save_gif;
-use art_engine::image::Image;
-use art_engine::script::{PlayOptions, Script, Sequence};
-use art_engine::sprites::{SheetAnimation, sprite_sheet};
 use eframe::egui::{self, Button, Slider, vec2};
+use quill_engine::document::{Background, Document};
+use quill_engine::gif::save_gif;
+use quill_engine::image::Image;
+use quill_engine::script::{PlayOptions, Script, Sequence};
+use quill_engine::sprites::{SheetAnimation, sprite_sheet};
 
 /// Onion skins are this strong (0 to 1).
 const ONION_STRENGTH: f32 = 0.35;
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn exports_write_the_sheet_frames_and_gif() {
         let view = view();
-        let folder = std::env::temp_dir().join(format!("art-app-animation-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("quill-animation-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).unwrap();
         let json = view.export_sheet(&folder.join("dots.png")).unwrap();

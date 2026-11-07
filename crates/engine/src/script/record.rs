@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use super::{
     Animations, BrushCmd, CanvasCmd, ClearLayerCmd, Command, DeleteLayerCmd, DynamicsCmd, FillCmd,
-    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, StrokeCmd,
-    TransformLayerCmd,
+    FilterCmd, GradientCmd, LayerCmd, MoveLayerCmd, Point, RenameLayerCmd, Script, SelectCmd,
+    StrokeCmd, SymmetryCmd, TransformLayerCmd,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, Tip};
 use crate::fill::{FloodFill, Gradient, GradientShape, Rgba, SampleFrom};
@@ -61,6 +61,12 @@ fn plain_brush() -> BrushCmd {
         )),
         angle: Some(0.0),
         dynamics: Some(DynamicsCmd::default()),
+        pressure_size_min: Some(0.0),
+        pressure_opacity_min: Some(0.0),
+        pressure_curve: Some(1.0),
+        grain: Some(0.0),
+        grain_scale: Some(1.0),
+        build_up: Some(0.0),
         ..BrushCmd::default()
     }
 }
@@ -99,6 +105,15 @@ pub fn brush(settings: &BrushSettings, with_color: bool) -> Command {
         angle: Some(round(settings.angle, 2)),
         dynamics: Some(dynamics(&settings.dynamics)),
         reset: None,
+        preset: None,
+        // Always written (`tidy` drops them while they stay plain), so a
+        // brush after the pencil gets its grain and build-up back to none.
+        pressure_size_min: Some(round(settings.pressure_size_min, 3)),
+        pressure_opacity_min: Some(round(settings.pressure_opacity_min, 3)),
+        pressure_curve: Some(round(settings.pressure_curve, 3)),
+        grain: Some(round(settings.grain, 3)),
+        grain_scale: Some(round(settings.grain_scale, 3)),
+        build_up: Some(round(settings.build_up, 3)),
     })
 }
 
@@ -136,6 +151,19 @@ pub fn stroke(
             Command::Stroke(stroke)
         },
     ]
+}
+
+/// Mirror lines for the stroke `stroke` made (its last command).
+pub fn mirror(commands: &mut [Command], symmetry: Option<&crate::stroke::Symmetry>) {
+    let Some(symmetry) = symmetry else {
+        return;
+    };
+    if let Some(Command::Stroke(stroke) | Command::Erase(stroke)) = commands.last_mut() {
+        stroke.symmetry = Some(SymmetryCmd {
+            x: symmetry.vertical.then(|| round(symmetry.centre.0, 2)),
+            y: symmetry.horizontal.then(|| round(symmetry.centre.1, 2)),
+        });
+    }
 }
 
 /// A paint bucket fill on `layer`.
@@ -188,6 +216,12 @@ pub fn gradient(layer: &str, gradient: &Gradient, opacity: f32) -> Vec<Command> 
             erase: None,
         }),
     ]
+}
+
+/// A change of selection made in the app, as the `select` command that
+/// makes it again.
+pub fn select(command: SelectCmd) -> Vec<Command> {
+    vec![Command::Select(command)]
 }
 
 pub fn clear_layer(name: &str) -> Vec<Command> {
@@ -478,6 +512,7 @@ fn for_each_color(command: &mut Command, f: &mut dyn FnMut(&mut String)) {
             }
         }
         Command::Layer(_)
+        | Command::Select(_)
         | Command::DeleteLayer(_)
         | Command::MoveLayer(_)
         | Command::RenameLayer(_)
@@ -552,7 +587,21 @@ fn changed_brush_settings(known: &mut BrushCmd, new: BrushCmd) -> BrushCmd {
             _ => None,
         }
     }
+    // After a reset or a preset the old settings no longer hold.
+    if new.reset == Some(true) {
+        *known = plain_brush();
+    }
+    if new.preset.is_some() {
+        *known = BrushCmd::default();
+    }
     BrushCmd {
+        preset: new.preset,
+        pressure_size_min: keep(&mut known.pressure_size_min, new.pressure_size_min),
+        pressure_opacity_min: keep(&mut known.pressure_opacity_min, new.pressure_opacity_min),
+        pressure_curve: keep(&mut known.pressure_curve, new.pressure_curve),
+        grain: keep(&mut known.grain, new.grain),
+        grain_scale: keep(&mut known.grain_scale, new.grain_scale),
+        build_up: keep(&mut known.build_up, new.build_up),
         color: keep(&mut known.color, new.color),
         size: keep(&mut known.size, new.size),
         opacity: keep(&mut known.opacity, new.opacity),

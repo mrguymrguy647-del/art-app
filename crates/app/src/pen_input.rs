@@ -12,8 +12,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use art_engine::pen::PenSample;
 use eframe::egui;
+use quill_engine::pen::PenSample;
 
 /// One pen or touch reading from Windows Ink.
 #[derive(Debug, Clone, Default)]
@@ -99,7 +99,7 @@ impl PenInput {
 mod windows_ink {
     use std::collections::HashMap;
 
-    use art_engine::pen::{InputKind, PenSample};
+    use quill_engine::pen::{InputKind, PenSample};
     use windows::Win32::Foundation::{HANDLE, HWND, POINT, RECT};
     use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
     use windows::Win32::UI::Controls::POINTER_DEVICE_INFO;

@@ -14,13 +14,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use art_engine::document::{Document, MAX_CANVAS_SIDE};
-use art_engine::file::{self, Background, FILE_EXTENSION, FileError};
-use art_engine::history::History;
-use art_engine::script::{PlayOptions, Player, Script, record};
 use eframe::egui::{
     self, Button, DragValue, Id, Key, KeyboardShortcut, Modal, Modifiers, ViewportCommand, vec2,
 };
+use quill_engine::document::{Document, MAX_CANVAS_SIDE};
+use quill_engine::file::{self, Background, FILE_EXTENSION, FileError, OLD_FILE_EXTENSION};
+use quill_engine::history::History;
+use quill_engine::script::{PlayOptions, Player, Script, record};
+
+use crate::theme;
 
 /// Keyboard shortcuts. Each one is also shown next to its menu entry.
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
@@ -59,6 +61,9 @@ pub enum FileAction {
     Export(Background),
     PlayStrokes,
     ExportStrokes,
+    /// File → Open recent: the picture at this place in the list.
+    OpenRecent(usize),
+    ClearRecent,
 }
 
 /// A script to start playing, handed over to the app.
@@ -99,6 +104,8 @@ pub enum AnimationExport {
 enum Discard {
     New,
     Open,
+    /// Open `Files::pending_open`.
+    OpenPath,
     CloseWindow,
     /// Play a script on a new picture of the script's canvas size.
     PlayNew,
@@ -140,6 +147,12 @@ pub struct Files {
     animation_export: Option<AnimationExport>,
     /// A script ready to start playing.
     ready_play: Option<PlayRequest>,
+    /// Pictures opened or saved lately, newest first (File → Open recent).
+    recent: Vec<PathBuf>,
+    /// The recent list changed (so the settings should be saved).
+    recent_changed: bool,
+    /// A recent picture waiting for "Save changes?" before it's opened.
+    pending_open: Option<PathBuf>,
 }
 
 impl Files {
@@ -171,6 +184,14 @@ impl Files {
         egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
             ui.set_min_width(260.0);
             for (label, shortcut, action) in entries {
+                if action == FileAction::Save {
+                    // Open recent goes right under Open.
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.menu_button("Open recent", |ui| {
+                            chosen = chosen.or(self.recent_menu(ui));
+                        });
+                    });
+                }
                 // The menu closes by itself after a click.
                 let shortcut_text =
                     shortcut.map_or_else(String::new, |s| ui.ctx().format_shortcut(&s));
@@ -190,6 +211,67 @@ impl Files {
             }
         });
         chosen
+    }
+
+    /// File → Open recent's list.
+    fn recent_menu(&self, ui: &mut egui::Ui) -> Option<FileAction> {
+        let mut chosen = None;
+        if self.recent.is_empty() {
+            ui.weak("Nothing opened or saved yet");
+            return None;
+        }
+        for (index, path) in self.recent.iter().enumerate() {
+            let entry = Button::new(file_name(path)).min_size(vec2(0.0, 28.0));
+            if ui
+                .add(entry)
+                .on_hover_text(path.display().to_string())
+                .clicked()
+            {
+                chosen = Some(FileAction::OpenRecent(index));
+            }
+        }
+        ui.separator();
+        if ui.button("Clear the list").clicked() {
+            chosen = Some(FileAction::ClearRecent);
+        }
+        chosen
+    }
+
+    /// The recent pictures, newest first.
+    pub fn recent(&self) -> &[PathBuf] {
+        &self.recent
+    }
+
+    pub fn set_recent(&mut self, recent: Vec<PathBuf>) {
+        self.recent = recent;
+    }
+
+    /// True once after the recent list changed.
+    pub fn take_recent_changed(&mut self) -> bool {
+        std::mem::take(&mut self.recent_changed)
+    }
+
+    fn remember(&mut self, path: &Path) {
+        crate::settings::add_recent(&mut self.recent, path);
+        self.recent_changed = true;
+    }
+
+    /// The file the picture was opened from or saved to, if any.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// The picture's name, as the title shows it.
+    pub fn picture_name(&self) -> String {
+        self.name()
+    }
+
+    /// A picture restored after a crash: it belongs to `original` (if it
+    /// had a file), so Save writes there, but it counts as unsaved.
+    pub fn restored(&mut self, original: Option<PathBuf>) {
+        let original = original.as_deref().map(crate::settings::full_path);
+        self.opened_from = original.as_deref().map(file_name);
+        self.path = original;
     }
 
     /// Checks the keyboard for the File shortcuts (Ctrl+N, Ctrl+O, ...).
@@ -366,6 +448,16 @@ impl Files {
                 }
                 FileAction::ExportStrokes => self.export_strokes(frame, document, history),
                 FileAction::ExportAnimation => self.asking_animation_export = true,
+                FileAction::OpenRecent(index) => {
+                    if let Some(path) = self.recent.get(index).cloned() {
+                        self.pending_open = Some(path);
+                        replacement = self.discard(Discard::OpenPath, ctx, frame, history);
+                    }
+                }
+                FileAction::ClearRecent => {
+                    self.recent.clear();
+                    self.recent_changed = true;
+                }
             }
         }
         if self.asking_animation_export {
@@ -423,6 +515,16 @@ impl Files {
                 None
             }
             Discard::Open => self.open(frame),
+            Discard::OpenPath => {
+                let path = self.pending_open.take()?;
+                let opened = self.open_path(path.clone());
+                if opened.is_none() {
+                    // Moved or deleted: take it off the list.
+                    self.recent.retain(|p| p != &path);
+                    self.recent_changed = true;
+                }
+                opened
+            }
             Discard::CloseWindow => {
                 self.closing = true;
                 ctx.send_viewport_cmd(ViewportCommand::Close);
@@ -625,10 +727,20 @@ impl Files {
         if recorded.is_empty() {
             return None;
         }
-        let notes = self
+        let mut notes: Vec<String> = self
             .opened_from
-            .as_ref()
-            .map(|name| format!("Painted on top of {name}, as it was when it was opened."));
+            .iter()
+            .map(|name| format!("Painted on top of {name}, as it was when it was opened."))
+            .collect();
+        // Pastes and moved selections have no script command.
+        let missing = history.unrecordable_steps();
+        if missing > 0 {
+            notes.push(format!(
+                "{missing} change(s) can't be written as script commands and are missing here: \
+                 pasting, and moving a selection."
+            ));
+        }
+        let notes = (!notes.is_empty()).then(|| notes.join(" "));
         Some(record::script(
             document.width(),
             document.height(),
@@ -685,7 +797,7 @@ impl Files {
 
         let question = match next {
             Discard::New => "before starting a new picture?",
-            Discard::Open => "before opening another picture?",
+            Discard::Open | Discard::OpenPath => "before opening another picture?",
             Discard::CloseWindow => "before closing?",
             Discard::PlayNew => "before playing the script on a new picture?",
         };
@@ -700,7 +812,10 @@ impl Files {
             ui.add_space(12.0);
             let size = vec2(90.0, 30.0);
             ui.horizontal(|ui| {
-                if ui.add(Button::new("Save").min_size(size)).clicked() {
+                if ui
+                    .add(theme::primary_button("Save").min_size(size))
+                    .clicked()
+                {
                     return Some(Answer::Save);
                 }
                 if ui.add(Button::new("Don't save").min_size(size)).clicked() {
@@ -826,10 +941,10 @@ impl Files {
             .file_window(frame)
             .set_title("Open picture or painting script")
             .add_filter(
-                "Art App picture or painting script",
-                &[FILE_EXTENSION, "json"],
+                "Duck Quill picture or painting script",
+                &[FILE_EXTENSION, OLD_FILE_EXTENSION, "json"],
             )
-            .add_filter("Art App picture", &[FILE_EXTENSION])
+            .add_filter("Duck Quill picture", &[FILE_EXTENSION, OLD_FILE_EXTENSION])
             .add_filter("Painting script", &["json"])
             .pick_file()?;
         if path
@@ -864,9 +979,12 @@ impl Files {
     /// Opens the picture at `path`. If that fails, the error is shown
     /// and `None` returned.
     pub fn open_path(&mut self, path: PathBuf) -> Option<Document> {
+        // A full path, so Save finds the same file whatever the working folder.
+        let path = crate::settings::full_path(&path);
         match file::open(&path) {
             Ok(document) => {
                 self.opened_from = Some(file_name(&path));
+                self.remember(&path);
                 self.path = Some(path);
                 Some(document)
             }
@@ -894,18 +1012,19 @@ impl Files {
                     .file_window(frame)
                     .set_title("Save picture as")
                     .set_file_name(format!("{}.{FILE_EXTENSION}", self.stem()))
-                    .add_filter("Art App picture", &[FILE_EXTENSION])
+                    .add_filter("Duck Quill picture", &[FILE_EXTENSION])
                     .save_file()
                 else {
                     return false; // cancelled
                 };
-                with_extension(chosen, FILE_EXTENSION)
+                picture_path(chosen)
             }
         };
 
         match file::save(document, &path) {
             Ok(()) => {
                 history.mark_saved();
+                self.remember(&path);
                 self.path = Some(path);
                 self.show_notice(format!("Saved {}", self.name()));
                 true
@@ -963,7 +1082,7 @@ impl Files {
         self.notice = Some((text, Instant::now()));
     }
 
-    /// The picture's file name, e.g. "cat.artapp", or "Untitled".
+    /// The picture's file name, e.g. "cat.quill", or "Untitled".
     fn name(&self) -> String {
         self.path
             .as_deref()
@@ -978,10 +1097,10 @@ impl Files {
         )
     }
 
-    /// "cat.artapp* - Art App": the `*` means unsaved changes.
+    /// "cat.quill* - Duck Quill": the `*` means unsaved changes.
     fn update_title(&mut self, ctx: &egui::Context, modified: bool) {
         let star = if modified { "*" } else { "" };
-        let title = format!("{}{star} - Art App", self.name());
+        let title = format!("{}{star} - Duck Quill", self.name());
         if title != self.title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
@@ -1004,9 +1123,21 @@ fn file_name(path: &Path) -> String {
     )
 }
 
+/// A picture's file name from Save As: `.quill` is added unless it ends
+/// in `.quill` already, or in `.artapp` (the old ending, kept if typed).
+fn picture_path(path: PathBuf) -> PathBuf {
+    let old = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(OLD_FILE_EXTENSION));
+    if old {
+        return path;
+    }
+    with_extension(path, FILE_EXTENSION)
+}
+
 /// Adds `.extension` to the file name unless it already ends with it
-/// (in any mix of capitals). "cat" becomes "cat.artapp", and
-/// "my.cat" becomes "my.cat.artapp" rather than losing its ".cat".
+/// (in any mix of capitals). "cat" becomes "cat.quill", and
+/// "my.cat" becomes "my.cat.quill" rather than losing its ".cat".
 fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     let has_it = path
         .extension()
@@ -1027,15 +1158,15 @@ mod tests {
     #[test]
     fn the_file_ending_is_added_only_when_missing() {
         let check = |given: &str, expected: &str| {
-            assert_eq!(
-                with_extension(PathBuf::from(given), "artapp"),
-                PathBuf::from(expected)
-            );
+            assert_eq!(picture_path(PathBuf::from(given)), PathBuf::from(expected));
         };
-        check("cat", "cat.artapp");
+        check("cat", "cat.quill");
+        check("cat.quill", "cat.quill");
+        check("cat.QUILL", "cat.QUILL");
+        check("my.cat", "my.cat.quill");
+        // An old picture's ending is kept when it's typed.
         check("cat.artapp", "cat.artapp");
         check("cat.ARTAPP", "cat.ARTAPP");
-        check("my.cat", "my.cat.artapp");
     }
 
     #[test]
@@ -1043,15 +1174,15 @@ mod tests {
         let mut files = Files::default();
         assert_eq!(files.name(), "Untitled");
         assert_eq!(files.stem(), "Untitled");
-        files.path = Some(PathBuf::from("pictures").join("cat.artapp"));
-        assert_eq!(files.name(), "cat.artapp");
+        files.path = Some(PathBuf::from("pictures").join("cat.quill"));
+        assert_eq!(files.name(), "cat.quill");
         assert_eq!(files.stem(), "cat");
     }
 
     #[test]
     fn exported_strokes_say_where_they_were_painted() {
-        use art_engine::history::TileCommand;
-        use art_engine::stroke::TilesBefore;
+        use quill_engine::history::TileCommand;
+        use quill_engine::stroke::TilesBefore;
 
         let mut files = Files::default();
         let document = Document::new(300, 200);
@@ -1066,12 +1197,12 @@ mod tests {
             Box::new(TileCommand::new("Clear layer", layer, TilesBefore::new())),
             record::clear_layer("Layer 1"),
         );
-        files.path = Some(PathBuf::from("cat.artapp"));
-        files.opened_from = Some("cat.artapp".into());
+        files.path = Some(PathBuf::from("cat.quill"));
+        files.opened_from = Some("cat.quill".into());
         let script = files.strokes_script(&document, &history).unwrap();
-        assert_eq!(script.title.as_deref(), Some("Strokes from cat.artapp"));
+        assert_eq!(script.title.as_deref(), Some("Strokes from cat.quill"));
         let text = script.to_json();
-        assert!(text.contains("Painted on top of cat.artapp"), "{text}");
+        assert!(text.contains("Painted on top of cat.quill"), "{text}");
         assert!(
             text.contains("{\"cmd\":\"canvas\",\"width\":300,\"height\":200"),
             "{text}"

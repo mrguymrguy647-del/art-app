@@ -18,8 +18,8 @@
 //! with examples, is in `docs/script-format.md`.
 
 pub mod animate;
-mod geometry;
-mod player;
+pub(crate) mod geometry;
+pub(crate) mod player;
 pub mod record;
 pub mod reuse;
 
@@ -36,7 +36,10 @@ pub use player::{
 pub use reuse::{Reuse, Sequence};
 
 /// Written at the top of every script, so it can be recognised.
-pub const FORMAT_NAME: &str = "artapp-script";
+pub const FORMAT_NAME: &str = "duckquill-script";
+/// The name scripts had before the app was renamed Duck Quill. Still
+/// played, with no warning: only `quill check` mentions it.
+pub const OLD_FORMAT_NAME: &str = "artapp-script";
 /// The script format version this app writes, and the newest it plays.
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -442,6 +445,7 @@ pub enum Command {
     ClearLayer(ClearLayerCmd),
     TransformLayer(TransformLayerCmd),
     Brush(BrushCmd),
+    Select(SelectCmd),
     Stroke(StrokeCmd),
     Erase(StrokeCmd),
     Line(LineCmd),
@@ -478,6 +482,7 @@ impl Command {
             Command::ClearLayer(_) => "clear_layer",
             Command::TransformLayer(_) => "transform_layer",
             Command::Brush(_) => "brush",
+            Command::Select(_) => "select",
             Command::Stroke(_) => "stroke",
             Command::Erase(_) => "erase",
             Command::Line(_) => "line",
@@ -511,13 +516,54 @@ impl Command {
             }) => format!("group \"{name}\""),
             Command::Define(define) => format!("define \"{}\"", define.name),
             Command::Use(using) => format!("use \"{}\"", using.name),
-            other => other.kind().to_owned(),
+            other => match other.shape_name() {
+                Some(name) => format!("{} \"{name}\"", other.kind()),
+                None => other.kind().to_owned(),
+            },
         }
+    }
+
+    /// A single shape's (or stroke's) `name`, if it has one.
+    pub fn shape_name(&self) -> Option<&str> {
+        match self {
+            Command::Stroke(c) | Command::Erase(c) => c.name.as_deref(),
+            Command::Line(c) => c.name.as_deref(),
+            Command::Path(c) => c.name.as_deref(),
+            Command::Rect(c) => c.name.as_deref(),
+            Command::Ellipse(c) => c.name.as_deref(),
+            Command::Polygon(c) => c.name.as_deref(),
+            Command::Text(c) => c.name.as_deref(),
+            Command::Hatch(c) => c.name.as_deref(),
+            Command::Scatter(c) => c.name.as_deref(),
+            Command::Stamp(c) => c.name.as_deref(),
+            Command::Pixels(c) => c.name.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The same command without its shape `name`.
+    pub fn without_shape_name(&self) -> Command {
+        let mut command = self.clone();
+        match &mut command {
+            Command::Stroke(c) | Command::Erase(c) => c.name = None,
+            Command::Line(c) => c.name = None,
+            Command::Path(c) => c.name = None,
+            Command::Rect(c) => c.name = None,
+            Command::Ellipse(c) => c.name = None,
+            Command::Polygon(c) => c.name = None,
+            Command::Text(c) => c.name = None,
+            Command::Hatch(c) => c.name = None,
+            Command::Scatter(c) => c.name = None,
+            Command::Stamp(c) => c.name = None,
+            Command::Pixels(c) => c.name = None,
+            _ => {}
+        }
+        command
     }
 }
 
 /// `canvas`: the first command. Either a new canvas (`width`, `height`,
-/// `paper`) or an existing picture (`open`: an .artapp file, relative to
+/// `paper`) or an existing picture (`open`: a .quill file, relative to
 /// the script's folder).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -638,6 +684,10 @@ pub struct BrushCmd {
     /// `true`: back to the plain brush first (then any settings given).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<bool>,
+    /// A built-in preset by name, e.g. "Pencil (graphite)": all its
+    /// settings (not the colour), then any others given here on top.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     /// A colour, or a pattern to paint with: `{"noise": {...}}` or
     /// `{"texture": ...}` (see `fill`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -670,6 +720,59 @@ pub struct BrushCmd {
     /// (`{}` turns them all off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamics: Option<DynamicsCmd>,
+    /// What the lightest touch still gives, 0..1, of the size and of the
+    /// opacity (see `brush::BrushSettings`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_size_min: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_opacity_min: Option<f32>,
+    /// Above 1: press harder for the full effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_curve: Option<f32>,
+    /// Paper grain, 0..1, and how coarse it is (1: fine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain_scale: Option<f32>,
+    /// The most a layer darkens from going over it again, 0..1 (0: no limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_up: Option<f32>,
+}
+
+/// `select`: from here on, every painting command stays inside the
+/// selection (as inside a group's `mask`, and as with a selection in the
+/// app). One shape (`rect`, `ellipse`, `circle`, `polygon`, written like
+/// an area), or `layer` (where a layer has paint), or `all`, `none` or
+/// `invert`. `mode` "add" or "subtract" combines the shape with the
+/// selection there is; `feather` softens the shape's edge (or, alone,
+/// the selection's).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rect: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ellipse: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<Value>,
+    /// Where this layer has paint, as much as each pixel is opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<bool>,
+    /// `true`: no selection any more; everything can be painted again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub none: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invert: Option<bool>,
+    /// "replace" (the default), "add" or "subtract".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// How many pixels the edge fades over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feather: Option<f32>,
 }
 
 /// A brush's dynamics, as written: see `brush::Dynamics`. Anything left
@@ -702,6 +805,10 @@ pub struct DynamicsCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StampCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The symbol to copy (placed like a `use` at each spot)...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
@@ -811,6 +918,10 @@ pub struct IncludeCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrokeCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
@@ -827,6 +938,21 @@ pub struct StrokeCmd {
     /// Which random numbers (a whole number; may be keyframes or a parameter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<Value>,
+    /// Mirror lines: the stroke is painted again mirrored across them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symmetry: Option<SymmetryCmd>,
+}
+
+/// A stroke's mirror lines: `x` is a line going down at that x (left and
+/// right mirror each other), `y` a line going across at that y; both
+/// give four copies. Inside a group they move and turn with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymmetryCmd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
 }
 
 /// `line`: a straight line from `from` to `to`, thinning towards its ends
@@ -834,6 +960,10 @@ pub struct StrokeCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub from: [f32; 2],
     pub to: [f32; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -860,6 +990,10 @@ pub struct LineCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<Point>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed: Option<bool>,
@@ -891,6 +1025,10 @@ pub struct PathCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RectCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -921,6 +1059,10 @@ pub struct RectCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EllipseCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub center: [f32; 2],
     pub radius: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -947,6 +1089,10 @@ pub struct EllipseCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolygonCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub points: Vec<[f32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Value>,
@@ -1018,6 +1164,10 @@ pub struct GradientCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HatchCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub area: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub angle: Option<f32>,
@@ -1049,6 +1199,10 @@ pub struct HatchCmd {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScatterCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub area: Value,
     pub count: u32,
     /// "dab" (the default) or "stroke".
@@ -1083,6 +1237,10 @@ pub struct ScatterCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub text: String,
     pub at: [f32; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1135,6 +1293,11 @@ pub struct GroupCmd {
     pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
+    /// With a scale different across and down: `true` resizes brush and
+    /// outline sizes by the average of the two (lines look stretched);
+    /// normally they follow the smaller one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch_brush: Option<bool>,
     /// `true`: not turned by the groups around it (a foot stays flat
     /// while the leg turns). It still moves and mirrors with them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1159,16 +1322,97 @@ pub struct GroupCmd {
 
 /// `define`: stores `commands` as a symbol called `name`, without
 /// painting anything. Only at the top level of a script.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DefineCmd {
     pub name: String,
     /// Parameters and their defaults: `{"leg": 0, "eye": "eye_open"}`.
-    /// Inside the symbol, `"$leg"` stands for the value a `use` gives.
+    /// Inside the symbol, `"$leg"` stands for the value a `use` gives,
+    /// in any field (points, sizes, centres...).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<BTreeMap<String, Value>>,
+    /// The commands, read with the parameters' defaults put in.
     #[serde(default)]
     pub commands: Vec<Command>,
+    /// With parameters: the commands as written, `"$name"`s and all. Each
+    /// `use` reads them again with its own values (see
+    /// `symbol_commands`), and the script is written out from these.
+    #[serde(skip)]
+    pub raw: Option<std::sync::Arc<Vec<Value>>>,
+}
+
+impl Serialize for DefineCmd {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut out = serializer.serialize_struct("DefineCmd", 3)?;
+        out.serialize_field("name", &self.name)?;
+        if let Some(params) = &self.params {
+            out.serialize_field("params", params)?;
+        }
+        // As written, so the parameters stay parameters.
+        match &self.raw {
+            Some(raw) => out.serialize_field("commands", raw.as_ref())?,
+            None => out.serialize_field("commands", &self.commands)?,
+        }
+        out.end()
+    }
+}
+
+/// `value` with every `"$name"` (a whole string) that names one of
+/// `params` replaced by its value.
+fn substitute(value: &Value, params: &BTreeMap<String, Value>) -> Value {
+    match value {
+        Value::String(text) => match text.strip_prefix('$').and_then(|name| params.get(name)) {
+            Some(given) => given.clone(),
+            None => value.clone(),
+        },
+        Value::Array(items) => Value::Array(items.iter().map(|v| substitute(v, params)).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, v)| (key.clone(), substitute(v, params)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// A command inside a define, read as written if it can be (then its
+/// `"$name"`s are worked out as it plays, with the usual messages), else
+/// with `params` put in (a `"$name"` standing for a point or a size).
+/// Says whether the values were needed.
+fn parse_in_define(
+    child: Value,
+    params: &BTreeMap<String, Value>,
+) -> Result<(Command, bool), Problem> {
+    if params.is_empty() {
+        return parse_command(child, true).map(|c| (c, false));
+    }
+    match parse_command(child.clone(), true) {
+        Ok(command) => Ok((command, false)),
+        Err(_) => parse_command(substitute(&child, params), true).map(|c| (c, true)),
+    }
+}
+
+/// A symbol's commands, read with these parameter values put in where
+/// they're needed (see `parse_in_define`).
+pub fn symbol_commands(
+    raw: &[Value],
+    params: &BTreeMap<String, Value>,
+) -> Result<Vec<Command>, String> {
+    raw.iter()
+        .enumerate()
+        .map(|(index, child)| {
+            let label = label_of(child).unwrap_or_else(|| "?".into());
+            parse_in_define(child.clone(), params)
+                .map(|(command, _)| command)
+                .map_err(|problem| {
+                    let mut path = vec![format!("{} ({label})", index + 1)];
+                    path.extend(problem.inside);
+                    format!("{}: {}", path.join(" > "), problem.message)
+                })
+        })
+        .collect()
 }
 
 /// `use`: paints the symbol `name`, placed like a group (the same
@@ -1194,6 +1438,11 @@ pub struct UseCmd {
     pub opacity: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_brush: Option<bool>,
+    /// With a scale different across and down: `true` resizes brush and
+    /// outline sizes by the average of the two (lines look stretched);
+    /// normally they follow the smaller one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch_brush: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upright: Option<bool>,
     /// As on a group: paint only inside this.
@@ -1250,6 +1499,10 @@ pub struct StepCmd {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PixelsCmd {
+    /// A name, as on a group: `check`, `critique` and `views` list it as
+    /// a part (`rect "door"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub at: [f32; 2],
     pub rows: Vec<String>,
     pub colors: BTreeMap<String, String>,
@@ -1401,6 +1654,7 @@ impl Script {
         })?;
         if let Some(format) = &raw.format
             && format != FORMAT_NAME
+            && format != OLD_FORMAT_NAME
         {
             return Err(ScriptError::general(format!(
                 "\"format\" should be \"{FORMAT_NAME}\", not \"{format}\""
@@ -1410,8 +1664,8 @@ impl Script {
             && version > FORMAT_VERSION
         {
             return Err(ScriptError::general(format!(
-                "this script is version {version}, but this Art App only plays up to version \
-                 {FORMAT_VERSION}. Please update Art App."
+                "this script is version {version}, but this Duck Quill only plays up to version \
+                 {FORMAT_VERSION}. Please update Duck Quill."
             )));
         }
         for (name, color) in &raw.palette {
@@ -1617,7 +1871,9 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
     let kind = object
         .get("cmd")
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_owned();
+    let kind = kind.as_str();
     if matches!(kind, "define" | "include") && nested {
         return Err(Problem::here(format!(
             "`{kind}` only works at the top level of a script, not inside a group, symbol, \
@@ -1625,16 +1881,39 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
         )));
     }
     let mut inner = Vec::new();
+    // A define's parameters: their defaults are put in while reading (so
+    // "$x" can stand for a point or a size), and the commands as written
+    // are kept for each use to read with its own values.
+    let defaults: BTreeMap<String, Value> = match (kind, object.get("params")) {
+        ("define", Some(Value::Object(params))) => {
+            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        }
+        _ => BTreeMap::new(),
+    };
+    let mut raw = None;
     if matches!(kind, "group" | "define" | "repeat") {
         match object.remove("commands") {
             Some(Value::Array(list)) => {
+                let written = list.clone();
+                let mut needs_values = false;
                 for (index, child) in list.into_iter().enumerate() {
                     let label = label_of(&child).unwrap_or_else(|| "?".into());
-                    let command = parse_command(child, true).map_err(|mut problem| {
+                    let parsed = if kind == "define" {
+                        parse_in_define(child, &defaults).map(|(command, needed)| {
+                            needs_values |= needed;
+                            command
+                        })
+                    } else {
+                        parse_command(child, true)
+                    };
+                    let command = parsed.map_err(|mut problem| {
                         problem.inside.insert(0, format!("{} ({label})", index + 1));
                         problem
                     })?;
                     inner.push(command);
+                }
+                if needs_values {
+                    raw = Some(std::sync::Arc::new(written));
                 }
             }
             Some(_) => {
@@ -1649,11 +1928,28 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
             }
         }
     }
-    let mut command: Command =
-        serde_json::from_value(value).map_err(|error| Problem::here(error.to_string()))?;
+    let mut command: Command = serde_json::from_value(value).map_err(|error| {
+        let mut message = error.to_string();
+        // A "$name" where a number or point was expected.
+        if let Some(start) = message.find("string \"$") {
+            let name: String = message[start + 8..]
+                .chars()
+                .take_while(|&c| c != '"')
+                .collect();
+            message.push_str(&format!(
+                ". \"{name}\" would stand for a symbol parameter, but only inside a define \
+                 that has \"{}\" in its \"params\"",
+                name.trim_start_matches('$')
+            ));
+        }
+        Problem::here(message)
+    })?;
     match &mut command {
         Command::Group(group) => group.commands = inner,
-        Command::Define(define) => define.commands = inner,
+        Command::Define(define) => {
+            define.commands = inner;
+            define.raw = raw;
+        }
         Command::Repeat(repeat) => repeat.commands = inner,
         _ => {}
     }
@@ -1665,7 +1961,26 @@ fn parse_command(mut value: Value, nested: bool) -> Result<Command, Problem> {
 fn label_of(value: &Value) -> Option<String> {
     let kind = value.get("cmd")?.as_str()?;
     match value.get("name").and_then(Value::as_str) {
-        Some(name) if matches!(kind, "group" | "define" | "use") => {
+        Some(name)
+            if matches!(
+                kind,
+                "group"
+                    | "define"
+                    | "use"
+                    | "stroke"
+                    | "erase"
+                    | "line"
+                    | "path"
+                    | "rect"
+                    | "ellipse"
+                    | "polygon"
+                    | "text"
+                    | "hatch"
+                    | "scatter"
+                    | "stamp"
+                    | "pixels"
+            ) =>
+        {
             Some(format!("{kind} \"{name}\""))
         }
         _ => Some(kind.to_owned()),
@@ -1722,7 +2037,7 @@ mod tests {
     fn a_small_script_is_read() {
         let script = parse(
             r##"{
-              "format": "artapp-script", "version": 1, "seed": 7,
+              "format": "duckquill-script", "version": 1, "seed": 7,
               "palette": { "sky": "#88BBFF" },
               "commands": [
                 { "cmd": "canvas", "width": 800, "height": 600 },
@@ -1784,7 +2099,7 @@ mod tests {
         let error = parse(r#"{ "version": 2, "commands": [] }"#).unwrap_err();
         assert!(error.to_string().contains("version 2"), "{error}");
         let error = parse(r#"{ "format": "svg", "commands": [] }"#).unwrap_err();
-        assert!(error.to_string().contains("artapp-script"), "{error}");
+        assert!(error.to_string().contains("duckquill-script"), "{error}");
     }
 
     #[test]
@@ -1829,20 +2144,23 @@ mod tests {
     /// typo there can't teach anyone (or any AI) the wrong thing.
     #[test]
     fn the_examples_in_the_documentation_are_valid() {
-        let quick_start = include_str!("../../../docs/QUICKSTART.md");
+        // On Windows, Git may check the files out with "\r\n" line endings;
+        // the examples are found by "\n", so read them with Unix endings.
+        let unix = |text: &str| text.replace("\r\n", "\n");
+        let quick_start = unix(include_str!("../../../docs/QUICKSTART.md"));
         let docs = [
-            include_str!("../../../docs/script-format.md"),
-            include_str!("../../../docs/AI_GUIDE.md"),
-            quick_start,
+            unix(include_str!("../../../docs/script-format.md")),
+            unix(include_str!("../../../docs/AI_GUIDE.md")),
+            quick_start.clone(),
         ];
         // The quick start's first script is the example file, word for word.
-        let example = include_str!("../../../examples/two-ducks.json");
+        let example = unix(include_str!("../../../examples/two-ducks.json"));
         assert!(
             quick_start.contains(example.trim()),
             "QUICKSTART.md and two-ducks.json differ"
         );
         let mut checked = 0;
-        for doc in docs {
+        for doc in &docs {
             for block in doc.split("```json\n").skip(1) {
                 let block = block.split("```").next().unwrap_or("").trim();
                 if block.contains('…') || block.contains("...") {

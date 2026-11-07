@@ -13,27 +13,36 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use art_engine::brush::{MAX_SIZE, MIN_SIZE};
-use art_engine::document::{Background, Document};
-use art_engine::history::{History, TileCommand};
-use art_engine::image::Image;
-use art_engine::layer::{BlendMode, blend_over};
-use art_engine::script::record;
-use art_engine::surface::{PixelRect, TileCoord};
-use art_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
-use art_engine::tile::{Rgba8, Tile};
-use art_engine::view::{Point, View};
 use eframe::egui::epaint::Vertex;
 use eframe::egui::{
     self, Color32, ColorImage, CursorIcon, Key, Mesh, MouseWheelUnit, PointerButton, Pos2, Rect,
     Sense, Shape, Stroke, TextureFilter, TextureHandle, TextureOptions, Vec2, pos2, vec2,
 };
+use quill_engine::brush::{BrushMode, BrushSettings, MAX_SIZE, MIN_SIZE};
+use quill_engine::document::{Background, Document};
+use quill_engine::history::{History, TileCommand};
+use quill_engine::image::Image;
+use quill_engine::layer::{BlendMode, blend_over};
+use quill_engine::presets::Preset;
+use quill_engine::reference::{Reference, ReferenceCommand};
+use quill_engine::script::record;
+use quill_engine::surface::{PixelRect, TileCoord};
+use quill_engine::tile::{MAX_PREVIEW_LEVEL, TILE_SIZE};
+use quill_engine::tile::{Rgba8, Tile};
+use quill_engine::view::{Point, View};
 
 use crate::brush_panel::brush_panel;
 use crate::color_panel::ColorPicker;
+use crate::color_panel::MAX_RECENT_COLORS;
+use crate::edit::{self, Clipboard, EditAction, FeatherWindow};
 use crate::layers_panel::LayersPanel;
 use crate::paint_tool::{CanvasPlacement, PaintTool, Tool};
 use crate::pen_input::InkEvent;
+use crate::presets_panel::PresetsPanel;
+use crate::references_view::{ReferenceAction, ReferencesView};
+use crate::select_tool::{self, Ants, SelectShape};
+use crate::settings::Settings;
+use crate::symmetry_view::MirrorHandles;
 use crate::transform_tool::{LayerAction, LayerTransform, flip};
 
 /// Each zoom step (mouse wheel notch or +/- key) zooms by 25%.
@@ -105,6 +114,17 @@ pub struct CanvasView {
     /// A see-through picture (an onion skin) shown on the paper, under the
     /// picture's layers: blended into every tile's texture.
     overlay: Option<Image>,
+    /// The selection's outline, ready to draw.
+    ants: Ants,
+    /// What Edit → Copy took, for Paste.
+    clipboard: Clipboard,
+    /// Select → Feather… while its window is open.
+    feather: Option<FeatherWindow>,
+    presets: PresetsPanel,
+    /// The symmetry lines' handles.
+    mirror: MirrorHandles,
+    /// The reference pictures' windows.
+    references: ReferencesView,
 }
 
 impl Default for CanvasView {
@@ -125,6 +145,12 @@ impl Default for CanvasView {
             notice: None,
             brush_panel_rect: None,
             overlay: None,
+            ants: Ants::default(),
+            clipboard: Clipboard::default(),
+            feather: None,
+            presets: PresetsPanel::default(),
+            mirror: MirrorHandles::default(),
+            references: ReferencesView::default(),
         }
     }
 }
@@ -171,10 +197,13 @@ impl CanvasView {
             .show(ui, |ui| {
                 let actions = ui
                     .add_enabled_ui(panels_enabled, |ui| {
-                        brush_panel(ui, &mut self.tools, &mut self.colors)
+                        brush_panel(ui, &mut self.tools, &mut self.colors, &mut self.presets)
                     })
                     .inner;
-                if actions.clear_layer {
+                if actions.clear_layer && document.selection().is_some() {
+                    self.tools.finish_typing(document, history);
+                    edit::delete_selected(document, history);
+                } else if actions.clear_layer {
                     self.tools.finish_typing(document, history);
                     let layer = document.active_id();
                     let name = document.active_layer().name().to_owned();
@@ -188,15 +217,133 @@ impl CanvasView {
                 }
             });
         self.brush_panel_rect = Some(brush_panel.response.rect);
+        let painting = self.tools.is_painting();
         egui::Panel::left("layers_panel")
-            .exact_size(210.0)
+            .exact_size(260.0)
             .show(ui, |ui| {
                 ui.add_enabled_ui(panels_enabled, |ui| {
-                    self.layers.ui(ui, document, history);
+                    self.layers.ui(ui, document, history, painting);
                 });
             });
         egui::CentralPanel::no_frame()
             .show(ui, |ui| self.canvas_area(ui, document, history, ink_events));
+        self.presets.windows(ui.ctx(), &mut self.tools);
+        self.reference_windows(ui, document, history, panels_enabled);
+        if let Some(window) = &mut self.feather {
+            let mut close = false;
+            if let Some(pixels) = window.ui(ui.ctx(), &mut close) {
+                edit::feather(document, history, pixels);
+            }
+            if close {
+                self.feather = None;
+            }
+        }
+    }
+
+    /// The reference pictures' windows, and what was done in them.
+    fn reference_windows(
+        &mut self,
+        ui: &egui::Ui,
+        document: &mut Document,
+        history: &mut History,
+        enabled: bool,
+    ) {
+        if !enabled {
+            return;
+        }
+        let picking = self.tools.tool == Tool::Eyedropper;
+        let canvas_rect = self.last_rect.unwrap_or(ui.max_rect());
+        let actions = self
+            .references
+            .ui(ui.ctx(), document.references_mut(), canvas_rect, picking);
+        // (Removing from the last, so the numbers stay right.)
+        for action in actions.into_iter().rev() {
+            match action {
+                ReferenceAction::PickColor(color) => self.tools.take_color(color),
+                ReferenceAction::Remove(index) => {
+                    if let Some(step) = ReferenceCommand::remove(document, index) {
+                        history.push(Box::new(step));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pins a picture file beside the painting (an undo step).
+    pub fn add_reference(
+        &mut self,
+        document: &mut Document,
+        history: &mut History,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let name = path
+            .file_name()
+            .map_or("Reference".into(), |n| n.to_string_lossy().into_owned());
+        let reference = Reference::from_bytes(&name, bytes).map_err(|e| e.to_string())?;
+        history.push(Box::new(ReferenceCommand::add(document, reference)));
+        self.references.hidden = false;
+        Ok(())
+    }
+
+    /// Takes up what was remembered from last time: the brush and
+    /// eraser, colours and panels.
+    pub fn apply_settings(&mut self, settings: &Settings) {
+        let tools = &mut self.tools;
+        if let Some(brush) = settings.brush.as_ref().and_then(|p| p.settings().ok()) {
+            tools.brush = BrushSettings {
+                mode: BrushMode::Paint,
+                ..brush
+            };
+            tools.smoothing = settings
+                .brush
+                .as_ref()
+                .map_or(tools.smoothing, |p| p.smoothing);
+        }
+        if let Some(eraser) = settings.eraser.as_ref().and_then(|p| p.settings().ok()) {
+            tools.eraser = BrushSettings {
+                mode: BrushMode::Erase,
+                ..eraser
+            };
+        }
+        if let Some(color) = settings.color {
+            tools.brush.color = color;
+        }
+        tools.recent_colors = settings.recent_colors.clone();
+        tools.recent_colors.truncate(MAX_RECENT_COLORS);
+        if let Some(open) = settings.presets_open {
+            self.presets.open = open;
+        }
+        self.references.hidden = settings.references_hidden;
+    }
+
+    /// Puts what should be remembered into `settings`.
+    pub fn store_settings(&self, settings: &mut Settings) {
+        let tools = &self.tools;
+        settings.brush = Some(Preset::from_settings(
+            "Brush",
+            &tools.brush,
+            tools.smoothing,
+        ));
+        settings.eraser = Some(Preset::from_settings(
+            "Eraser",
+            &tools.eraser,
+            tools.smoothing,
+        ));
+        settings.color = Some(tools.brush.color);
+        settings.recent_colors = tools.recent_colors.clone();
+        settings.presets_open = Some(self.presets.open);
+        settings.references_hidden = self.references.hidden;
+    }
+
+    /// View → Hide references.
+    pub fn references_hidden(&mut self) -> &mut bool {
+        &mut self.references.hidden
+    }
+
+    /// True while one of the canvas's small windows (Feather) is open.
+    pub fn dialog_open(&self) -> bool {
+        self.feather.is_some() || self.presets.dialog_open()
     }
 
     /// Forgets the previous picture's textures and view, for when a new
@@ -297,10 +444,75 @@ impl CanvasView {
                     self.show_notice("There's nothing on this layer to flip.");
                 }
             }
+            // With a selection, Transform moves what's selected.
+            LayerAction::Transform if document.selection().is_some() => {
+                self.edit_action(EditAction::Transform, document, history);
+            }
             LayerAction::Transform => match LayerTransform::start(document) {
                 Ok(transform) => self.transform = Some(transform),
                 Err(problem) => self.show_notice(problem),
             },
+        }
+    }
+
+    /// True while text is being typed: the keys are for the text.
+    pub fn is_typing(&self) -> bool {
+        self.tools.is_typing()
+    }
+
+    /// Does what was chosen in the Edit or Select menu.
+    pub fn edit_action(
+        &mut self,
+        action: EditAction,
+        document: &mut Document,
+        history: &mut History,
+    ) {
+        match action {
+            EditAction::Cut => {
+                if document.selection().is_none() {
+                    self.show_notice("Select something first, then cut it.");
+                } else if self.clipboard.copy(document) {
+                    edit::delete_selected(document, history);
+                } else {
+                    self.show_notice("There's nothing selected on this layer to cut.");
+                }
+            }
+            EditAction::Copy => {
+                if self.clipboard.copy(document) {
+                    self.show_notice("Copied.");
+                } else {
+                    self.show_notice("There's nothing here to copy.");
+                }
+            }
+            EditAction::Paste => {
+                // A picture from another program lands in the middle of the view.
+                let centre = self.last_rect.map_or(Point::new(0.0, 0.0), |r| {
+                    self.view.screen_to_canvas(to_point(r.center()))
+                });
+                if !self.clipboard.paste(document, history, centre) {
+                    self.show_notice("There's nothing to paste.");
+                }
+            }
+            EditAction::Delete => {
+                if !edit::delete_selected(document, history) {
+                    self.show_notice("There's nothing selected on this layer to delete.");
+                }
+            }
+            EditAction::Fill => edit::fill_selected(document, history, self.tools.brush.color),
+            EditAction::Transform => match LayerTransform::start_selection(document) {
+                Ok(transform) => self.transform = Some(transform),
+                Err(problem) => self.show_notice(problem),
+            },
+            EditAction::SelectAll => edit::select_all(document, history),
+            EditAction::Deselect => select_tool::deselect(document, history),
+            EditAction::Invert => edit::invert(document, history),
+            EditAction::SelectLayer => {
+                edit::select_layer_contents(document, history);
+                if document.selection().is_none() {
+                    self.show_notice("There's nothing on this layer to select.");
+                }
+            }
+            EditAction::Feather => self.feather = Some(FeatherWindow { pixels: 8.0 }),
         }
     }
 
@@ -355,13 +567,29 @@ impl CanvasView {
                 transform.cancel(document);
             }
         } else if !self.locked {
-            let placement = CanvasPlacement {
-                rect,
-                view: &self.view,
-                navigating,
-            };
-            self.tools
-                .handle_input(ui, placement, document, history, ink_events);
+            // The symmetry lines' handles come first: dragging one paints nothing.
+            let mut ink_events = ink_events;
+            let canvas = (document.width(), document.height());
+            let can_grab = !navigating && !self.tools.is_painting();
+            let moving_mirror = self.tools.uses_symmetry()
+                && self.mirror.handle_input(
+                    ui,
+                    rect,
+                    &self.view,
+                    canvas,
+                    &mut self.tools.symmetry,
+                    &mut ink_events,
+                    can_grab,
+                );
+            if !moving_mirror {
+                let placement = CanvasPlacement {
+                    rect,
+                    view: &self.view,
+                    navigating,
+                };
+                self.tools
+                    .handle_input(ui, placement, document, history, ink_events);
+            }
         }
 
         let visible = self.visible_tiles(document, rect);
@@ -377,6 +605,19 @@ impl CanvasView {
                 draw_notice(&painter, rect, text);
             }
             return; // no brush outline while transforming
+        }
+
+        if self.tools.uses_symmetry() {
+            let accent = ui.visuals().selection.bg_fill;
+            let canvas = (document.width(), document.height());
+            self.mirror.draw(
+                &painter,
+                rect,
+                &self.view,
+                canvas,
+                &self.tools.symmetry,
+                accent,
+            );
         }
 
         // Text being typed: a box around it, and a line where the next letter goes.
@@ -417,6 +658,16 @@ impl CanvasView {
                 ui.ctx().set_cursor_icon(CursorIcon::None);
             }
         }
+
+        // What's selected, and a selection being drawn: marching ants.
+        let drawing = self.tools.selection_preview();
+        self.ants.draw(
+            ui.ctx(),
+            &painter,
+            &self.view,
+            document.selection(),
+            drawing,
+        );
 
         // The gradient being dragged out: a line from start to end.
         if let Some((start, end)) = self.tools.gradient_line() {
@@ -492,9 +743,13 @@ impl CanvasView {
                 wheel_notches,
                 i.zoom_delta(),
                 i.multi_touch(),
-                i.pointer.hover_pos().filter(|pos| rect.contains(*pos)),
+                i.pointer.hover_pos(),
             )
         });
+        // Over the canvas itself, not a window on top (a reference picture).
+        let canvas_layer = ui.layer_id();
+        let hover =
+            hover.filter(|pos| rect.contains(*pos) && ctx.layer_id_at(*pos) == Some(canvas_layer));
 
         if let Some(touch) = touch.filter(|touch| rect.contains(touch.center_pos)) {
             // Two or more fingers: pinch to zoom, twist to rotate, move to pan.
@@ -600,6 +855,19 @@ impl CanvasView {
                 if !editing && presses(key) > 0 {
                     self.tools.tool = tool;
                 }
+            }
+            // M: rectangle, then ellipse; L: lasso, then polygon.
+            if !editing && presses(Key::M) > 0 {
+                self.tools.tool = match self.tools.tool {
+                    Tool::Select(SelectShape::Rect) => Tool::Select(SelectShape::Ellipse),
+                    _ => Tool::Select(SelectShape::Rect),
+                };
+            }
+            if !editing && presses(Key::L) > 0 {
+                self.tools.tool = match self.tools.tool {
+                    Tool::Select(SelectShape::Lasso) => Tool::Select(SelectShape::Polygon),
+                    _ => Tool::Select(SelectShape::Lasso),
+                };
             }
         }
 
@@ -723,8 +991,9 @@ impl CanvasView {
             // All visible layers combined into one tile (but not a layer
             // being transformed: a picture of it is drawn instead).
             let left_out = self.transform.as_ref().map(LayerTransform::layer);
-            let shown =
-                |layer: &art_engine::layer::Layer| layer.visible() && Some(layer.id()) != left_out;
+            let shown = |layer: &quill_engine::layer::Layer| {
+                layer.visible() && Some(layer.id()) != left_out
+            };
             let tile = if overlaid {
                 let base = self.paper_with_overlay(document, coord);
                 document.composite_tile_over(coord, base, shown)
@@ -966,6 +1235,6 @@ mod tests {
         assert_eq!(preview_level(0.3), 1);
         assert_eq!(preview_level(0.25), 2);
         assert_eq!(preview_level(0.1), 3);
-        assert_eq!(preview_level(0.0001), art_engine::tile::MAX_PREVIEW_LEVEL);
+        assert_eq!(preview_level(0.0001), quill_engine::tile::MAX_PREVIEW_LEVEL);
     }
 }

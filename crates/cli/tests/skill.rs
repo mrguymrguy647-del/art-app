@@ -1,4 +1,4 @@
-//! The skill for AI assistants (`skills/art-app/SKILL.md`) must only
+//! The skill for AI assistants (`skills/duck-quill/SKILL.md`) must only
 //! mention commands, options and files that exist, and its examples
 //! must work: an assistant follows it to the letter.
 
@@ -6,14 +6,21 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use art_engine::script::{PlayOptions, Player, Script};
+use quill_engine::script::{PlayOptions, Player, Script};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Reads a text file with Unix line endings. On Windows, Git usually checks
+/// files out with Windows line endings ("\r\n"), and the tests below
+/// split text on "\n": without this they'd fail there for no real reason.
+fn read_text(path: impl AsRef<std::path::Path>) -> std::io::Result<String> {
+    std::fs::read_to_string(path).map(|text| text.replace("\r\n", "\n"))
+}
+
 fn skill() -> String {
-    std::fs::read_to_string(root().join("skills/art-app/SKILL.md")).unwrap()
+    read_text(root().join("skills/duck-quill/SKILL.md")).unwrap()
 }
 
 /// The text between each pair of single backticks (not in code blocks).
@@ -53,7 +60,7 @@ fn it_is_short_and_says_what_it_is_for() {
         .strip_prefix("---\n")
         .and_then(|rest| rest.split("\n---\n").next())
         .expect("starts with frontmatter between --- lines");
-    assert!(front.lines().any(|l| l == "name: art-app"), "{front}");
+    assert!(front.lines().any(|l| l == "name: duck-quill"), "{front}");
     let description = front
         .lines()
         .find_map(|l| l.strip_prefix("description: "))
@@ -116,9 +123,9 @@ fn its_examples_play_without_mistakes() {
 }
 
 #[test]
-fn every_art_cli_command_and_option_it_mentions_exists() {
+fn every_quill_cli_command_and_option_it_mentions_exists() {
     let skill = skill();
-    let help = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+    let help = Command::new(env!("CARGO_BIN_EXE_quill"))
         .arg("help")
         .output()
         .unwrap();
@@ -140,24 +147,24 @@ fn every_art_cli_command_and_option_it_mentions_exists() {
                 .collect();
             assert!(
                 help.contains(&format!("--{option}")),
-                "art-cli has no --{option}"
+                "quill has no --{option}"
             );
             options += 1;
         }
     }
     assert!(options >= 10, "only {options} options mentioned");
-    // `art-cli <command>` in code (prose may say "the art-cli renderer").
+    // `quill <command>` in code (prose may say "the quill renderer").
     let mut code = inline_code(&skill).join("\n");
     code.push_str(&blocks(&skill, "bash").join("\n"));
-    for (i, _) in code.match_indices("art-cli ") {
-        let command: String = code[i + 8..]
+    for (i, _) in code.match_indices("quill ") {
+        let command: String = code[i + "quill ".len()..]
             .chars()
             .take_while(|c| c.is_ascii_lowercase() || *c == '-')
             .collect();
         if !command.is_empty() {
             assert!(
-                help.contains(&format!("art-cli {command} ")),
-                "art-cli has no command {command:?}"
+                help.contains(&format!("quill {command} ")),
+                "quill has no command {command:?}"
             );
         }
     }
@@ -167,12 +174,12 @@ fn every_art_cli_command_and_option_it_mentions_exists() {
 fn every_script_command_and_field_it_mentions_exists() {
     // Everything in the script format is in script-format.md, which is
     // itself tested: in `backticks` or "quotes".
-    let format = std::fs::read_to_string(root().join("docs/script-format.md")).unwrap();
+    let format = read_text(root().join("docs/script-format.md")).unwrap();
     let mut known: HashSet<String> = inline_code(&format).into_iter().collect();
     for quoted in format.split('"').skip(1).step_by(2) {
         known.insert(quoted.to_owned());
     }
-    // Words of art-cli itself.
+    // Words of quill itself.
     known.extend(
         [
             "check", "render", "info", "views", "critique", "palette", "values", "compare",
@@ -215,8 +222,8 @@ fn every_file_it_mentions_exists() {
 /// mistakes or warnings, a preview picture, and a row in the README.
 #[test]
 fn every_library_part_has_a_clean_example_and_a_preview() {
-    let library = root().join("skills/art-app/library");
-    let readme = std::fs::read_to_string(library.join("README.md")).unwrap();
+    let library = root().join("skills/duck-quill/library");
+    let readme = read_text(library.join("README.md")).unwrap();
     let mut parts = 0;
     for entry in std::fs::read_dir(&library).unwrap() {
         let path = entry.unwrap().path();
@@ -233,21 +240,21 @@ fn every_library_part_has_a_clean_example_and_a_preview() {
             part == "pond" || readme.contains(&format!("`{part}.json`")),
             "{part} isn't in the README"
         );
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = read_text(&path).unwrap();
         let script =
-            art_engine::script::Script::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let options = art_engine::script::PlayOptions {
+            quill_engine::script::Script::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let options = quill_engine::script::PlayOptions {
             folder: Some(library.clone()),
-            ..art_engine::script::PlayOptions::default()
+            ..quill_engine::script::PlayOptions::default()
         };
-        let mut player = art_engine::script::Player::new(script, options).unwrap();
+        let mut player = quill_engine::script::Player::new(script, options).unwrap();
         let mut document = player.create_document().unwrap();
         player
             .run(&mut document, |_, _| {})
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         let report = player.report();
         let mut warnings = report.warnings.clone();
-        warnings.extend(art_engine::script::unused_warnings(&[&report]));
+        warnings.extend(quill_engine::script::unused_warnings(&[&report]));
         assert!(warnings.is_empty(), "{name}: {warnings:?}");
     }
     assert!(parts >= 8, "{parts} examples");
@@ -257,10 +264,9 @@ fn every_library_part_has_a_clean_example_and_a_preview() {
 /// the index, and paints without mistakes or warnings.
 #[test]
 fn every_gallery_piece_is_complete_and_paints_cleanly() {
-    let gallery = root().join("skills/art-app/gallery");
+    let gallery = root().join("skills/duck-quill/gallery");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     let pieces = index["pieces"].as_array().unwrap();
     assert!(pieces.len() >= 2);
     for piece in pieces {
@@ -280,7 +286,7 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
                 folder.display()
             );
         }
-        let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+        let notes = read_text(folder.join("notes.md")).unwrap();
         assert!(
             notes.contains("## Proposed lessons"),
             "{} notes lack the section",
@@ -291,27 +297,27 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
             "{} has no rating field",
             folder.display()
         );
-        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
+        let text = read_text(folder.join("script.json")).unwrap();
         assert!(
             text.contains("\"intent\""),
             "{} has no intent",
             folder.display()
         );
-        let text = std::fs::read_to_string(folder.join("script.json")).unwrap();
-        let script = art_engine::script::Script::parse(&text).unwrap();
-        let options = art_engine::script::PlayOptions {
+        let text = read_text(folder.join("script.json")).unwrap();
+        let script = quill_engine::script::Script::parse(&text).unwrap();
+        let options = quill_engine::script::PlayOptions {
             folder: Some(folder.clone()),
             scale: 0.25,
-            ..art_engine::script::PlayOptions::default()
+            ..quill_engine::script::PlayOptions::default()
         };
-        let mut player = art_engine::script::Player::new(script, options).unwrap();
+        let mut player = quill_engine::script::Player::new(script, options).unwrap();
         let mut document = player.create_document().unwrap();
         player
             .run(&mut document, |_, _| {})
             .unwrap_or_else(|e| panic!("{}: {e}", folder.display()));
         let report = player.report();
         let mut warnings = report.warnings.clone();
-        warnings.extend(art_engine::script::unused_warnings(&[&report]));
+        warnings.extend(quill_engine::script::unused_warnings(&[&report]));
         assert!(warnings.is_empty(), "{}: {warnings:?}", folder.display());
     }
 }
@@ -320,9 +326,9 @@ fn every_gallery_piece_is_complete_and_paints_cleanly() {
 /// are flagged, and what's right about the pieces isn't.
 #[test]
 fn the_critique_catches_the_gallerys_known_mistakes() {
-    let gallery = root().join("skills/art-app/gallery");
+    let gallery = root().join("skills/duck-quill/gallery");
     let critique = |piece: &str| {
-        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+        let output = Command::new(env!("CARGO_BIN_EXE_quill"))
             .arg("critique")
             .arg(gallery.join(piece).join("script.json"))
             .output()
@@ -373,9 +379,9 @@ fn the_critique_catches_the_gallerys_known_mistakes() {
 /// and a breakdown; and the study tools work on it.
 #[test]
 fn every_reference_picture_is_licensed_and_studied() {
-    let folder = root().join("skills/art-app/references");
+    let folder = root().join("skills/duck-quill/references");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(folder.join("index.json")).unwrap()).unwrap();
+        serde_json::from_str(&read_text(folder.join("index.json")).unwrap()).unwrap();
     let allowed: Vec<&str> = index["allowed_licences"]
         .as_array()
         .unwrap()
@@ -385,8 +391,8 @@ fn every_reference_picture_is_licensed_and_studied() {
     assert_eq!(allowed, ["public domain", "CC0"]);
     let pictures = index["pictures"].as_array().unwrap();
     assert!(pictures.len() >= 4);
-    let readme = std::fs::read_to_string(folder.join("README.md")).unwrap();
-    let out = std::env::temp_dir().join(format!("art-cli-references-{}", std::process::id()));
+    let readme = read_text(folder.join("README.md")).unwrap();
+    let out = std::env::temp_dir().join(format!("quill-references-{}", std::process::id()));
     for picture in pictures {
         let file = picture["file"].as_str().unwrap();
         let licence = picture["licence"].as_str().unwrap();
@@ -412,8 +418,7 @@ fn every_reference_picture_is_licensed_and_studied() {
             picture["breakdown"].as_str().unwrap(),
             format!("{stem}-breakdown.md")
         );
-        let breakdown =
-            std::fs::read_to_string(folder.join(format!("{stem}-breakdown.md"))).unwrap();
+        let breakdown = read_text(folder.join(format!("{stem}-breakdown.md"))).unwrap();
         for heading in [
             "**Shapes.**",
             "**Values**",
@@ -431,7 +436,7 @@ fn every_reference_picture_is_licensed_and_studied() {
         );
         // The tools open it (PNG and JPEG) and are deterministic.
         let run = || {
-            let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+            let output = Command::new(env!("CARGO_BIN_EXE_quill"))
                 .arg("palette")
                 .arg(folder.join(file))
                 .arg("--out")
@@ -446,7 +451,7 @@ fn every_reference_picture_is_licensed_and_studied() {
             output.stdout
         };
         assert_eq!(run(), run(), "{file}: the same palette every time");
-        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+        let output = Command::new(env!("CARGO_BIN_EXE_quill"))
             .arg("values")
             .arg(folder.join(file))
             .arg("--out")
@@ -476,7 +481,7 @@ fn it_tells_the_painting_process() {
     }
     for phrase in [
         "Detail budget",
-        "art-cli blind-read picture.json",
+        "quill blind-read picture.json",
         "never the script, the notes or a named file",
         "Numbers are warnings, never goals",
         "rating outranks every number",
@@ -491,10 +496,10 @@ fn it_tells_the_painting_process() {
 /// and every reference has a study that paints cleanly.
 #[test]
 fn the_learning_folder_is_complete() {
-    let skill = root().join("skills/art-app");
+    let skill = root().join("skills/duck-quill");
     // Lessons: numbered, one line each, each with a backticked piece or
     // picture, and the rule for adding them.
-    let lessons = std::fs::read_to_string(skill.join("lessons.md")).unwrap();
+    let lessons = read_text(skill.join("lessons.md")).unwrap();
     assert!(lessons.contains("Agents never edit this file directly"));
     let numbered: Vec<&str> = lessons
         .lines()
@@ -520,9 +525,14 @@ fn the_learning_folder_is_complete() {
     ] {
         assert!(lessons.contains(mention), "lessons never mention {mention}");
     }
+    // The pencil's "aim for" picture, and the script that paints it.
+    for file in ["lessons/pencil-aim-for.png", "lessons/pencil-test.json"] {
+        assert!(lessons.contains(file), "lessons never mention {file}");
+        assert!(skill.join(file).exists(), "{file} is missing");
+    }
     // Mistakes: each has a before picture that exists, what was wrong,
     // the critique's finding, and the fix.
-    let mistakes = std::fs::read_to_string(skill.join("mistakes.md")).unwrap();
+    let mistakes = read_text(skill.join("mistakes.md")).unwrap();
     let entries = mistakes.matches("\n## ").count();
     assert!(entries >= 6, "{entries} mistakes");
     for line in mistakes.lines() {
@@ -537,7 +547,7 @@ fn the_learning_folder_is_complete() {
     assert_eq!(mistakes.matches("**Fix:**").count(), entries);
     // Styles: palette rules, settings, what to avoid, pieces.
     for style in ["storybook", "painterly", "pixel"] {
-        let text = std::fs::read_to_string(skill.join(format!("styles/{style}.md"))).unwrap();
+        let text = read_text(skill.join(format!("styles/{style}.md"))).unwrap();
         for heading in [
             "**Palette rules.**",
             "**What to avoid.**",
@@ -548,7 +558,7 @@ fn the_learning_folder_is_complete() {
     }
     // Exercises: a page, a script that paints cleanly and a picture each.
     let exercises = skill.join("exercises");
-    let readme = std::fs::read_to_string(exercises.join("README.md")).unwrap();
+    let readme = read_text(exercises.join("README.md")).unwrap();
     let mut count = 0;
     for entry in std::fs::read_dir(&exercises).unwrap() {
         let path = entry.unwrap().path();
@@ -561,7 +571,7 @@ fn the_learning_folder_is_complete() {
             exercises.join(format!("{stem}.png")).exists(),
             "{stem}.png is missing"
         );
-        let page = std::fs::read_to_string(exercises.join(format!("{stem}.md")))
+        let page = read_text(exercises.join(format!("{stem}.md")))
             .unwrap_or_else(|_| panic!("{stem}.md is missing"));
         for heading in [
             "## Do",
@@ -580,8 +590,7 @@ fn the_learning_folder_is_complete() {
     // Reference studies.
     let references = skill.join("references");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(references.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(references.join("index.json")).unwrap()).unwrap();
     for picture in index["pictures"].as_array().unwrap() {
         let stem = Path::new(picture["file"].as_str().unwrap())
             .file_stem()
@@ -592,8 +601,7 @@ fn the_learning_folder_is_complete() {
         let study = references.join(format!("{stem}-study.json"));
         assert!(study.exists(), "{stem}-study.json is missing");
         paints_cleanly(&study);
-        let breakdown =
-            std::fs::read_to_string(references.join(format!("{stem}-breakdown.md"))).unwrap();
+        let breakdown = read_text(references.join(format!("{stem}-breakdown.md"))).unwrap();
         assert!(
             breakdown.contains("**Study.**"),
             "{stem}'s breakdown has no study line"
@@ -603,22 +611,22 @@ fn the_learning_folder_is_complete() {
 
 /// Plays a script at a quarter size and insists on no mistakes or warnings.
 fn paints_cleanly(path: &Path) {
-    let text = std::fs::read_to_string(path).unwrap();
-    let script = art_engine::script::Script::parse(&text)
+    let text = read_text(path).unwrap();
+    let script = quill_engine::script::Script::parse(&text)
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let options = art_engine::script::PlayOptions {
+    let options = quill_engine::script::PlayOptions {
         folder: path.parent().map(Path::to_path_buf),
         scale: 0.5,
-        ..art_engine::script::PlayOptions::default()
+        ..quill_engine::script::PlayOptions::default()
     };
-    let mut player = art_engine::script::Player::new(script, options).unwrap();
+    let mut player = quill_engine::script::Player::new(script, options).unwrap();
     let mut document = player.create_document().unwrap();
     player
         .run(&mut document, |_, _| {})
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let report = player.report();
     let mut warnings = report.warnings.clone();
-    warnings.extend(art_engine::script::unused_warnings(&[&report]));
+    warnings.extend(quill_engine::script::unused_warnings(&[&report]));
     assert!(warnings.is_empty(), "{}: {warnings:?}", path.display());
 }
 
@@ -626,7 +634,7 @@ fn paints_cleanly(path: &Path) {
 /// rate` writes the person's rating without hand-editing JSON.
 #[test]
 fn gallery_add_and_rate_build_the_folder_and_the_index() {
-    let out = std::env::temp_dir().join(format!("art-cli-gallery-{}", std::process::id()));
+    let out = std::env::temp_dir().join(format!("quill-gallery-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     let script = out.join("pond.json");
@@ -646,7 +654,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     .unwrap();
     let gallery = out.join("gallery");
     let run = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+        let output = Command::new(env!("CARGO_BIN_EXE_quill"))
             .arg("gallery")
             .args(args)
             .output()
@@ -680,18 +688,17 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ] {
         assert!(folder.join(file).exists(), "{file} is missing: {text}");
     }
-    let critique = std::fs::read_to_string(folder.join("critique.md")).unwrap();
+    let critique = read_text(folder.join("critique.md")).unwrap();
     assert!(
         critique.contains("focal point: the eye goes to"),
         "{critique}"
     );
-    let blind = std::fs::read_to_string(folder.join("blind-read.md")).unwrap();
+    let blind = read_text(folder.join("blind-read.md")).unwrap();
     assert!(blind.contains("What do you see?"));
-    let notes = std::fs::read_to_string(folder.join("notes.md")).unwrap();
+    let notes = read_text(folder.join("notes.md")).unwrap();
     assert!(notes.contains("## Proposed lessons"));
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     let piece = &index["pieces"][0];
     assert_eq!(piece["folder"], "tiny-pond");
     assert_eq!(piece["title"], "Tiny pond");
@@ -721,8 +728,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ]);
     assert!(ok, "{text}");
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     assert_eq!(index["pieces"][0]["rating"]["score"], 4);
     assert_eq!(index["pieces"][0]["rating"]["comment"], "the duck reads");
     assert!(index["pieces"][0]["rating"]["date"].as_str().unwrap().len() == 10);
@@ -737,8 +743,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
     ]);
     assert!(ok);
     let index: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(gallery.join("index.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&read_text(gallery.join("index.json")).unwrap()).unwrap();
     assert_eq!(index["pieces"][0]["rating"]["score"], 4);
     let (ok, text) = run(&[
         "rate",
@@ -758,8 +763,7 @@ fn gallery_add_and_rate_build_the_folder_and_the_index() {
 /// separate agent.
 #[test]
 fn the_benchmark_has_its_subjects_guide_and_baselines() {
-    let guide =
-        std::fs::read_to_string(root().join("skills/art-app/exercises/benchmark.md")).unwrap();
+    let guide = read_text(root().join("skills/duck-quill/exercises/benchmark.md")).unwrap();
     for subject in [
         "Sunset pond",
         "Forest at dawn",
@@ -782,10 +786,9 @@ fn the_benchmark_has_its_subjects_guide_and_baselines() {
         assert!(guide.contains(thing), "the guide lacks {thing}");
     }
     assert!(guide.contains("## The fixed mapping"));
-    assert!(guide.contains("art-cli critique piece.json --score"));
+    assert!(guide.contains("quill critique piece.json --score"));
     assert!(guide.contains("The person's rating outranks every number"));
-    let results =
-        std::fs::read_to_string(root().join("skills/art-app/gallery/benchmark.md")).unwrap();
+    let results = read_text(root().join("skills/duck-quill/gallery/benchmark.md")).unwrap();
     for piece in ["sunset-pond-simple", "sunset-pond", "duck-portrait"] {
         let rows: Vec<&str> = results
             .lines()

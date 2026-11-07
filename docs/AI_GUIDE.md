@@ -1,10 +1,10 @@
-# Painting with Art App: a guide for AI assistants
+# Painting with Duck Quill: a guide for AI assistants
 
-**New to Art App scripts? Read the [quick start](QUICKSTART.md) first** (one page: a first script,
+**New to Duck Quill scripts? Read the [quick start](QUICKSTART.md) first** (one page: a first script,
 the loop, the rules that matter). This guide goes further.
 
-You can paint pictures with Art App by writing **painting scripts** (JSON) and rendering them with
-**`art-cli`**, a command-line program that needs no screen or graphics card. You can look at the
+You can paint pictures with Duck Quill by writing **painting scripts** (JSON) and rendering them with
+**`quill`**, a command-line program that needs no screen or graphics card. You can look at the
 PNGs it saves, so you can judge your own work and improve it, step by step, like a painter
 stepping back from the easel.
 
@@ -21,30 +21,34 @@ a 32-pixel one, [examples/duck-pixel.json](../examples/duck-pixel.json).
 You need Rust (`cargo`). From the repository folder:
 
 ```bash
-cargo build --release -p art_cli
+cargo build --release -p quill_cli
 ```
 
-The program is `target/release/art-cli`. It only depends on the painting engine (no window
-libraries), so it builds in under a minute on a plain Linux machine. Check that it works:
+The program is `target/release/quill`. It only depends on the painting engine (no window
+libraries): a few minutes the first time, seconds after that. Run the build from the repository's
+root; elsewhere, give `quill`'s full path (it isn't put on the PATH). Before the app was renamed
+Duck Quill it was `art-cli`, and that name still runs (with one note on stderr), but like `quill`
+it saves pictures as `.quill`, not `.artapp`; scripts saying `"format": "artapp-script"` and
+`.artapp` pictures still work. Check that it works:
 
 ```bash
-target/release/art-cli render examples/sunset.json --preview --out /tmp/try
+target/release/quill render examples/sunset.json --preview --out /tmp/try
 ```
 
 ## 2. The loop
 
 ```bash
-art-cli check picture.json                          # mistakes, and where everything landed
-art-cli render picture.json --preview --sheet       # quick look: half size + every stage in one image
-art-cli render picture.json --crop 600,400,300,200 --zoom 3 --grid 50  # close-up with coordinates
-art-cli render picture.json --snapshots             # full size, plus a PNG per stage
-art-cli render picture.json --preview --layers "Duck"   # one layer on its own (or --hide "Sketch")
-art-cli render sprite.json --transparent --bg "#4080A0" # see-through PNG; previews on a colour
-art-cli info out/picture.artapp                     # layers, blend modes, what's painted where
-art-cli info picture.json                           # the same, plus which commands painted each layer
+quill check picture.json                          # mistakes, and where everything landed
+quill render picture.json --preview --sheet       # quick look: half size + every stage in one image
+quill render picture.json --crop 600,400,300,200 --zoom 3 --grid 50  # close-up with coordinates
+quill render picture.json --snapshots             # full size, plus a PNG per stage
+quill render picture.json --preview --layers "Duck"   # one layer on its own (or --hide "Sketch")
+quill render sprite.json --transparent --bg "#4080A0" # see-through PNG; previews on a colour
+quill info out/picture.quill                     # layers, blend modes, what's painted where
+quill info picture.json                           # the same, plus which commands painted each layer
 ```
 
-Files go to `out/` (or `--out folder`): `picture.png`, `picture.artapp`, `picture-preview.png`,
+Files go to `out/` (or `--out folder`): `picture.png`, `picture.quill`, `picture-preview.png`,
 `picture-sheet.png`, `snapshots/NN-name.png`, `picture-crop-x-y-w-h.png`, `picture-view.png`.
 
 **Read the numbers before the picture.** `render` ends with a summary of 12 lines or fewer:
@@ -58,7 +62,7 @@ Rendered sprite.json in 0.01 s
     command 10 (rect) draws entirely outside the canvas (x 400..420, y 10..30)
     symbol "unused" (command 3) is defined but never used
     layer "Sketch" is empty
-  saved: out/sprite.png, out/sprite.artapp
+  saved: out/sprite.png, out/sprite.quill
 ```
 
 `check` paints the same way without saving, and lists every layer, the outermost named `group`s
@@ -70,7 +74,7 @@ a layer left empty, a symbol never used, a palette colour never used.
 
 **Viewing aids:** `--grid 100` draws a light grid with coordinates, `--bg "#4080A0"` (with
 `--transparent`) shows see-through pictures on a colour, `--layers`/`--hide` choose which layers
-show. They go on previews, crops, snapshots and sheets. `picture.png` and `picture.artapp` never
+show. They go on previews, crops, snapshots and sheets. `picture.png` and `picture.quill` never
 get the grid or the colour; at full size, the picture with them is `picture-view.png`.
 
 The same script always gives exactly the same picture, so a change you see is the change you made.
@@ -90,7 +94,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 
 ```json
 {
-  "format": "artapp-script", "version": 1, "title": "…", "seed": 1,
+  "format": "duckquill-script", "version": 1, "title": "…", "seed": 1,
   "palette": { "sky": "#5080D0", "shadow": "#1A1A3080" },
   "intent": { "subject": "a hill under a cold sky", "focal": [800, 600], "light": "top left", "mood": "still", "key_colors": ["sky", "shadow"] },
   "commands": [
@@ -111,7 +115,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 
 | Command | Use it for |
 |---|---|
-| `canvas` | First command: `width`, `height`, `paper`; or `open` an `.artapp` to continue a picture. |
+| `canvas` | First command: `width`, `height`, `paper`; or `open` a `.quill` to continue a picture. |
 | `layer` | Select or create a layer: `name`, `opacity`, `blend`, `visible`, `above`/`below`; `clip` (shown only on the paint below), `lock` (recolour only), `from: "below"` (a flattened copy of everything below). |
 | `brush` | `color`, `size`, `opacity`, `flow`, `hardness`, `spacing`, pressure settings; `tip` (`round`, `square`, `bristle`, `chalk`, `leaf`, `grass`, `sparkle`, or a PNG file), `angle`, `dynamics` (`follow`, `size`, `angle`, `opacity`, `scatter`, `hue`, `lightness`, `saturation`). |
 | `stroke` / `erase` | Pen-like line through `points` (`[x, y]` or `[x, y, pressure]`). |
@@ -130,7 +134,7 @@ writing more. Then fix the script and render again. Small steps beat one huge sc
 | `snapshot` | A named checkpoint for `--snapshots` and `--sheet`. |
 | `group` | Draws its `commands` moved, resized, turned and/or mirrored (`translate`, `scale`, `rotate`, `mirror`, `origin`); `mask` keeps the paint inside an area, a symbol's silhouette or a layer's paint. |
 | `define` / `use` | Store a drawing as a symbol once; paint it many times, placed like a group, with `colors` swapped. A symbol starts from the plain brush (set its own inside); `{"cmd": "brush", "reset": true}` goes back to plain. |
-| `include` | `file` (relative to the script): that file's `define`s and palette. The library in `skills/art-app/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, with parameters; see its README. |
+| `include` | `file` (relative to the script): that file's `define`s and palette. The library in `skills/duck-quill/library/` has a cloud, water, grass, a reed, a tree, a lily pad and the duck, with parameters; see its README. |
 | `repeat` | Copies of its `commands`, with a `step` (`translate`, `rotate`, `scale` around `origin`) added each time. In `text`, `{i}` is the copy number. |
 | `delete_layer`, `rename_layer`, `move_layer`, `clear_layer`, `paper` | Housekeeping. |
 | `transform_layer` | Move, turn, resize or mirror what's already on a layer (written by the app's Layer menu). |
@@ -148,14 +152,14 @@ Drawing commands can change the brush just for themselves: `color`, `size`, `opa
 
 ## 4. The painting process
 
-The stages a good painter follows, with what to check at each. After every stage: `art-cli
-views` and `art-cli critique`, and fix before moving on. The numbers are warnings, never goals:
+The stages a good painter follows, with what to check at each. After every stage: `quill
+views` and `quill critique`, and fix before moving on. The numbers are warnings, never goals:
 never trade a better-looking picture for a better number, and the person's rating outranks
 every number.
 
 | Stage | Do | Check |
 |---|---|---|
-| 1. Intent | Write the intent block and the palette (8–15 colours, named for their jobs: `sky_top`, `shadow`, `rim`). Read `skills/art-app/lessons.md` and the 2–3 nearest gallery pieces (`skills/art-app/gallery/index.json` has tags). | `check` prints the intent back; the key colours exist; no warnings. |
+| 1. Intent | Write the intent block and the palette (8–15 colours, named for their jobs: `sky_top`, `shadow`, `rim`). Read `skills/duck-quill/lessons.md` and the 2–3 nearest gallery pieces (`skills/duck-quill/gallery/index.json` has tags). | `check` prints the intent back; the key colours exist; no warnings. |
 | 2. Thumbnail | At `render --scale 0.1`: three to five big value shapes, nothing else. Where's the horizon, where's the subject (a third of the way across usually beats the middle), where's the light from? | views: the thumb reads; critique: 3+ value groups when squinted, the focal point near where it's wanted. |
 | 3. Values | Full size, still mostly grey or one hue: light and dark decided for every shape, each part on its own layer, back to front. `snapshot`. | critique values and readability: no part merges at thumbnail size; the focal point has the strongest contrast. |
 | 4. Colour blocking | Flat local colours in key, back to front. | critique colour: nothing out of key; warm/cool as the mood wants. |
@@ -170,18 +174,18 @@ the detail commands are at the focal point; a background earns ten commands, a f
 agent (or a fresh session) and ask three questions without telling it the intent: *What do you
 see? What's the focal point? What mood?* Compare with the intent; if the answers don't match,
 the picture doesn't read yet. It must be leak-proof: file names, titles, folder names and the
-script all leak the intent, so `art-cli blind-read picture.json` prepares a packet in a folder
+script all leak the intent, so `quill blind-read picture.json` prepares a packet in a folder
 of its own (`out/blind-read-7f3a/`): the picture copied as `piece-7f3a.png` (the four hex
 characters come from a hash of the pixels, so the same picture gets the same name), no script,
 no title, and `questions.txt` with the three standard questions. The reader gets only that
-folder. Then `art-cli blind-read picture.json --record answers.txt --verdict "reads"` (or
+folder. Then `quill blind-read picture.json --record answers.txt --verdict "reads"` (or
 `--verdict "doesn't read: it called the duck a rock"`) writes the questions, the answers, the
 intent and the verdict into `blind-read.md` next to the script. Never send the script, the
 notes or a named file.
 
 **After painting:** `notes.md` (what each tool did, what's still weak) with its "Proposed
-lessons" section, `art-cli gallery add`, and the person's rating. Deliver the PNG, the views
-sheet, the critique, the blind read, the `.artapp` (layers kept) and the script.
+lessons" section, `quill gallery add`, and the person's rating. Deliver the PNG, the views
+sheet, the critique, the blind read, the `.quill` (layers kept) and the script.
 
 ## 5. Techniques that work (all from the examples)
 
@@ -192,18 +196,22 @@ sheet, the critique, the blind read, the `.artapp` (layers kept) and the script.
   "stops": [[0, "#2A1E48"], [0.35, "#6B3A6E"], [0.7, "#E0704A"], [0.88, "#F7B25A"], [1, "#FFDCA0"]] }
 ```
 
-**Shading that stays inside a shape:** paint the shape on its own layer, then put the shading
-on a clipping layer above it (`"clip": true`, usually `multiply`), and the light on another
-(`screen`). Paint across the whole shape without care; only the shape's part shows. To keep a
-group's paint inside something instead, give it a `mask`: an area, `{"symbol": "duck", ...}`
-(the duck's silhouette, placed like a `use`) or `{"layer": "Water"}` (a reflection only on the
-water).
+**Clipping: shading that stays inside a shape.** Paint the shape on its own layer, then the
+shading on a clipping layer right above it (`"clip": true`, usually `multiply`; light on another,
+`screen`). Paint across the whole shape without care: only the part over the shape shows.
 
 ```json
 { "cmd": "layer", "name": "Duck" },
 { "cmd": "use", "name": "duck", "translate": [300, 400] },
 { "cmd": "layer", "name": "Duck shade", "clip": true, "blend": "multiply", "opacity": 0.6 },
-{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] },
+{ "cmd": "gradient", "from": [300, 300], "to": [300, 480], "colors": ["transparent", "#3A2A60"] }
+```
+
+**Masks: a group's paint only inside something.** Give the group a `mask`: an area (`{"ellipse":
+[x, y, rx, ry]}`), a symbol's silhouette placed like a `use` (`{"symbol": "duck", "translate":
+[300, 400]}`) or a layer's paint (`{"layer": "Water"}`). A reflection that stays on the water:
+
+```json
 { "cmd": "layer", "name": "Water" },
 { "cmd": "group", "name": "reflection", "mask": { "layer": "Water" }, "opacity": 0.4, "commands": [
   { "cmd": "use", "name": "duck", "translate": [300, 560], "mirror": "y" } ] }
@@ -429,7 +437,7 @@ All five on one small scene (26 commands):
 
 ## 7. Checking your own work
 
-Start with the views sheet: `art-cli views picture.json` paints the picture and saves
+Start with the views sheet: `quill views picture.json` paints the picture and saves
 `out/picture-views.png`, seven panels in one look. Each one is an artist's trick:
 
 | Panel | What to ask |
@@ -447,7 +455,7 @@ Start with the views sheet: `art-cli views picture.json` paints the picture and 
 fixed model of attention (a 32 x 32 grid; contrast 0.35, edges 0.3, saturation 0.15, detail
 0.2), not the truth: use it to notice, then look.
 
-Then the numbers: `art-cli critique picture.json` prints about fifteen findings, each with a
+Then the numbers: `quill critique picture.json` prints about fifteen findings, each with a
 place, the number behind it and a hint:
 
 ```
@@ -486,7 +494,7 @@ it by under 0.12 and its hue by under 30 degrees); *composition* (the heat's cen
 a dead-centre focal point, a focal part cut by the edge, a part called `horizon` in the middle).
 `--detail` prints every part's and layer's numbers; `--frames 0-7` gives one line per frame of
 an animation and names the worst; `--score` maps the critique to the benchmark's five scores
-(`skills/art-app/exercises/benchmark.md`: four fixed subjects, a scoring guide, three scorers:
+(`skills/duck-quill/exercises/benchmark.md`: four fixed subjects, a scoring guide, three scorers:
 the numbers, a separate agent, the person).
 
 Texture (grain, marks, blotches) is judged on a part's own paint, so a background showing through
@@ -498,24 +506,24 @@ The numbers are warnings, never goals. Never trade a better-looking picture for 
 number, and a person's rating outranks every number. They can't tell whether a cloud looks
 like a cloud: they catch what a person spots in a second, so your time goes to the rest.
 
-Learning from pictures you may use (`skills/art-app/references/`: public domain or CC0 only,
-each with its source and licence in `index.json`): `art-cli palette coffee.png` draws out its
+Learning from pictures you may use (`skills/duck-quill/references/`: public domain or CC0 only,
+each with its source and licence in `index.json`): `quill palette coffee.png` draws out its
 eight main colours as swatches (`coffee-palette.png`) and a palette block to paste into a
-script; `art-cli values coffee.png` paints it in five greys (`coffee-values.png`) and counts the
-value groups; `art-cli compare mine.png coffee.png` puts both side by side with their greys
+script; `quill values coffee.png` paints it in five greys (`coffee-values.png`) and counts the
+value groups; `quill compare mine.png coffee.png` puts both side by side with their greys
 (`compare.png`) and scores how alike they are, 0 to 100, in value structure (the five greys'
 shares and a 4 x 4 grid of mean values) and colour (the hue histograms), with words: "values
 similar: 78; colours different: 41, the first is cooler". All three take a script instead of a
 picture (its first frame), so a study can be compared with what it studies.
 
-**The learning folder** (`skills/art-app/`): `lessons.md` is thirty short rules, each with the
+**The learning folder** (`skills/duck-quill/`): `lessons.md` is thirty short rules, each with the
 piece that shows it; read it before painting. `mistakes.md` is the real mistakes with their
 before pictures and the critique line that catches each. `styles/` says what palette, brushes
 and rules fit a storybook, a painterly or a pixel look. `exercises/` is a short course with an
-answer and its numbers for each. `gallery/` holds the finished pieces: `art-cli gallery add
+answer and its numbers for each. `gallery/` holds the finished pieces: `quill gallery add
 piece.json --name name` paints one into the gallery with its process and views sheets, its
 critique, a blind-read skeleton, notes with a "Proposed lessons" section and an index entry with
-tags; `art-cli gallery rate name 4 "why"` writes the person's rating into the index. A rating is
+tags; `quill gallery rate name 4 "why"` writes the person's rating into the index. A rating is
 the person's alone and outranks every number.
 
 Then, looking at the render, ask:
@@ -530,9 +538,9 @@ Then, looking at the render, ask:
    use `--grid` to read positions off the picture, and `--layers` to look at one layer alone.
    For an animation, read `check`'s motion summary first (biggest steps, jumps, loop pops), then
    `--frame-sheet` to see every frame at once, `--onion` for one frame between its neighbours,
-   and `--gif` only when a person wants to watch. When it's right, `art-cli export` writes the
+   and `--gif` only when a person wants to watch. When it's right, `quill export` writes the
    sprite sheet and its JSON for the game, or the GIF and MP4 for a video.
-7. `art-cli info out/x.artapp` or `art-cli check`: are the layers what you expect, in the right
+7. `quill info out/x.quill` or `quill check`: are the layers what you expect, in the right
    order, with the right blend modes? Any warnings?
 
 Write down what's wrong, change only that, and render again.
@@ -541,7 +549,7 @@ Write down what's wrong, change only that, and render again.
 
 - **y goes down.** `[x, 0]` is the top. A "higher" thing has a *smaller* y.
 - **A misspelt layer name makes a new layer.** `{"cmd": "layer", "name": "Skye"}` silently creates
-  "Skye". `art-cli check` lists the layers: look at the list.
+  "Skye". `quill check` lists the layers: look at the list.
 - **`gradient` covers the whole layer** unless it has an `area`. Put big gradients on their own
   layer, or give an area.
 - **Drawing on the wrong layer.** Every drawing command paints on the layer selected last.
@@ -566,16 +574,16 @@ Write down what's wrong, change only that, and render again.
 - **Symbols are defined before they're used**, only at the top level, and each name once.
 - **Text `at` is the top of the line, not the baseline.** Letters start a little below it. Give
   `size` in pixels (it's the font size; a line is 1.21 × that high). Width before painting:
-  `art-cli measure "the words" --size 32`, or `"fit": 180` to shrink it into a space.
+  `quill measure "the words" --size 32`, or `"fit": 180` to shrink it into a space.
 - **Colour swaps only work on colours the symbol uses.** Give symbols palette colours, and swap by
   those names.
 
 ## 9. Working with a person's drawing
 
-People can draw in the Art App window and send you their work:
+People can draw in the Duck Quill window and send you their work:
 
-- **The picture:** an `.artapp` file. Continue it with `{"cmd": "canvas", "open": "their.artapp"}`
-  (path relative to your script), then add layers on top. Use `art-cli info` to see its layers.
+- **The picture:** a `.quill` file. Continue it with `{"cmd": "canvas", "open": "their.quill"}`
+  (path relative to your script), then add layers on top. Use `quill info` to see its layers.
 - **How it was drawn:** **File → Export strokes…** in the app writes everything they painted as a
   script: their layers, brush settings and every stroke as `[x, y, pressure]` points. Read it to
   see what they drew and where, and to match their brush sizes and colours.
@@ -606,9 +614,20 @@ animation is then one `use` with keyframes in `with`:
 
 **Pixel art:** `"pixel": {"supersample": 8, "outline": "ink"}` on the canvas, a palette of 4 to 8
 colours (it's locked), shapes with decimals (`"radius": 5.5` is fine), and `pixels` rows for
-tiny things like an eye: `"rows": ["kw"]`. Keep every part at least 2 pixels wide, or the vote
-loses it. Check at `--zoom 8`; export with `--scale 8` for people and `--scale 1` for the game.
+tiny things like an eye: `"rows": ["kw"]`. A pixel is painted when its centre is inside the paint,
+so put small round details on pixel centres (`[4.5, 4.5]`, radius 0.5 is one pixel; the table is
+in the script format's "Pixel art"), and lines 1 pixel wide are drawn one clean pixel per step. Check at `--zoom 8` (saved as `<name>-zoom8.png`; `<name>.png` stays the game's size);
+export with `--scale 8` for people and `--scale 1` for the game.
 The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as the painted one.
+
+**Repeating backgrounds and tiles:** `render --tile` also saves `<name>-tile.png`, the picture
+2 x 2, and says where opposite edges don't meet (and where along them). Fix the seam (match the
+colours at both edges, or let a gradient run the same at top and bottom) until it says the edges
+meet.
+
+**Tilesets:** one small script per tile or sprite, then `quill atlas grass.json water.json --name
+ground` packs them into `ground.png` with `ground.json` saying where each one is (see
+`docs/sprite-sheet-format.md`, "Tilesets").
 
 ## 11. Speed
 
@@ -621,7 +640,7 @@ The 32-pixel duck in `examples/duck-pixel.json` is the same kind of symbols as t
   `export` says how much it saved: "animation \"loop\": 12 of 20 layers painted once, 17 of 55
   commands skipped in later frames". For the sunset pond's 48-frame loop at 1920×1080 that is
   57 s instead of 88 s; a small walk cycle whose every layer moves gains nothing. Set
-  `ART_NO_REUSE=1` to paint every frame in full (only useful to compare).
+  `QUILL_NO_REUSE=1` to paint every frame in full (only useful to compare).
 - Snapshots and the contact sheet cost a little per stage; use a few meaningful snapshots rather
   than one per command.
 - `scatter` and `hatch` with thousands of strokes are fine; hundreds of thousands are slow.

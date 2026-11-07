@@ -32,8 +32,8 @@ use super::geometry::{self, Pt};
 use super::{
     BrushCmd, Command, DynamicsCmd, EllipseCmd, FillCmd, FilterCmd, GradientCmd, GroupCmd,
     HatchCmd, IncludeCmd, LayerCmd, LineCmd, MoveLayerCmd, PathCmd, PixelsCmd, Point, PolygonCmd,
-    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, StampCmd, StrokeCmd, TextCmd,
-    TransformLayerCmd, UseCmd, parse_hex,
+    RectCmd, RepeatCmd, ScatterCmd, Script, ScriptError, SelectCmd, StampCmd, StrokeCmd,
+    SymmetryCmd, TextCmd, TransformLayerCmd, UseCmd, parse_hex,
 };
 use crate::brush::{BrushMode, BrushSettings, Dynamics, MAX_SIZE, Tip, TipShape};
 use crate::document::{Background, Document, MAX_CANVAS_SIDE};
@@ -53,7 +53,8 @@ use crate::layer_transform::transform_layer;
 use crate::noise::{self, Noise, Texture, TextureImage};
 use crate::pixels::{MAX_SUPERSAMPLE, PixelMode};
 use crate::random::Random;
-use crate::stroke::{Stroke, StrokePoint, TilesBefore};
+use crate::selection::{self, Selection, What};
+use crate::stroke::{Stroke, StrokePoint, Symmetry, TilesBefore};
 use crate::surface::{PixelRect, Surface, TileCoord};
 use crate::text::{self, Align};
 use crate::tile::Rgba8;
@@ -269,6 +270,8 @@ enum Job {
         points: Vec<StrokePoint>,
         /// Where the brush's dynamics get their randomness.
         seed: u64,
+        /// Mirror lines, in canvas pixels.
+        symmetry: Option<Symmetry>,
     },
     /// Fills a shape (or the whole layer, if `shape` is `None`). A shape
     /// is one or more outlines filled together (a letter "o" has two).
@@ -344,6 +347,9 @@ struct Frame {
     /// Where randomness starts for this frame's commands (`None` for the
     /// script itself, where it's simply the command's number).
     seed_base: Option<u64>,
+    /// A named single shape's frame: its one command gets `seed_base`
+    /// itself, the seed it would have had without the name.
+    keep_seed: bool,
     /// What to put back when the frame ends.
     restore: Option<Saved>,
     /// The symbol being played, if this frame is a `use`.
@@ -428,6 +434,9 @@ impl Scratch {
 /// A symbol: what `define` stored.
 struct Symbol {
     commands: Arc<Vec<Command>>,
+    /// With parameters: the commands as written, read again for each set
+    /// of values a `use` gives (see `script::symbol_commands`).
+    raw: Option<Arc<Vec<Value>>>,
     /// Its parameters and their defaults.
     params: Arc<BTreeMap<String, Value>>,
     /// Where it was defined, if in an included file: the file (as
@@ -497,11 +506,63 @@ struct Saved {
     brush_alpha: u8,
 }
 
+/// `check` mentions a group scaled this much more one way than the other.
+const UNEVEN_WARNING: f32 = 1.5;
+
+/// The pixels a one-pixel line through `points` (in samples, `s` to a
+/// pixel) goes through: from each point to the next one pixel per step
+/// along the longer direction (Bresenham), and no corner pixel where a
+/// diagonal step would do (no "L" at a turn).
+fn pixel_line(points: &[StrokePoint], s: f32) -> Vec<(i32, i32)> {
+    let cell = |p: &StrokePoint| ((p.x / s).floor() as i32, (p.y / s).floor() as i32);
+    let mut cells: Vec<(i32, i32)> = vec![cell(&points[0])];
+    for pair in points.windows(2) {
+        let (mut x, mut y) = cell(&pair[0]);
+        let (x1, y1) = cell(&pair[1]);
+        let (dx, dy) = ((x1 - x).abs(), -(y1 - y).abs());
+        let (sx, sy) = ((x1 - x).signum(), (y1 - y).signum());
+        let mut error = dx + dy;
+        while (x, y) != (x1, y1) {
+            let twice = 2 * error;
+            if twice >= dy {
+                error += dy;
+                x += sx;
+            }
+            if twice <= dx {
+                error += dx;
+                y += sy;
+            }
+            if cells.last() != Some(&(x, y)) {
+                cells.push((x, y));
+            }
+        }
+    }
+    // Drop the middle of an "L": a pixel whose neighbours before and
+    // after touch each other diagonally.
+    let mut kept: Vec<(i32, i32)> = Vec::with_capacity(cells.len());
+    for (i, &here) in cells.iter().enumerate() {
+        if let (Some(&before), Some(&after)) = (kept.last(), cells.get(i + 1))
+            && (before.0 - after.0).abs() == 1
+            && (before.1 - after.1).abs() == 1
+        {
+            continue;
+        }
+        kept.push(here);
+    }
+    kept.dedup();
+    kept
+}
+
 /// A group's transform and settings, checked.
 struct Placement {
     transform: Transform,
     opacity: f32,
     scale_brush: bool,
+    /// Brush sizes follow the average of an uneven scale (the old way),
+    /// not the smaller of the two.
+    stretch_brush: bool,
+    /// The scale across and down, as written.
+    scale: (f32, f32),
     /// The point it turns and resizes around (drawing units).
     origin: (f32, f32),
 }
@@ -547,6 +608,9 @@ pub struct Player {
     warnings: Vec<String>,
     defined: Vec<(String, usize)>,
     used_symbols: HashSet<String>,
+    /// A symbol's commands read with one set of parameter values, by the
+    /// symbol's name and the values (as JSON).
+    symbol_versions: HashMap<(String, String), Arc<Vec<Command>>>,
     used_colors: RefCell<HashSet<String>>,
     painted_by: HashMap<LayerId, BTreeSet<usize>>,
     read_by: HashMap<LayerId, BTreeSet<usize>>,
@@ -576,6 +640,12 @@ pub struct Player {
     textures: HashMap<String, Arc<TextureImage>>,
     /// Patterns a brush paints with, by the number in `BrushSettings::source`.
     sources: Vec<Arc<Paint>>,
+    /// The `select` command's selection: painting stays inside it.
+    selection: Option<Selection>,
+    /// The selection combined with a group's mask, kept so it isn't worked
+    /// out again for every stroke: which two masks (by address) it was
+    /// made from, and the result.
+    clip_cache: Option<(usize, usize, Arc<Mask>)>,
     /// Palette colours that came from included files (not the script's
     /// own, so not "never used" warnings), and which file each came from.
     included_colors: HashMap<String, String>,
@@ -655,6 +725,15 @@ impl Player {
             _ => None,
         };
         let paint_scale = options.scale * pixel.as_ref().map_or(1.0, |p| p.supersample as f32);
+        // The pixel canvas's outline colour counts as used (it outlines
+        // every shape, though no command names it).
+        let mut used_colors = HashSet::new();
+        if let Some(Command::Canvas(canvas)) = script.commands.first()
+            && let Some(Value::Object(fields)) = &canvas.pixel
+            && let Some(Value::String(name)) = fields.get("outline")
+        {
+            used_colors.insert(name.clone());
+        }
         Ok(Self {
             commands: Arc::new(script.commands),
             palette,
@@ -681,7 +760,8 @@ impl Player {
             warnings: Vec::new(),
             defined: Vec::new(),
             used_symbols: HashSet::new(),
-            used_colors: RefCell::new(HashSet::new()),
+            symbol_versions: HashMap::new(),
+            used_colors: RefCell::new(used_colors),
             painted_by: HashMap::new(),
             read_by: HashMap::new(),
             frame: options.frame,
@@ -697,6 +777,8 @@ impl Player {
             tip_files: HashMap::new(),
             textures: HashMap::new(),
             sources: Vec::new(),
+            selection: None,
+            clip_cache: None,
             included_colors: HashMap::new(),
         })
     }
@@ -797,6 +879,9 @@ impl Player {
                 self.record(step);
             }
         }
+        // Painting on an open picture stays inside its selection, as the
+        // app's own tools do (the Text tool plays its text this way).
+        self.selection = document.selection().cloned();
         self.start_frames();
         Ok(())
     }
@@ -814,6 +899,7 @@ impl Player {
             brush_scale: scale,
             opacity: 1.0,
             seed_base: None,
+            keep_seed: false,
             restore: None,
             symbol: None,
             swaps: Vec::new(),
@@ -897,6 +983,7 @@ impl Player {
                     brush_scale: scale,
                     opacity: 1.0,
                     seed_base: None,
+                    keep_seed: false,
                     restore: None,
                     symbol: None,
                     swaps: Vec::new(),
@@ -1035,8 +1122,10 @@ impl Player {
     /// at the script's top level its number (as it always was), inside a
     /// group a mix of the group's and the command's.
     fn default_seed(&self, index: usize) -> u64 {
-        match self.frames.last().and_then(|frame| frame.seed_base) {
+        let frame = self.frames.last();
+        match frame.and_then(|frame| frame.seed_base) {
             None => index as u64 + 1,
+            Some(base) if frame.is_some_and(|f| f.keep_seed) => base,
             Some(base) => Random::mix(base, index as u64 + 1),
         }
     }
@@ -1082,19 +1171,50 @@ impl Player {
             None => parent.mask.clone(),
         };
         let symbol_starts = new.symbol.is_some();
+        // Scaled to 0 (across, down or both): it shrinks to nothing. Its
+        // commands still run (a layer it makes, a symbol it defines), but
+        // paint nothing.
+        let (sx, sy) = new.placement.scale;
+        let vanishes = sx == 0.0 || sy == 0.0;
+        // Lines keep their width along the less stretched direction (or
+        // the average, the old way, with `stretch_brush`).
+        let brush_factor = if new.placement.stretch_brush {
+            own.size_factor()
+        } else {
+            own.line_factor()
+        };
+        // (Only worth a warning when the widths visibly differ.)
+        let uneven = sx.min(sy) > 0.0 && sx.max(sy) / sx.min(sy) >= UNEVEN_WARNING;
+        let uneven_warning = (uneven && new.placement.scale_brush && !self.options.dry_run).then(|| {
+            format!(
+                "{path}: scaled unevenly ({sx} across, {sy} down), so line widths and brush sizes \
+                 follow the smaller scale ({:.2}); add \"stretch_brush\": true for the average ({:.2})",
+                own.line_factor(),
+                own.size_factor()
+            )
+        });
         let frame = Frame {
             commands: new.commands,
             next: 0,
             label: Some((self.current + 1, new.label)),
             place,
-            detail: parent.detail * own.size_factor(),
-            brush_scale: if new.placement.scale_brush {
-                parent.brush_scale * own.size_factor()
+            detail: if vanishes {
+                parent.detail
+            } else {
+                parent.detail * own.size_factor()
+            },
+            brush_scale: if new.placement.scale_brush && !vanishes {
+                parent.brush_scale * brush_factor
             } else {
                 parent.brush_scale
             },
-            opacity: parent.opacity * new.placement.opacity,
+            opacity: if vanishes {
+                0.0
+            } else {
+                parent.opacity * new.placement.opacity
+            },
             seed_base: Some(new.seed_base),
+            keep_seed: false,
             restore: Some(Saved {
                 layer: document.active_id(),
                 brush: self.brush,
@@ -1114,6 +1234,15 @@ impl Player {
             capture: new.capture,
             effect: None,
         };
+        // Once per group (an animation's frames scale it differently).
+        if let Some(warning) = uneven_warning
+            && !self.warnings.iter().any(|w| {
+                w.split_once(": scaled unevenly").map(|(p, _)| p)
+                    == warning.split_once(": scaled unevenly").map(|(p, _)| p)
+            })
+        {
+            self.warnings.push(warning);
+        }
         self.frames.push(frame);
         // A symbol looks the same wherever it's used: it starts from the
         // plain brush (the brush from before comes back after it).
@@ -1402,8 +1531,8 @@ impl Player {
         };
         frame.next = 0;
         frame.place = copies.so_far.then(copies.base_place);
-        frame.detail = copies.base_detail * copies.so_far.size_factor();
-        frame.brush_scale = copies.base_brush_scale * copies.so_far.size_factor();
+        frame.detail = copies.base_detail * copies.so_far.size_factor().max(1e-3);
+        frame.brush_scale = copies.base_brush_scale * copies.so_far.line_factor();
         frame.seed_base = Some(Random::mix(copies.seed, copies.current as u64 + 1));
         if !copies.each.is_empty() {
             frame.params = Some(Arc::new(each_params(&copies.each, copies.current)));
@@ -1638,6 +1767,9 @@ impl Player {
         if self.capturing() {
             return; // a silhouette for a mask isn't drawing
         }
+        if self.frame().opacity <= 0.0 {
+            return; // shrunk to nothing (scale 0) or fully faded: nothing shows
+        }
         let mut drawn = None;
         // The number of the script's own command this is part of.
         let top = self.position().0;
@@ -1826,15 +1958,19 @@ impl Player {
     /// Does `job` on `document`: the picture, or a scratch picture if
     /// `capture` (then nothing is remembered for undo or the report).
     fn do_job(&mut self, document: &mut Document, job: Job, capture: bool) -> f32 {
-        let clip = self.frame().mask.clone();
+        let clip = self.clip();
         match job {
             Job::Stroke {
                 layer,
                 brush,
                 points,
                 seed,
+                symmetry,
             } => {
                 let mut stroke = Stroke::new(brush, document.bounds()).seeded(seed);
+                if let Some(symmetry) = symmetry {
+                    stroke = stroke.mirrored(symmetry);
+                }
                 if let Some(clip) = clip {
                     stroke = stroke.clipped(clip);
                 }
@@ -1933,6 +2069,37 @@ impl Player {
         points: Vec<StrokePoint>,
         seed: Option<u64>,
     ) {
+        // On a pixel canvas, a line one pixel wide (or less) goes through
+        // whole pixels, one per step: the shrink alone could double it up
+        // where it runs at a slant (see `pixels.rs`).
+        if self.pixel.is_some()
+            && brush.size <= self.paint_scale * 1.001
+            && brush.source.is_none()
+            && !points.is_empty()
+        {
+            let s = self.paint_scale;
+            let rings = pixel_line(&points, s)
+                .into_iter()
+                .map(|(x, y)| {
+                    let (left, top) = (x as f32 * s, y as f32 * s);
+                    vec![
+                        (left, top),
+                        (left + s, top),
+                        (left + s, top + s),
+                        (left, top + s),
+                    ]
+                })
+                .collect();
+            let [r, g, b] = brush.color;
+            self.jobs.push_back(Job::Area {
+                layer,
+                shape: Some(Shape::Rings(rings)),
+                paint: Paint::Color([r, g, b, 255]),
+                opacity: brush.opacity,
+                mode: brush.mode,
+            });
+            return;
+        }
         let seed = Random::mix(
             Random::mix(self.seed, seed.unwrap_or(self.current_seed)),
             self.jobs.len() as u64 + 1,
@@ -1942,7 +2109,30 @@ impl Player {
             brush,
             points,
             seed,
+            symmetry: None,
         });
+    }
+
+    /// The mirror lines of a `stroke` command, on the canvas: they move
+    /// and turn with the group it's in.
+    fn symmetry(&self, written: Option<&SymmetryCmd>) -> Result<Option<Symmetry>, String> {
+        let Some(written) = written else {
+            return Ok(None);
+        };
+        if written.x.is_none() && written.y.is_none() {
+            return Err(
+                "`symmetry` needs `x` (a line going down), `y` (going across) or both".into(),
+            );
+        }
+        let x = finite("symmetry x", written.x.unwrap_or(0.0))?;
+        let y = finite("symmetry y", written.y.unwrap_or(0.0))?;
+        let place = self.frame().place;
+        Ok(Some(Symmetry {
+            centre: place.apply((x, y)),
+            vertical: written.x.is_some(),
+            horizontal: written.y.is_some(),
+            angle: place.b.atan2(place.a).to_degrees(),
+        }))
     }
 
     fn mark_painted(&mut self, document: &Document, layer: LayerId) {
@@ -1999,6 +2189,9 @@ impl Player {
             // While a symbol is painted for a mask, its layer commands
             // (and the like) are skipped: only its silhouette matters.
             return Ok(());
+        }
+        if command.shape_name().is_some() {
+            return self.named_shape(document, command);
         }
         match command {
             Command::Canvas(_) => Err("only the first command can be `canvas`".into()),
@@ -2078,6 +2271,7 @@ impl Player {
                 Ok(())
             }
             Command::Brush(brush) => self.set_brush(brush),
+            Command::Select(select) => self.select(document, select),
             Command::Stroke(stroke) => self.stroke(document, stroke, BrushMode::Paint),
             Command::Erase(stroke) => self.stroke(document, stroke, BrushMode::Erase),
             Command::Line(line) => self.line(document, line),
@@ -2117,6 +2311,7 @@ impl Player {
                     define.name.clone(),
                     Symbol {
                         commands: Arc::new(define.commands.clone()),
+                        raw: define.raw.clone(),
                         params: Arc::new(define.params.clone().unwrap_or_default()),
                         source: None,
                     },
@@ -2140,6 +2335,10 @@ impl Player {
             command.opacity.as_ref(),
             command.scale_brush,
         )?;
+        let placement = Placement {
+            stretch_brush: command.stretch_brush.unwrap_or(false),
+            ..placement
+        };
         let label = match &command.name {
             Some(name) => format!("group \"{name}\""),
             None => "group".to_owned(),
@@ -2160,6 +2359,40 @@ impl Player {
             outline: command.outline.clone(),
         };
         self.push_frame(document, new)
+    }
+
+    /// A single shape with a `name`: played as a named part of its own
+    /// (so `check`, `critique` and `views` list it), painting exactly as
+    /// it would without the name.
+    fn named_shape(&mut self, document: &Document, command: &Command) -> Result<(), String> {
+        let new = NewFrame {
+            commands: Arc::new(vec![command.without_shape_name()]),
+            label: command.label(),
+            placement: Placement {
+                transform: Transform::IDENTITY,
+                opacity: 1.0,
+                scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
+                origin: (0.0, 0.0),
+            },
+            // Its own seed, kept (see `Frame::keep_seed`).
+            seed_base: self.current_seed,
+            symbol: None,
+            swaps: Vec::new(),
+            part: true,
+            params: None,
+            upright: false,
+            mask: None,
+            capture: None,
+            filter: None,
+            outline: None,
+        };
+        self.push_frame(document, new)?;
+        if let Some(frame) = self.frames.last_mut() {
+            frame.keep_seed = true;
+        }
+        Ok(())
     }
 
     /// `use`: plays a symbol's commands, placed like a group, with some
@@ -2200,7 +2433,8 @@ impl Player {
                 chain.join(" > ")
             ));
         }
-        let commands = Arc::clone(&symbol.commands);
+        let mut commands = Arc::clone(&symbol.commands);
+        let raw = symbol.raw.clone();
         let defaults = Arc::clone(&symbol.params);
         let label = match &symbol.source {
             Some((file, number)) => format!("use \"{name}\" (from {file}, command {number})"),
@@ -2215,6 +2449,10 @@ impl Player {
             command.opacity.as_ref(),
             command.scale_brush,
         )?;
+        let placement = Placement {
+            stretch_brush: command.stretch_brush.unwrap_or(false),
+            ..placement
+        };
         let mut swaps = Vec::new();
         for (from, to) in command.colors.iter().flatten() {
             let error = |problem: String| format!("`colors`: {problem}");
@@ -2248,6 +2486,25 @@ impl Player {
                 self.value(value)
                     .map_err(|p| format!("`with`: {key}: {p}"))?,
             );
+        }
+        // Read with these values, so "$x" works in any field (once per set
+        // of values: a repeat or an animation reuses it).
+        if let Some(raw) = raw {
+            let key = (
+                name.clone(),
+                serde_json::to_string(&params).unwrap_or_default(),
+            );
+            commands = match self.symbol_versions.get(&key) {
+                Some(version) => Arc::clone(version),
+                None => {
+                    let version = Arc::new(
+                        crate::script::symbol_commands(&raw, &params)
+                            .map_err(|p| format!("with these `with` values, {p}"))?,
+                    );
+                    self.symbol_versions.insert(key, Arc::clone(&version));
+                    version
+                }
+            };
         }
         let new = NewFrame {
             commands,
@@ -2297,6 +2554,8 @@ impl Player {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
                 scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
                 origin: (0.0, 0.0),
             },
             seed_base: Random::mix(self.current_seed, 1),
@@ -2551,6 +2810,8 @@ impl Player {
                 transform: Transform::IDENTITY,
                 opacity: 1.0,
                 scale_brush: true,
+                stretch_brush: false,
+                scale: (1.0, 1.0),
                 origin: (0.0, 0.0),
             },
             seed_base: Random::mix(self.current_seed, 1),
@@ -2579,8 +2840,8 @@ impl Player {
         }
         let first = placements[0];
         frame.place = first.then(base_place);
-        frame.detail = base_detail * first.size_factor();
-        frame.brush_scale = base_brush_scale * first.size_factor();
+        frame.detail = base_detail * first.size_factor().max(1e-3);
+        frame.brush_scale = base_brush_scale * first.line_factor();
         frame.copies = Some(Copies {
             count: placements.len() as u32,
             current: 0,
@@ -2670,6 +2931,7 @@ impl Player {
                         define.name.clone(),
                         Symbol {
                             commands: Arc::new(define.commands.clone()),
+                            raw: define.raw.clone(),
                             params: Arc::new(define.params.clone().unwrap_or_default()),
                             source: Some((written.to_owned(), index + 1)),
                         },
@@ -2842,6 +3104,78 @@ impl Player {
         self.painted_by.entry(id).or_default().insert(top);
     }
 
+    /// Where painting may land now: inside the group's mask and the
+    /// `select` selection, whichever there are.
+    fn clip(&mut self) -> Option<Arc<Mask>> {
+        let group = self.frame().mask.clone();
+        let selected = self.selection.as_ref().map(|s| Arc::clone(s.mask()));
+        match (group, selected) {
+            (None, selected) => selected,
+            (group, None) => group,
+            (Some(group), Some(selected)) => {
+                let key = (
+                    Arc::as_ptr(&group) as usize,
+                    Arc::as_ptr(&selected) as usize,
+                );
+                if let Some((a, b, both)) = &self.clip_cache
+                    && (*a, *b) == key
+                {
+                    return Some(Arc::clone(both));
+                }
+                let both = Arc::new(group.intersect(&selected));
+                self.clip_cache = Some((key.0, key.1, Arc::clone(&both)));
+                Some(both)
+            }
+        }
+    }
+
+    /// `select`: sets, adds to, takes from, inverts, feathers or drops
+    /// the selection that painting stays inside. The checks and the
+    /// combining are the app's (`selection::Request`, `selection::apply`);
+    /// only the shape is made here, because a script's shape can use
+    /// parameters and is placed by the groups around it.
+    fn select(&mut self, document: &Document, command: &SelectCmd) -> Result<(), String> {
+        let limits = document.bounds();
+        let mut request = selection::Request::read(command)?;
+        request.feather *= self.detail();
+        let mask = match &request.what {
+            What::Shape(kind, numbers) => {
+                let mut area = serde_json::Map::new();
+                area.insert((*kind).to_owned(), self.value(numbers)?);
+                let polygon = self.area(&Value::Object(area))?;
+                let placed = self.place_polygon(polygon);
+                let mut mask = geometry::polygons_mask(&[placed], limits);
+                if self.pixel.is_some() {
+                    mask.threshold(); // a pixel canvas has hard edges
+                }
+                Some(mask)
+            }
+            What::Layer(name) => {
+                let id = find_layer(document, name)?;
+                self.note_read(id);
+                let layer = document.layer(id).ok_or("no such layer")?;
+                Some(selection::layer_contents(&layer.surface, limits))
+            }
+            What::All => Some(selection::all(limits)),
+            What::Feather if self.selection.is_none() => {
+                return Err("`feather` alone softens the selection, but there is none yet".into());
+            }
+            What::None | What::Invert | What::Feather => None,
+        };
+        let new = selection::apply(self.selection.as_ref(), &request, mask, limits);
+        // As in the app: a selection that comes out empty (everything
+        // subtracted, a shape off the canvas) is no selection.
+        if new.is_none() && request.what != What::None && !self.options.dry_run {
+            self.warnings.push(format!(
+                "command {}: the selection came out empty, so it's dropped and painting is no \
+                 longer limited",
+                self.position().0
+            ));
+        }
+        self.selection = new;
+        Ok(())
+    }
+
     /// `filter`: changes a layer in place.
     fn filter(&mut self, document: &mut Document, command: &FilterCmd) -> Result<(), String> {
         let filters = self.read_filters(&command.fields())?;
@@ -2859,10 +3193,13 @@ impl Player {
         }
         self.flush_tiles();
         let limits = document.bounds();
+        // Inside the `select` selection, if there is one. (Not a group's
+        // mask: filters never were, and old scripts must paint the same.)
+        let clip = self.selection.as_ref().map(|s| Arc::clone(s.mask()));
         let Some(layer) = document.layer_mut(id) else {
             return Ok(());
         };
-        let before = filters::apply(&mut layer.surface, &filters, limits);
+        let before = filters::apply_within(&mut layer.surface, &filters, limits, clip.as_deref());
         if !before.is_empty() {
             self.record(TileCommand::new("Filter", id, before));
             let top = self.position().0;
@@ -3037,6 +3374,24 @@ impl Player {
             self.brush_alpha = 255;
         }
         let mut brush = self.brush;
+        // A preset first (keeping the colour), then the fields given here.
+        if let Some(name) = &command.preset {
+            let preset = crate::presets::find(name).ok_or_else(|| {
+                let names: Vec<&str> = crate::presets::built_in()
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                format!(
+                    "unknown preset \"{name}\"; the presets are: {}",
+                    names.join(", ")
+                )
+            })?;
+            let (color, source) = (brush.color, brush.source);
+            brush = preset.settings()?;
+            brush.mode = BrushMode::Paint; // `stroke` or `erase` says which
+            brush.color = color;
+            brush.source = source;
+        }
         match &command.color {
             Some(Value::String(color)) => {
                 let [r, g, b, a] = self.color(color)?;
@@ -3053,43 +3408,9 @@ impl Player {
             }
             None => {}
         }
-        if let Some(size) = command.size {
-            brush.size = brush_size(size)?;
-        }
-        if let Some(opacity) = command.opacity {
-            brush.opacity = unit("opacity", opacity)?;
-        }
-        if let Some(flow) = command.flow {
-            brush.flow = unit("flow", flow)?.max(0.01);
-        }
-        if let Some(hardness) = command.hardness {
-            brush.hardness = unit("hardness", hardness)?;
-        }
-        if let Some(spacing) = command.spacing {
-            if !(0.01..=5.0).contains(&spacing) {
-                return Err(format!(
-                    "`spacing` must be between 0.01 and 5, not {spacing}"
-                ));
-            }
-            brush.spacing = spacing;
-        }
-        if let Some(on) = command.pressure_size {
-            brush.pressure_size = on;
-        }
-        if let Some(on) = command.pressure_opacity {
-            brush.pressure_opacity = on;
-        }
-        if let Some(on) = command.pressure_flow {
-            brush.pressure_flow = on;
-        }
+        apply_brush_fields(&mut brush, command)?;
         if let Some(tip) = &command.tip {
             brush.tip = self.tip(tip)?;
-        }
-        if let Some(angle) = command.angle {
-            brush.angle = finite("angle", angle)?;
-        }
-        if let Some(dynamics) = &command.dynamics {
-            brush.dynamics = read_dynamics(dynamics)?;
         }
         self.brush = brush;
         Ok(())
@@ -3215,12 +3536,19 @@ impl Player {
             false,
         )?;
         self.place_all(&mut points);
+        let symmetry = self.symmetry(command.symmetry.as_ref())?;
         self.push_stroke(
             document.active_id(),
             brush,
             points,
             self.seed_of(command.seed.as_ref())?,
         );
+        if let Some(Job::Stroke {
+            symmetry: mirror, ..
+        }) = self.jobs.back_mut()
+        {
+            *mirror = symmetry;
+        }
         Ok(())
     }
 
@@ -4540,6 +4868,19 @@ impl TransformLayerCmd {
     /// What it does to the layer's pixels, in canvas pixels. The app uses
     /// this too, so what it does and what its script replays are the same.
     pub fn transform(&self) -> Result<Transform, String> {
+        // Squashing a whole layer flat can't be undone, and is almost
+        // certainly a mistake (unlike a part that grows from nothing).
+        let flat = match &self.scale {
+            Some(Value::Number(n)) => n.as_f64() == Some(0.0),
+            Some(Value::Array(pair)) => pair.iter().any(|v| v.as_f64() == Some(0.0)),
+            _ => false,
+        };
+        if flat {
+            return Err(
+                "`scale` is a number above 0 for transform_layer (to empty a layer, use clear_layer)"
+                    .into(),
+            );
+        }
         Ok(placement(
             self.translate,
             self.scale.as_ref(),
@@ -4564,7 +4905,7 @@ fn placement(
 ) -> Result<Placement, String> {
     let translate = pt(translate.unwrap_or([0.0, 0.0]))?;
     let origin = pt(origin.unwrap_or([0.0, 0.0]))?;
-    let scale_help = "`scale` is a number above 0 (like 1.5), or [across, down] like [2, 1]";
+    let scale_help = "`scale` is a number from 0 (like 1.5; 0 shrinks it to nothing), or [across, down] like [2, 1]";
     let scale = match scale {
         None => (1.0, 1.0),
         Some(Value::Number(n)) => {
@@ -4577,7 +4918,7 @@ fn placement(
         ),
         Some(_) => return Err(scale_help.into()),
     };
-    if !(scale.0 > 0.0 && scale.1 > 0.0 && scale.0.is_finite() && scale.1.is_finite()) {
+    if !(scale.0 >= 0.0 && scale.1 >= 0.0 && scale.0.is_finite() && scale.1.is_finite()) {
         return Err(format!(
             "{scale_help} (to flip a drawing, use \"mirror\": \"x\" or \"y\")"
         ));
@@ -4602,6 +4943,8 @@ fn placement(
         transform: Transform::about(origin, translate, scale, rotate, mirror_x, mirror_y),
         opacity: unit("opacity", opacity.unwrap_or(1.0))?,
         scale_brush: scale_brush.unwrap_or(true),
+        stretch_brush: false,
+        scale,
         origin,
     })
 }
@@ -4837,6 +5180,79 @@ fn paints_or_structures(command: &Command) -> bool {
             | Command::Snapshot(_)
             | Command::Filter(_)
     )
+}
+
+/// The settings a `brush` command sets besides its colour, tip and
+/// preset: the same for scripts and for presets (which are `brush`
+/// commands with a name), so a preset paints the same in both.
+pub(crate) fn apply_brush_fields(
+    brush: &mut BrushSettings,
+    command: &BrushCmd,
+) -> Result<(), String> {
+    if let Some(size) = command.size {
+        brush.size = brush_size(size)?;
+    }
+    if let Some(opacity) = command.opacity {
+        brush.opacity = unit("opacity", opacity)?;
+    }
+    if let Some(flow) = command.flow {
+        brush.flow = unit("flow", flow)?.max(0.01);
+    }
+    if let Some(hardness) = command.hardness {
+        brush.hardness = unit("hardness", hardness)?;
+    }
+    if let Some(spacing) = command.spacing {
+        if !(0.01..=5.0).contains(&spacing) {
+            return Err(format!(
+                "`spacing` must be between 0.01 and 5, not {spacing}"
+            ));
+        }
+        brush.spacing = spacing;
+    }
+    if let Some(on) = command.pressure_size {
+        brush.pressure_size = on;
+    }
+    if let Some(on) = command.pressure_opacity {
+        brush.pressure_opacity = on;
+    }
+    if let Some(on) = command.pressure_flow {
+        brush.pressure_flow = on;
+    }
+    if let Some(angle) = command.angle {
+        brush.angle = finite("angle", angle)?;
+    }
+    if let Some(dynamics) = &command.dynamics {
+        brush.dynamics = read_dynamics(dynamics)?;
+    }
+    if let Some(min) = command.pressure_size_min {
+        brush.pressure_size_min = unit("pressure_size_min", min)?;
+    }
+    if let Some(min) = command.pressure_opacity_min {
+        brush.pressure_opacity_min = unit("pressure_opacity_min", min)?;
+    }
+    if let Some(curve) = command.pressure_curve {
+        if !(0.1..=10.0).contains(&curve) {
+            return Err(format!(
+                "`pressure_curve` must be between 0.1 and 10, not {curve}"
+            ));
+        }
+        brush.pressure_curve = curve;
+    }
+    if let Some(grain) = command.grain {
+        brush.grain = unit("grain", grain)?;
+    }
+    if let Some(scale) = command.grain_scale {
+        if !(0.25..=16.0).contains(&scale) {
+            return Err(format!(
+                "`grain_scale` must be between 0.25 and 16, not {scale}"
+            ));
+        }
+        brush.grain_scale = scale;
+    }
+    if let Some(limit) = command.build_up {
+        brush.build_up = unit("build_up", limit)?;
+    }
+    Ok(())
 }
 
 fn layer_props(document: &Document, id: LayerId) -> LayerProps {
@@ -5258,7 +5674,7 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("artapp-open-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let base = play(EVERYTHING);
-        file::save(&base, &folder.join("base.artapp")).unwrap();
+        file::save(&base, &folder.join("base.quill")).unwrap();
 
         let options = PlayOptions {
             folder: Some(folder.clone()),
@@ -5266,7 +5682,7 @@ mod tests {
         };
         let document = play_with(
             r#"{ "commands": [
-                { "cmd": "canvas", "open": "base.artapp" },
+                { "cmd": "canvas", "open": "base.quill" },
                 { "cmd": "layer", "name": "Extra" }
             ] }"#,
             options,
@@ -5280,12 +5696,176 @@ mod tests {
 
     #[test]
     fn the_first_example_in_the_documentation_plays() {
-        let docs = include_str!("../../../../docs/script-format.md");
+        // Unix line endings, however Git checked the file out.
+        let docs = include_str!("../../../../docs/script-format.md").replace("\r\n", "\n");
         let start = docs.find("```json\n{").expect("an example") + "```json\n".len();
         let end = start + docs[start..].find("```").expect("its end");
         let document = play(&docs[start..end]);
         let names: Vec<&str> = document.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["Sky", "Sun", "Sea"]);
+    }
+
+    // ---- Selections -------------------------------------------------------------
+
+    /// A 100 x 60 canvas, `before` (select commands) then a red rect over
+    /// everything: what ends up red is what was selected.
+    fn selected(before: &str) -> Document {
+        play(&format!(
+            r##"{{ "commands": [
+              {{ "cmd": "canvas", "width": 100, "height": 60 }},
+              {before}
+              {{ "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60, "fill": "#FF0000" }}
+            ] }}"##
+        ))
+    }
+
+    fn alpha(document: &Document, x: i32, y: i32) -> u8 {
+        document.active_layer().surface.pixel(x, y).a
+    }
+
+    #[test]
+    fn select_limits_painting_to_the_shape() {
+        let d = selected(r#"{ "cmd": "select", "rect": [10, 10, 30, 20] },"#);
+        assert_eq!(alpha(&d, 20, 20), 255);
+        assert_eq!(alpha(&d, 50, 20), 0);
+        let d = selected(r#"{ "cmd": "select", "circle": [50, 30, 10] },"#);
+        assert_eq!(alpha(&d, 50, 30), 255);
+        assert_eq!(alpha(&d, 50, 45), 0);
+        // `none` drops it again.
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 5, 5] }, { "cmd": "select", "none": true },"#,
+        );
+        assert_eq!(alpha(&d, 90, 50), 255);
+    }
+
+    #[test]
+    fn select_adds_subtracts_inverts_and_feathers() {
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 20, 60] },
+               { "cmd": "select", "rect": [80, 0, 20, 60], "mode": "add" },
+               { "cmd": "select", "rect": [0, 0, 100, 10], "mode": "subtract" },"#,
+        );
+        assert_eq!(alpha(&d, 10, 30), 255);
+        assert_eq!(alpha(&d, 90, 30), 255);
+        assert_eq!(alpha(&d, 50, 30), 0);
+        assert_eq!(alpha(&d, 10, 5), 0);
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [0, 0, 50, 60] }, { "cmd": "select", "invert": true },"#,
+        );
+        assert_eq!(alpha(&d, 10, 30), 0);
+        assert_eq!(alpha(&d, 70, 30), 255);
+        let d = selected(r#"{ "cmd": "select", "rect": [30, 0, 40, 60], "feather": 6 },"#);
+        assert_eq!(alpha(&d, 50, 30), 255);
+        let edge = alpha(&d, 30, 30);
+        assert!(edge > 40 && edge < 220, "a soft edge, got {edge}");
+        // Feather alone softens the selection there is.
+        let d = selected(
+            r#"{ "cmd": "select", "rect": [30, 0, 40, 60] }, { "cmd": "select", "feather": 6 },"#,
+        );
+        let edge = alpha(&d, 30, 30);
+        assert!(edge > 40 && edge < 220, "a soft edge, got {edge}");
+    }
+
+    #[test]
+    fn select_layer_uses_where_a_layer_has_paint() {
+        let d = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 60 },
+              { "cmd": "layer", "name": "Shape" },
+              { "cmd": "ellipse", "center": [30, 30], "radius": 15, "fill": "#000000" },
+              { "cmd": "layer", "name": "Colour" },
+              { "cmd": "select", "layer": "Shape" },
+              { "cmd": "rect", "x": 0, "y": 0, "width": 100, "height": 60, "fill": "#FF0000" }
+            ] }"##,
+        );
+        assert_eq!(alpha(&d, 30, 30), 255);
+        assert_eq!(alpha(&d, 80, 30), 0);
+    }
+
+    #[test]
+    fn a_filter_stays_inside_the_selection() {
+        let d = play(
+            r##"{ "commands": [
+              { "cmd": "canvas", "width": 100, "height": 60 },
+              { "cmd": "rect", "x": 0, "y": 20, "width": 100, "height": 20, "fill": "#000000" },
+              { "cmd": "select", "rect": [0, 0, 50, 60] },
+              { "cmd": "filter", "blur": 4 }
+            ] }"##,
+        );
+        assert!(alpha(&d, 25, 18) > 0, "blurred inside");
+        assert_eq!(alpha(&d, 75, 18), 0, "untouched outside");
+    }
+
+    /// The app runs each selection change with `selection::run` and
+    /// records the command; replaying the commands in a script must give
+    /// exactly the same picture.
+    #[test]
+    fn the_apps_selections_replay_exactly_in_a_script() {
+        use crate::fill::paint_mask_within;
+        let commands = [
+            r#"{ "cmd": "select", "rect": [10.5, 5.5, 40.2, 30.7] }"#,
+            r#"{ "cmd": "select", "ellipse": [70.3, 30.1, 20.6, 14.2], "mode": "add" }"#,
+            r#"{ "cmd": "select", "polygon": [[0, 0], [30, 50], [5, 55]], "mode": "subtract", "feather": 3 }"#,
+            r#"{ "cmd": "select", "invert": true }"#,
+            r#"{ "cmd": "select", "invert": true }"#,
+            r#"{ "cmd": "select", "feather": 2 }"#,
+        ];
+        // The app's way.
+        let mut app = Document::new(100, 60);
+        for text in commands {
+            let command: SelectCmd = match serde_json::from_str::<Command>(text).unwrap() {
+                Command::Select(c) => c,
+                _ => unreachable!(),
+            };
+            let selection = selection::run(&command, &app).unwrap();
+            app.set_selection(selection);
+        }
+        let clip = app.clip();
+        let limits = app.bounds();
+        paint_mask_within(
+            &mut app.active_layer_mut().surface,
+            &selection::all(limits),
+            &Paint::Color([255, 0, 0, 255]),
+            1.0,
+            BrushMode::Paint,
+            limits,
+            clip.as_deref(),
+        );
+        // The script's way.
+        let script = selected(&format!("{},", commands.join(",\n")));
+        assert_eq!(png(&app), png(&script));
+    }
+
+    #[test]
+    fn select_mistakes_are_explained() {
+        let base = r#"{ "commands": [ { "cmd": "canvas", "width": 10, "height": 10 }, SELECT ] }"#;
+        let e = |select: &str| error(&base.replace("SELECT", select));
+        assert!(
+            e(r#"{ "cmd": "select", "rect": [0, 0, 5, 5], "circle": [5, 5, 2] }"#)
+                .contains("one at a time")
+        );
+        assert!(
+            e(r#"{ "cmd": "select", "rect": [0, 0, 5, 5], "mode": "xor" }"#).contains("\"add\"")
+        );
+        assert!(e(r#"{ "cmd": "select" }"#).contains("needs a shape"));
+        assert!(e(r#"{ "cmd": "select", "feather": 3 }"#).contains("there is none yet"));
+        assert!(e(r#"{ "cmd": "select", "none": true, "feather": 3 }"#).contains("leave out"));
+        assert!(e(r#"{ "cmd": "select", "layer": "Nope" }"#).contains("Nope"));
+    }
+
+    #[test]
+    fn an_empty_selection_is_dropped_with_a_warning() {
+        let report = report_of(
+            r#"{ "commands": [
+              { "cmd": "canvas", "width": 10, "height": 10 },
+              { "cmd": "select", "rect": [50, 50, 5, 5] }
+            ] }"#,
+        );
+        assert!(
+            report.warnings.iter().any(|w| w.contains("came out empty")),
+            "{:?}",
+            report.warnings
+        );
     }
 
     // ---- Groups ---------------------------------------------------------------
@@ -5477,7 +6057,7 @@ mod tests {
             message.starts_with("command 3 (group \"duck\") > 2 (rect): unknown colour \"blu\""),
             "{message}"
         );
-        let message = error(&small(r#"{ "cmd": "group", "scale": 0, "commands": [] }"#));
+        let message = error(&small(r#"{ "cmd": "group", "scale": -1, "commands": [] }"#));
         assert!(message.contains("use \"mirror\""), "{message}");
         let message = error(&small(r#"{ "cmd": "group", "mirror": "left" }"#));
         assert!(message.contains("`commands` is missing"), "{message}");
@@ -7114,7 +7694,7 @@ mod tests {
     #[test]
     fn a_tip_from_a_file_is_its_lightness() {
         // A 8 x 8 PNG: white on the left half, black on the right.
-        let folder = std::env::temp_dir().join(format!("art-app-tip-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("quill-tip-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("half.png");
         {
@@ -7403,7 +7983,7 @@ mod tests {
 
     #[test]
     fn textures_tile_a_picture_and_paper_is_built_in() {
-        let folder = std::env::temp_dir().join(format!("art-app-texture-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("quill-texture-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         {
             // 2 x 2: white, black / black, white.
@@ -8025,7 +8605,7 @@ mod tests {
     /// A folder with library files, for include tests.
     fn library() -> std::path::PathBuf {
         let folder = std::env::temp_dir().join(format!(
-            "art-app-include-{}-{}",
+            "quill-include-{}-{}",
             std::process::id(),
             std::thread::current()
                 .name()
@@ -8354,5 +8934,699 @@ mod tests {
             focal_point(&point, &report, (200, 100)).unwrap(),
             Some((5.0, 6.0))
         );
+    }
+
+    // ---- Brush presets and the pencil (phase 5, step 5) ----------------------
+
+    const PENCIL_SCRIPT: &str = r##"{ "commands": [
+        { "cmd": "canvas", "width": 300, "height": 60, "paper": "#FFFFFF" },
+        { "cmd": "brush", "preset": "Pencil (graphite)", "color": "#000000", "size": 12 },
+        { "cmd": "stroke", "points": [[20, 30, PRESSURE], [280, 30, PRESSURE]] }
+      ] }"##;
+
+    /// Of the pixels in the middle of the pencil line, how many got no
+    /// graphite at all, and the darkest one.
+    fn holes_and_darkest(document: &Document) -> (usize, u8) {
+        let layer = &document.layers()[0].surface;
+        let mut holes = 0;
+        let mut darkest = 0;
+        for y in 27..=33 {
+            for x in 40..260 {
+                let a = layer.pixel(x, y).a;
+                holes += usize::from(a == 0);
+                darkest = darkest.max(a);
+            }
+        }
+        (holes, darkest)
+    }
+
+    #[test]
+    fn a_light_pencil_touch_shows_the_paper_grain_and_pressing_fills_it() {
+        let light = play(&PENCIL_SCRIPT.replace("PRESSURE", "0.2"));
+        let hard = play(&PENCIL_SCRIPT.replace("PRESSURE", "1"));
+        let (light_holes, light_dark) = holes_and_darkest(&light);
+        let (hard_holes, hard_dark) = holes_and_darkest(&hard);
+        assert!(light_holes > 7 * 220 / 5, "light: grainy ({light_holes})");
+        assert!(
+            hard_holes < light_holes / 4,
+            "hard: filled in ({hard_holes})"
+        );
+        assert!(light_dark < hard_dark / 2, "{light_dark} vs {hard_dark}");
+        // The grain stays put on the canvas: the same stroke a little
+        // further along leaves holes in exactly the same places.
+        let moved = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "0.2")
+                .replace("[20, 30", "[10, 30"),
+        );
+        let hole = |d: &Document, x, y| d.layers()[0].surface.pixel(x, y).a == 0;
+        for y in 28..=32 {
+            for x in 60..240 {
+                assert_eq!(hole(&light, x, y), hole(&moved, x, y), "({x}, {y})");
+            }
+        }
+    }
+
+    /// The share of pixels with no graphite in rows `ys`, along the line.
+    fn hole_share(document: &Document, ys: impl Iterator<Item = i32> + Clone) -> f32 {
+        let layer = &document.layers()[0].surface;
+        let (mut holes, mut all) = (0, 0);
+        for y in ys {
+            for x in 40..260 {
+                holes += usize::from(layer.pixel(x, y).a == 0);
+                all += 1;
+            }
+        }
+        holes as f32 / all as f32
+    }
+
+    #[test]
+    fn the_pencils_edge_breaks_up_and_pressure_fills_the_middle() {
+        let hard = play(&PENCIL_SCRIPT.replace("PRESSURE", "1"));
+        let light = play(&PENCIL_SCRIPT.replace("PRESSURE", "0.2"));
+        let middle = |d: &Document| hole_share(d, 29..=31);
+        // The outer rows of a 12-wide line (its radius at full pressure
+        // is 6): ragged, not a clean capsule edge.
+        let edge = |d: &Document| hole_share(d, [25, 26, 34, 35].into_iter());
+        assert!(
+            middle(&hard) < 0.05,
+            "hard: only a few specks ({})",
+            middle(&hard)
+        );
+        assert!(edge(&hard) > 0.25, "hard: a broken edge ({})", edge(&hard));
+        assert!(
+            middle(&light) > 0.35,
+            "light: most valleys white ({})",
+            middle(&light)
+        );
+        assert!(
+            edge(&light) > middle(&light),
+            "the edge breaks more than the middle"
+        );
+    }
+
+    #[test]
+    fn going_over_pencil_again_fills_the_valleys() {
+        let passes = |n: usize| {
+            let stroke = r#"{ "cmd": "stroke", "points": [[20, 30, 0.55], [280, 30, 0.55]] }"#;
+            let script = PENCIL_SCRIPT.replace(
+                r#"{ "cmd": "stroke", "points": [[20, 30, PRESSURE], [280, 30, PRESSURE]] }"#,
+                &vec![stroke; n].join(","),
+            );
+            hole_share(&play(&script), 29..=31)
+        };
+        let (one, eight) = (passes(1), passes(8));
+        assert!(one > 0.15, "one pass shows the tooth ({one})");
+        assert!(
+            eight < one / 3.0,
+            "eight passes fill most of it ({one} -> {eight})"
+        );
+    }
+
+    #[test]
+    fn going_over_pencil_again_darkens_it_only_so_far() {
+        let again = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "brush", "preset": "Pencil (graphite)", "color": "#000000", "size": 20, "grain": 0 },
+            REPEATS
+          ] }"##;
+        let darkest = |times: usize| {
+            let stroke = r#"{ "cmd": "stroke", "points": [[20, 30], [80, 30]] }"#;
+            let document = play(&again.replace("REPEATS", &vec![stroke; times].join(",")));
+            document.layers()[0].surface.pixel(50, 30).a
+        };
+        let limit = (find_preset("Pencil (graphite)").build_up * 255.0) as u8;
+        assert!(darkest(1) < darkest(3), "it does build up");
+        let many = darkest(12);
+        assert!(many <= limit + 1 && many + 6 >= limit, "{many} vs {limit}");
+        // Without a limit (the plain brush) it goes all the way.
+        let plain = play(&again.replace("REPEATS", r#"{ "cmd": "brush", "build_up": 0, "opacity": 0.5 },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] },
+            { "cmd": "stroke", "points": [[20, 30], [80, 30]] }, { "cmd": "stroke", "points": [[20, 30], [80, 30]] }"#));
+        assert!(plain.layers()[0].surface.pixel(50, 30).a > limit + 20);
+    }
+
+    fn find_preset(name: &str) -> BrushSettings {
+        crate::presets::find(name).unwrap().settings().unwrap()
+    }
+
+    #[test]
+    fn a_preset_in_a_script_is_the_same_as_its_settings_written_out() {
+        for preset in crate::presets::built_in() {
+            let with_preset = format!(
+                r##"{{ "commands": [
+                    {{ "cmd": "canvas", "width": 200, "height": 80, "paper": "#FFFFFF" }},
+                    {{ "cmd": "brush", "color": "#3050A0" }},
+                    {{ "cmd": "brush", "preset": "{}" }},
+                    {{ "cmd": "stroke", "points": [[20, 40, 0.3], [100, 30, 0.7], [180, 40, 1]] }}
+                  ] }}"##,
+                preset.name
+            );
+            let mut written = preset.brush.clone();
+            written.color = Some(Value::String("#3050A0".into()));
+            let settings = serde_json::to_string(&Command::Brush(written)).unwrap();
+            let reset = if preset.eraser {
+                // The eraser preset's own starting point (the `erase`
+                // command makes any brush erase).
+                r#"{ "cmd": "brush", "reset": true, "size": 40, "hardness": 0.6, "pressure_opacity": false },"#
+            } else {
+                r#"{ "cmd": "brush", "reset": true },"#
+            };
+            let by_hand = with_preset
+                .replace(r##"{ "cmd": "brush", "color": "#3050A0" },"##, reset)
+                .replace(
+                    &format!(r#"{{ "cmd": "brush", "preset": "{}" }}"#, preset.name),
+                    &settings,
+                );
+            assert_eq!(
+                png(&play(&with_preset)),
+                png(&play(&by_hand)),
+                "{}: the colour stays, the rest is the preset's",
+                preset.name
+            );
+        }
+        // Fields after the preset change it; capitals don't matter.
+        let bigger = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("\"size\": 12", "\"size\": 30"),
+        );
+        let pencil = play(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("Pencil (graphite)", "PENCIL (GRAPHITE)"),
+        );
+        assert_ne!(png(&bigger), png(&pencil));
+    }
+
+    #[test]
+    fn an_unknown_preset_lists_the_ones_there_are() {
+        let problem = error(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("Pencil (graphite)", "Biro"),
+        );
+        assert!(problem.contains("unknown preset \"Biro\""), "{problem}");
+        assert!(problem.contains("Pencil (graphite), Ink pen"), "{problem}");
+        let problem = error(
+            &PENCIL_SCRIPT
+                .replace("PRESSURE", "1")
+                .replace("\"size\": 12", "\"grain\": 2"),
+        );
+        assert!(problem.contains("`grain` must be from 0 to 1"), "{problem}");
+    }
+
+    #[test]
+    fn a_recorded_brush_after_the_pencil_loses_its_grain() {
+        // The app records every brush change; after the pencil, a plain
+        // brush must come out plain when the recording is played.
+        let pencil = find_preset("Pencil (graphite)");
+        let plain = BrushSettings::default();
+        let line = |settings: &BrushSettings, y: f32| {
+            crate::script::record::stroke(
+                "Ink",
+                settings,
+                &[
+                    StrokePoint::new(20.0, y, 0.5),
+                    StrokePoint::new(180.0, y, 0.5),
+                ],
+                None,
+            )
+        };
+        let mut both = vec![crate::script::record::brush(&pencil, true)];
+        both.extend(line(&pencil, 10.0));
+        both.push(crate::script::record::brush(&plain, true));
+        both.extend(line(&plain, 40.0));
+        let mut only_plain = vec![crate::script::record::brush(&plain, true)];
+        only_plain.extend(line(&plain, 40.0));
+        let render = |commands: Vec<Command>| {
+            let script = crate::script::record::script(200, 80, Rgba8::WHITE, commands, None, None);
+            let text = script.to_json();
+            play(&text)
+        };
+        let both = render(both);
+        let plain_only = render(only_plain);
+        // The second line (drawn plain) is the same in both.
+        for x in 30..170 {
+            for y in 30..50 {
+                assert_eq!(
+                    both.layers()[0].surface.pixel(x, y),
+                    plain_only.layers()[0].surface.pixel(x, y)
+                );
+            }
+        }
+    }
+
+    // ---- Symmetry (phase 5, step 6) ------------------------------------------
+
+    fn mirror_script(symmetry: &str, points: &str) -> String {
+        format!(
+            r##"{{ "commands": [
+                {{ "cmd": "canvas", "width": 200, "height": 120, "paper": "#FFFFFF" }},
+                {{ "cmd": "brush", "size": 14, "color": "#000000", "opacity": 0.5, "hardness": 0.7 }},
+                {{ "cmd": "stroke", "points": {points}, "symmetry": {symmetry} }}
+              ] }}"##
+        )
+    }
+
+    #[test]
+    fn the_mirror_copies_land_across_the_lines() {
+        let both = Symmetry {
+            centre: (100.0, 40.0),
+            vertical: true,
+            horizontal: true,
+            angle: 0.0,
+        };
+        let copies = both.copies((90.0, 50.0), 30.0);
+        let close = |(x, y): (f32, f32), (ex, ey): (f32, f32)| {
+            (x - ex).abs() < 1e-3 && (y - ey).abs() < 1e-3
+        };
+        assert!(close(copies[0].0, (110.0, 50.0)) && (copies[0].1 - 150.0).abs() < 1e-3);
+        assert!(close(copies[1].0, (90.0, 30.0)) && (copies[1].1 + 30.0).abs() < 1e-3);
+        assert!(close(copies[2].0, (110.0, 30.0)));
+        // Turned a quarter: the "down" line now goes across.
+        let turned = Symmetry {
+            angle: 90.0,
+            horizontal: false,
+            ..both
+        };
+        assert!(close(turned.copies((90.0, 50.0), 0.0)[0].0, (90.0, 30.0)));
+    }
+
+    #[test]
+    fn a_mirrored_stroke_is_its_own_mirror_image_and_never_doubles_up() {
+        let layer = |d: &Document| d.layers()[0].surface.clone();
+        let one = play(&mirror_script(
+            r#"{ "x": 100 }"#,
+            "[[30, 30], [120, 60], [60, 100]]",
+        ));
+        let surface = layer(&one);
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(surface.pixel(x, y), surface.pixel(199 - x, y), "({x}, {y})");
+            }
+        }
+        // The stroke crosses the line, where the copies overlap: still no
+        // darker than the brush's opacity.
+        let darkest = (0..200)
+            .flat_map(|x| (0..120).map(move |y| (x, y)))
+            .map(|(x, y)| surface.pixel(x, y).a)
+            .max()
+            .unwrap();
+        assert!(darkest <= 128, "{darkest}");
+        // Both lines: four copies, mirrored both ways.
+        let four = play(&mirror_script(
+            r#"{ "x": 100, "y": 60 }"#,
+            "[[30, 20], [80, 40]]",
+        ));
+        let surface = layer(&four);
+        for y in 0..120 {
+            for x in 0..200 {
+                let p = surface.pixel(x, y);
+                assert_eq!(p, surface.pixel(199 - x, y));
+                assert_eq!(p, surface.pixel(x, 119 - y));
+            }
+        }
+        assert!(surface.pixel(55, 30).a > 0 && surface.pixel(144, 89).a > 0);
+        // Erasing is mirrored too.
+        let erased = play(&mirror_script(r#"{ "x": 100 }"#, "[[20, 60], [60, 60]]").replace(
+            r#"{ "cmd": "stroke", "points": [[20, 60], [60, 60]]"#,
+            r##"{ "cmd": "rect", "x": 0, "y": 0, "width": 200, "height": 120, "fill": "#000000" },
+               { "cmd": "erase", "points": [[20, 60], [60, 60]]"##,
+        ));
+        let surface = layer(&erased);
+        assert!(surface.pixel(40, 60).a < 255 && surface.pixel(159, 60).a < 255);
+        assert_eq!(surface.pixel(100, 60).a, 255, "the middle is left alone");
+    }
+
+    #[test]
+    fn symmetry_moves_with_the_group_and_says_what_it_needs() {
+        // In a group moved 50 to the right, the line at x 50 is at 100.
+        let moved = play(
+            &mirror_script(r#"{ "x": 50 }"#, "[[0, 30], [20, 60]]")
+                .replace(
+                    r#"{ "cmd": "stroke""#,
+                    r#"{ "cmd": "group", "translate": [50, 0], "commands": [ { "cmd": "stroke""#,
+                )
+                .replace(
+                    r#""symmetry": { "x": 50 } }"#,
+                    r#""symmetry": { "x": 50 } } ] }"#,
+                ),
+        );
+        let surface = &moved.layers()[0].surface;
+        assert!(surface.pixel(60, 45).a > 0);
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(surface.pixel(x, y), surface.pixel(199 - x, y));
+            }
+        }
+        let problem = error(&mirror_script("{}", "[[0, 30], [20, 60]]"));
+        assert!(problem.contains("`symmetry` needs"), "{problem}");
+    }
+
+    #[test]
+    fn the_apps_mirrored_strokes_replay_exactly() {
+        let symmetry = Symmetry {
+            centre: (100.0, 60.0),
+            vertical: true,
+            horizontal: true,
+            angle: 0.0,
+        };
+        let brush = BrushSettings {
+            size: 12.0,
+            ..BrushSettings::default()
+        };
+        let points = [
+            StrokePoint::new(20.0, 20.0, 0.4),
+            StrokePoint::new(70.0, 50.0, 1.0),
+            StrokePoint::new(95.0, 90.0, 0.6),
+        ];
+        // As the app paints it.
+        let mut document = Document::new(200, 120);
+        let mut stroke = Stroke::new(brush, document.bounds()).mirrored(symmetry);
+        let surface = &mut document.active_layer_mut().surface;
+        for point in points {
+            stroke.add_point(surface, point);
+        }
+        stroke.finish(surface);
+        // As Export strokes writes it, played.
+        let name = document.active_layer().name().to_owned();
+        let mut commands = vec![crate::script::record::brush(&brush, true)];
+        let mut stroke = crate::script::record::stroke(&name, &brush, &points, None);
+        crate::script::record::mirror(&mut stroke, Some(&symmetry));
+        commands.extend(stroke);
+        let script = crate::script::record::script(200, 120, Rgba8::WHITE, commands, None, None);
+        assert!(
+            script
+                .to_json()
+                .contains(r#""symmetry":{"x":100.0,"y":60.0}"#),
+            "{}",
+            script.to_json()
+        );
+        let played = play(&script.to_json());
+        for y in 0..120 {
+            for x in 0..200 {
+                assert_eq!(
+                    played.layers()[0].surface.pixel(x, y),
+                    document.layers()[0].surface.pixel(x, y),
+                    "({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_shadow_layer_past_the_edge_stays_out_of_a_transparent_export() {
+        // A character, and a multiply shadow painted a bit too big: with no
+        // paper, the shadow mustn't leave a dark band beside the character.
+        let document = play(
+            r##"{ "commands": [
+                { "cmd": "canvas", "width": 60, "height": 40 },
+                { "cmd": "layer", "name": "Body" },
+                { "cmd": "rect", "x": 10, "y": 10, "width": 20, "height": 20, "fill": "#E0C060" },
+                { "cmd": "layer", "name": "Shade", "blend": "multiply", "opacity": 0.6 },
+                { "cmd": "rect", "x": 20, "y": 5, "width": 30, "height": 30, "fill": "#403060" }
+            ] }"##,
+        );
+        let transparent = |x, y| document.composite_pixel(x, y, Background::Transparent);
+        assert_eq!(transparent(40, 20).a, 0, "beside the body: still empty");
+        assert_eq!(transparent(15, 20).a, 255, "the body, unshaded");
+        let shaded = transparent(25, 20);
+        assert_eq!(shaded.a, 255);
+        assert!(shaded.r < transparent(15, 20).r, "the body, shaded");
+        // On paper, the shadow darkens the paper as it always did.
+        let paper = |x, y| document.composite_pixel(x, y, Background::Paper);
+        assert!(paper(40, 20).r < 255);
+    }
+
+    #[test]
+    fn uneven_scales_keep_lines_unstretched_unless_asked_and_check_warns() {
+        let line_width = |extra: &str| {
+            let script = format!(
+                r##"{{ "commands": [
+                    {{ "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" }},
+                    {{ "cmd": "group", "name": "wide", "scale": [3, 1], {extra} "commands": [
+                        {{ "cmd": "stroke", "points": [[10, 20], [50, 20]], "size": 6, "hardness": 1, "color": "#000000" }}
+                    ] }}
+                  ] }}"##
+            );
+            let script = Script::parse(&script).unwrap();
+            let mut player = Player::new(script, PlayOptions::default()).unwrap();
+            let mut document = player.create_document().unwrap();
+            player.run(&mut document, |_, _| {}).unwrap();
+            let layer = &document.layers()[0].surface;
+            let width = (0..100).filter(|&y| layer.pixel(90, y).a > 128).count();
+            (width, player.report().warnings)
+        };
+        let (plain, warnings) = line_width("");
+        assert!(
+            (5..=7).contains(&plain),
+            "the line stays about 6 wide ({plain})"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("scaled unevenly") && w.contains("stretch_brush")),
+            "{warnings:?}"
+        );
+        let (stretched, _) = line_width(r#""stretch_brush": true,"#);
+        assert!(
+            (9..=12).contains(&stretched),
+            "the old way: about 6 x 1.73 ({stretched})"
+        );
+        // An even scale still scales lines, and doesn't warn.
+        let even = play(
+            r##"{ "commands": [
+                { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+                { "cmd": "group", "scale": 2, "commands": [
+                    { "cmd": "stroke", "points": [[10, 20], [50, 20]], "size": 6, "hardness": 1, "color": "#000000" }
+                ] }
+              ] }"##,
+        );
+        let width = (0..100)
+            .filter(|&y| even.layers()[0].surface.pixel(60, y).a > 128)
+            .count();
+        assert!((11..=13).contains(&width), "{width}");
+    }
+
+    #[test]
+    fn scale_zero_shrinks_a_part_to_nothing_without_an_error() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 100, "height": 60, "paper": "#FFFFFF" },
+            { "cmd": "group", "name": "gone", "scale": 0, "origin": [50, 30], "commands": [
+                { "cmd": "layer", "name": "Made inside" },
+                { "cmd": "ellipse", "center": [50, 30], "radius": 20, "fill": "#F0C040", "outline": "#202020" },
+                { "cmd": "stroke", "points": [[30, 30], [70, 30]], "size": 8 }
+            ] },
+            { "cmd": "group", "name": "flat", "scale": [1, 0], "origin": [50, 30], "commands": [
+                { "cmd": "rect", "x": 10, "y": 10, "width": 30, "height": 30, "fill": "#F0C040" }
+            ] },
+            { "cmd": "layer", "name": "Made inside" }
+          ] }"##;
+        let parsed = Script::parse(script).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        for layer in document.layers() {
+            assert_eq!(
+                layer.surface.tile_count(),
+                0,
+                "{} has nothing on it",
+                layer.name()
+            );
+        }
+        assert!(
+            document.layers().iter().any(|l| l.name() == "Made inside"),
+            "its layer was made"
+        );
+        let report = player.report();
+        assert!(
+            report.parts.iter().all(|p| p.area.is_none()),
+            "it drew nothing"
+        );
+        // Negative scales still say to use mirror.
+        let problem = error(&script.replace(r#""scale": 0,"#, r#""scale": -1,"#));
+        assert!(problem.contains("mirror"), "{problem}");
+    }
+
+    #[test]
+    fn symbol_parameters_work_in_points_centres_and_sizes() {
+        let script = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "define", "name": "post", "params": { "top": [0, 0], "w": 4, "path": [[0, 0], [0, 40]] }, "commands": [
+                { "cmd": "rect", "x": 0, "y": 0, "width": "$w", "height": 10, "fill": "#000000" },
+                { "cmd": "ellipse", "center": "$top", "radius": 3, "fill": "#FF0000" },
+                { "cmd": "stroke", "points": "$path", "size": "$w", "color": "#0000FF" }
+            ] },
+            { "cmd": "use", "name": "post", "translate": [20, 20] },
+            { "cmd": "use", "name": "post", "translate": [120, 20], "with": { "w": 12, "top": [30, 5], "path": [[30, 20], [60, 20]] } }
+          ] }"##;
+        let by_hand = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 100, "paper": "#FFFFFF" },
+            { "cmd": "rect", "x": 20, "y": 20, "width": 4, "height": 10, "fill": "#000000" },
+            { "cmd": "ellipse", "center": [20, 20], "radius": 3, "fill": "#FF0000" },
+            { "cmd": "stroke", "points": [[20, 20], [20, 60]], "size": 4, "color": "#0000FF" },
+            { "cmd": "rect", "x": 120, "y": 20, "width": 12, "height": 10, "fill": "#000000" },
+            { "cmd": "ellipse", "center": [150, 25], "radius": 3, "fill": "#FF0000" },
+            { "cmd": "stroke", "points": [[150, 40], [180, 40]], "size": 12, "color": "#0000FF" }
+          ] }"##;
+        assert_eq!(png(&play(script)), png(&play(by_hand)));
+        // Written out again (Export strokes, tidy), the "$name"s stay.
+        let parsed = Script::parse(script).unwrap();
+        let json = parsed.to_json();
+        assert!(
+            json.contains(r#""width": "$w""#) || json.contains(r#""width":"$w""#),
+            "{json}"
+        );
+        assert_eq!(png(&play(&json)), png(&play(by_hand)));
+        // A "$name" that isn't a parameter says so.
+        let problem = error(&script.replace(r#""width": "$w""#, r#""width": "$wide""#));
+        assert!(
+            problem.contains("\"$wide\" would stand for a symbol parameter"),
+            "{problem}"
+        );
+        // A value that doesn't fit says which use gave it.
+        let problem = error(&script.replace(r#""w": 12"#, r#""w": "big""#));
+        assert!(problem.contains("with these `with` values"), "{problem}");
+    }
+
+    #[test]
+    fn a_single_shape_can_have_a_name_and_paints_the_same() {
+        let named = r##"{ "commands": [
+            { "cmd": "canvas", "width": 200, "height": 120, "paper": "#FFFFFF" },
+            { "cmd": "rect", "name": "door", "x": 20, "y": 30, "width": 40, "height": 60, "fill": "#804020", "jitter": 3 },
+            { "cmd": "group", "name": "house", "commands": [
+                { "cmd": "ellipse", "name": "window", "center": [120, 50], "radius": 12, "fill": "#80C0FF" },
+                { "cmd": "stroke", "name": "smoke", "points": [[150, 20], [170, 5]], "size": 6, "jitter": 2 }
+            ] }
+          ] }"##;
+        let plain = named
+            .replace(r#""name": "door", "#, "")
+            .replace(r#""name": "window", "#, "")
+            .replace(r#""name": "smoke", "#, "");
+        assert_eq!(
+            png(&play(named)),
+            png(&play(&plain)),
+            "a name changes nothing painted"
+        );
+        let parsed = Script::parse(named).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let paths: Vec<&str> = report.parts.iter().map(|p| p.path.as_str()).collect();
+        assert!(paths.contains(&"command 2 (rect \"door\")"), "{paths:?}");
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("(ellipse \"window\")") && p.contains("group \"house\"")),
+            "{paths:?}"
+        );
+        let door = report
+            .parts
+            .iter()
+            .find(|p| p.path.contains("door"))
+            .unwrap();
+        let area = door.area.unwrap();
+        assert!(
+            area.left <= 20 && area.right >= 60 && area.top <= 30,
+            "{area:?}"
+        );
+        // Mistakes say its name.
+        let problem = error(&named.replace(r##""fill": "#80C0FF""##, r#""fill": "nope""#));
+        assert!(problem.contains("(ellipse \"window\")"), "{problem}");
+    }
+
+    #[test]
+    fn outline_colours_count_as_used() {
+        let script = r##"{ "palette": { "ink": "#202020", "body": "#F0C040", "rim": "#FFFFFF", "edge": "#101010", "spare": "#00FF00" },
+          "commands": [
+            { "cmd": "canvas", "width": 32, "height": 32, "pixel": { "outline": "ink" } },
+            { "cmd": "group", "name": "duck", "outline": { "color": "rim", "size": 1 }, "commands": [
+                { "cmd": "ellipse", "center": [16, 16], "radius": 8, "fill": "body", "outline": "edge" }
+            ] }
+          ] }"##;
+        let parsed = Script::parse(script).unwrap();
+        let mut player = Player::new(parsed, PlayOptions::default()).unwrap();
+        let mut document = player.create_document().unwrap();
+        player.run(&mut document, |_, _| {}).unwrap();
+        let report = player.report();
+        let warnings = unused_warnings(&[&report]);
+        assert_eq!(
+            warnings,
+            ["palette colour \"spare\" is never used"],
+            "only the spare one"
+        );
+    }
+
+    #[test]
+    fn pixel_art_follows_the_centre_rule_and_thin_lines_never_break() {
+        // Tiny circles: a pixel is painted when its centre is inside
+        // (on the edge counts as outside), so the counts can be worked
+        // out in advance.
+        let mut commands =
+            vec![r#"{ "cmd": "canvas", "width": 56, "height": 16, "pixel": true }"#.to_owned()];
+        let radii = [0.5, 1.0, 1.5, 2.0, 2.5];
+        for (i, r) in radii.iter().enumerate() {
+            let x = 3 + 10 * i;
+            commands.push(format!(
+                r#"{{ "cmd": "ellipse", "center": [{}, 3.5], "radius": {r}, "fill": "r" }}"#,
+                x as f32 + 0.5
+            ));
+            commands.push(format!(
+                r#"{{ "cmd": "ellipse", "center": [{}, 11], "radius": {r}, "fill": "b" }}"#,
+                x + 1
+            ));
+        }
+        let script = format!(
+            r##"{{ "palette": {{ "r": "#C03030", "b": "#3050C0" }}, "commands": [{}] }}"##,
+            commands.join(",")
+        );
+        let document = play(&script);
+        let layer = &document.layers()[0].surface;
+        let count = |x0: i32, y0: i32, y1: i32| {
+            (x0 - 3..x0 + 4)
+                .flat_map(|x| (y0..y1).map(move |y| (x, y)))
+                .filter(|&(x, y)| layer.pixel(x, y).a > 0)
+                .count()
+        };
+        let on_centres: Vec<usize> = (0..5).map(|i| count(3 + 10 * i, 0, 8)).collect();
+        let on_corners: Vec<usize> = (0..5).map(|i| count(4 + 10 * i, 8, 16)).collect();
+        assert_eq!(on_centres, [1, 1, 9, 9, 21], "centred on a pixel's centre");
+        assert_eq!(on_corners, [0, 4, 4, 12, 16], "centred on a pixel's corner");
+
+        // Two thin lines crossing at a shallow slant: every column has
+        // exactly one pixel of each (no gaps, no doubling), apart from
+        // where they cross.
+        let lines = play(
+            r##"{ "palette": { "k": "#202020", "b": "#3050C0" }, "commands": [
+                { "cmd": "canvas", "width": 40, "height": 16, "pixel": { "supersample": 8 } },
+                { "cmd": "line", "from": [0.5, 14.5], "to": [39.5, 2.5], "size": 1, "color": "k", "taper": 0 },
+                { "cmd": "stroke", "points": [[0.5, 2.5], [39.5, 13.5]], "size": 1, "color": "b" }
+            ] }"##,
+        );
+        let layer = &lines.layers()[0].surface;
+        let colour_in = |x: i32, rgb: [u8; 3]| {
+            (0..16)
+                .filter(|&y| {
+                    let p = layer.pixel(x, y);
+                    p.a > 0 && [p.r, p.g, p.b] == rgb
+                })
+                .count()
+        };
+        let mut both = 0;
+        for x in 0..40 {
+            let (k, b) = (
+                colour_in(x, [0x20, 0x20, 0x20]),
+                colour_in(x, [0x30, 0x50, 0xC0]),
+            );
+            assert!(k <= 1 && b <= 1, "column {x}: doubled ({k}, {b})");
+            if k == 1 && b == 1 {
+                both += 1;
+            }
+        }
+        assert!(both >= 38, "only {both} of 40 columns have both lines");
     }
 }

@@ -1,13 +1,13 @@
 [package]
-name = "art_engine"
-description = "Painting engine for Art App: pixels, brushes, layers and undo. No UI code."
+name = "quill_engine"
+description = "Painting engine for Duck Quill: pixels, brushes, layers and undo. No UI code."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 # For saving and opening pictures (see file.rs):
-# a .artapp file is a zip archive holding a JSON description and PNG tiles.
+# a .quill file is a zip archive holding a JSON description and PNG tiles.
 zip = { version = "9", default-features = false, features = ["deflate"] }
 png = "0.18"
 serde = { version = "1", features = ["derive"] }

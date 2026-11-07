@@ -1,11 +1,14 @@
 //! Saving and opening pictures, and exporting PNG images.
 //!
-//! An `.artapp` file is a zip archive (like Krita's `.kra` or the
+//! A `.quill` file is a zip archive (like Krita's `.kra` or the
 //! OpenRaster `.ora` format). Inside:
 //! - `document.json`: the canvas size, paper colour and each layer's
 //!   settings, as readable text;
 //! - `layers/<n>/<x>_<y>.png`: every painted tile of layer `n` (0 = bottom)
-//!   as a 256x256 PNG image.
+//!   as a 256x256 PNG image;
+//! - `references/<n>.png` (or `.jpg`): the pinned reference pictures, as
+//!   the files they came from (added in phase 5; older versions of the
+//!   app ignore them, as they ignore anything they don't know).
 //!
 //! Only painted tiles are stored, so saving is quick and files stay small.
 //! Tiles are stored exactly as the app keeps them in memory (8-bit,
@@ -25,14 +28,20 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use crate::document::{Document, MAX_CANVAS_SIDE};
 use crate::image::Image;
 use crate::layer::{BlendMode, Layer, LayerId, LayerProps};
+use crate::reference::{Reference, ReferenceView};
 use crate::surface::{Surface, TileCoord};
 use crate::tile::{Rgba8, TILE_SIZE, Tile};
 
 /// The usual ending of our file names.
-pub const FILE_EXTENSION: &str = "artapp";
+pub const FILE_EXTENSION: &str = "quill";
+/// The ending pictures had before the app was renamed Duck Quill. They
+/// still open, and Save writes them back under their own name.
+pub const OLD_FILE_EXTENSION: &str = "artapp";
 
 /// Written into every file, so we can tell our files from others.
-const FORMAT_NAME: &str = "artapp";
+const FORMAT_NAME: &str = "duckquill";
+/// What files said before the rename: the same format, so they open.
+const OLD_FORMAT_NAME: &str = "artapp";
 /// The file version this app writes, and the newest it can open. When the
 /// format changes, this goes up, and older versions must keep opening.
 pub const FORMAT_VERSION: u32 = 1;
@@ -54,6 +63,17 @@ struct Description {
     next_layer_number: u64,
     /// Bottom layer first.
     layers: Vec<LayerDescription>,
+    /// Pinned reference pictures (missing in older files: none).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<ReferenceDescription>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReferenceDescription {
+    name: String,
+    /// Its picture inside the archive.
+    file: String,
+    view: ReferenceView,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,11 +94,11 @@ struct LayerDescription {
 pub enum FileError {
     /// Reading or writing failed: disk full, no permission, missing file...
     Io(io::Error),
-    /// The file isn't an Art App picture.
-    NotArtApp,
-    /// The file was made by a newer version of Art App.
+    /// The file isn't a Duck Quill picture.
+    NotDuckQuill,
+    /// The file was made by a newer version of Duck Quill.
     TooNew(u32),
-    /// It's an Art App picture, but part of it is damaged.
+    /// It's a Duck Quill picture, but part of it is damaged.
     Damaged(String),
 }
 
@@ -86,11 +106,14 @@ impl fmt::Display for FileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FileError::Io(error) => write!(f, "The file couldn't be read or written: {error}"),
-            FileError::NotArtApp => write!(f, "This isn't an Art App picture (.{FILE_EXTENSION})."),
+            FileError::NotDuckQuill => write!(
+                f,
+                "This isn't a Duck Quill picture (.{FILE_EXTENSION} or .{OLD_FILE_EXTENSION})."
+            ),
             FileError::TooNew(version) => write!(
                 f,
-                "This picture was saved by a newer version of Art App (file version {version}). \
-                 Please update Art App to open it."
+                "This picture was saved by a newer version of Duck Quill (file version {version}). \
+                 Please update Duck Quill to open it."
             ),
             FileError::Damaged(detail) => write!(f, "This picture file is damaged: {detail}"),
         }
@@ -121,7 +144,7 @@ pub fn save(document: &Document, path: &Path) -> Result<(), FileError> {
     write_safely(path, |file| write_document(document, file).map(|_| ()))
 }
 
-/// Writes the picture as an `.artapp` archive to any writer.
+/// Writes the picture as a `.quill` archive to any writer.
 pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result<W, FileError> {
     let mut zip = ZipWriter::new(writer);
     // PNG images are already compressed; the description is plain text.
@@ -149,6 +172,16 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
                 lock: layer.lock(),
             })
             .collect(),
+        references: document
+            .references()
+            .iter()
+            .enumerate()
+            .map(|(index, reference)| ReferenceDescription {
+                name: reference.name.clone(),
+                file: format!("references/{index}.{}", reference.extension()),
+                view: reference.view,
+            })
+            .collect(),
     };
     zip.start_file(DESCRIPTION_FILE, compressed)
         .map_err(write_error)?;
@@ -160,6 +193,10 @@ pub fn write_document<W: Write + Seek>(document: &Document, writer: W) -> Result
             zip.start_file(name, as_is).map_err(write_error)?;
             encode_tile(tile, &mut zip)?;
         }
+    }
+    for (saved, reference) in description.references.iter().zip(document.references()) {
+        zip.start_file(&saved.file, as_is).map_err(write_error)?;
+        zip.write_all(reference.bytes()).map_err(write_error)?;
     }
     zip.finish().map_err(write_error)
 }
@@ -182,30 +219,32 @@ fn encode_tile(tile: &Tile, writer: impl Write) -> Result<(), FileError> {
 
 // ---- Opening ----------------------------------------------------------------
 
-/// Opens an `.artapp` picture.
+/// Opens a `.quill` picture.
 pub fn open(path: &Path) -> Result<Document, FileError> {
     let file = File::open(path)?;
     read_document(io::BufReader::new(file))
 }
 
-/// Reads an `.artapp` archive from any reader.
+/// Reads a `.quill` archive from any reader.
 pub fn read_document<R: Read + Seek>(reader: R) -> Result<Document, FileError> {
-    let mut archive = ZipArchive::new(reader).map_err(|_| FileError::NotArtApp)?;
+    let mut archive = ZipArchive::new(reader).map_err(|_| FileError::NotDuckQuill)?;
 
     // 1. The description. Check what kind of file it is before anything else.
     let text = {
         let mut entry = archive
             .by_name(DESCRIPTION_FILE)
-            .map_err(|_| FileError::NotArtApp)?;
+            .map_err(|_| FileError::NotDuckQuill)?;
         let mut text = String::new();
         entry
             .read_to_string(&mut text)
             .map_err(|_| FileError::Damaged("the description can't be read".into()))?;
         text
     };
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| FileError::NotArtApp)?;
-    if value.get("format").and_then(|f| f.as_str()) != Some(FORMAT_NAME) {
-        return Err(FileError::NotArtApp);
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| FileError::NotDuckQuill)?;
+    let format = value.get("format").and_then(|f| f.as_str());
+    if format != Some(FORMAT_NAME) && format != Some(OLD_FORMAT_NAME) {
+        return Err(FileError::NotDuckQuill);
     }
     let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     if version > FORMAT_VERSION {
@@ -265,14 +304,31 @@ pub fn read_document<R: Read + Seek>(reader: R) -> Result<Document, FileError> {
     // Layer ids are given out fresh (1, 2, 3, ...), so the next one must
     // come after them, whatever the file says.
     let next_number = description.next_layer_number.max(layers.len() as u64 + 1);
-    Ok(Document::from_parts(
+    let mut document = Document::from_parts(
         description.width,
         description.height,
         Rgba8::new(r, g, b, 255),
         layers,
         description.active_layer,
         next_number,
-    ))
+    );
+
+    // 5. The reference pictures. One that can't be read is left out: the
+    //    painting matters more than what was pinned beside it.
+    for saved in description.references {
+        let mut bytes = Vec::new();
+        let read = archive
+            .by_name(&saved.file)
+            .ok()
+            .and_then(|mut entry| entry.read_to_end(&mut bytes).ok());
+        if read.is_some()
+            && let Ok(reference) = Reference::saved(&saved.name, bytes, saved.view)
+        {
+            let index = document.references().len();
+            document.insert_reference(index, reference);
+        }
+    }
+    Ok(document)
 }
 
 /// Makes sure the description makes sense before we use it.
@@ -377,7 +433,7 @@ pub(crate) fn write_safely(
     result
 }
 
-/// "picture.artapp" -> "picture.artapp.saving"
+/// "picture.quill" -> "picture.quill.saving"
 fn temporary_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".saving");
@@ -458,7 +514,7 @@ mod tests {
 
     #[test]
     fn saving_and_opening_a_real_file() {
-        let path = std::env::temp_dir().join(format!("art-app-test-{}.artapp", std::process::id()));
+        let path = std::env::temp_dir().join(format!("quill-test-{}.quill", std::process::id()));
         save(&sample_document(), &path).expect("saves");
         assert!(
             !temporary_path(&path).exists(),
@@ -475,7 +531,7 @@ mod tests {
         let error = read_document(Cursor::new(b"hello, this is text".to_vec()))
             .err()
             .unwrap();
-        assert!(matches!(error, FileError::NotArtApp));
+        assert!(matches!(error, FileError::NotDuckQuill));
 
         // A zip file without our description.
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
@@ -485,7 +541,7 @@ mod tests {
         let bytes = zip.finish().unwrap().into_inner();
         assert!(matches!(
             read_document(Cursor::new(bytes)),
-            Err(FileError::NotArtApp)
+            Err(FileError::NotDuckQuill)
         ));
     }
 
@@ -496,6 +552,60 @@ mod tests {
             .unwrap();
         zip.write_all(text.as_bytes()).unwrap();
         zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn reference_pictures_are_saved_with_how_they_were_shown() {
+        use crate::reference::{Reference, ReferenceCommand};
+        let png = crate::reference::tests::two_colour_png();
+        let mut document = sample_document();
+        let mut reference = Reference::from_bytes("cat.png", png.clone()).unwrap();
+        reference.view.zoom = 3.5;
+        reference.view.opacity = 0.6;
+        reference.view.window = [100.0, 80.0, 300.0, 200.0];
+        let _ = ReferenceCommand::add(&mut document, reference);
+        let bytes = save_to_memory(&document);
+        let opened = read_document(Cursor::new(&bytes)).unwrap();
+        let back = &opened.references()[0];
+        assert_eq!(back.name, "cat.png");
+        assert_eq!(back.bytes(), &png[..], "the picture file as it was");
+        assert_eq!(back.view, document.references()[0].view);
+        assert_eq!(back.color_at(30.0, 3.0), Some([0, 0, 255]));
+        // A picture without references is written as before: no list.
+        let plain = save_to_memory(&sample_document());
+        let description = read_description(&plain);
+        assert!(!description.contains("references"), "{description}");
+        // A reference that can't be read is left out; the painting opens.
+        let mut broken = ZipWriter::new(Cursor::new(Vec::new()));
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            let name = entry.name().unwrap().into_owned();
+            let mut content = Vec::new();
+            entry.read_to_end(&mut content).unwrap();
+            if name.starts_with("references/") {
+                content = b"not a picture".to_vec();
+            }
+            broken
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            broken.write_all(&content).unwrap();
+        }
+        let broken = broken.finish().unwrap().into_inner();
+        let opened = read_document(Cursor::new(&broken)).unwrap();
+        assert!(opened.references().is_empty());
+        assert_eq!(opened.layers().len(), document.layers().len());
+    }
+
+    fn read_description(bytes: &[u8]) -> String {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
+        archive
+            .by_name(DESCRIPTION_FILE)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        text
     }
 
     #[test]

@@ -1,10 +1,10 @@
-//! Runs the real art-cli program, the way it's used.
+//! Runs the real quill program, the way it's used.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn art_cli() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_art-cli"))
+fn quill() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_quill"))
 }
 
 fn example() -> PathBuf {
@@ -13,7 +13,7 @@ fn example() -> PathBuf {
 
 /// A fresh, empty folder for one test's output.
 fn folder(name: &str) -> PathBuf {
-    let folder = std::env::temp_dir().join(format!("art-cli-{name}-{}", std::process::id()));
+    let folder = std::env::temp_dir().join(format!("quill-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     folder
 }
@@ -22,7 +22,7 @@ fn folder(name: &str) -> PathBuf {
 fn the_example_renders_the_same_every_time() {
     let out = folder("same");
     let render = |sub: &str| {
-        let status = art_cli()
+        let status = quill()
             .args([
                 "render",
                 example().to_str().unwrap(),
@@ -47,7 +47,7 @@ fn the_example_renders_the_same_every_time() {
 #[test]
 fn snapshots_crops_and_the_artapp_file_are_saved() {
     let out = folder("files");
-    let output = art_cli()
+    let output = quill()
         .args([
             "render",
             example().to_str().unwrap(),
@@ -63,10 +63,10 @@ fn snapshots_crops_and_the_artapp_file_are_saved() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(out.join("sunset.png").exists());
-    assert!(out.join("sunset.artapp").exists());
+    assert!(out.join("sunset.quill").exists());
     assert!(out.join("snapshots/03-sky-and-sun.png").exists());
 
-    let crop = art_cli()
+    let crop = quill()
         .args([
             "render",
             example().to_str().unwrap(),
@@ -82,9 +82,9 @@ fn snapshots_crops_and_the_artapp_file_are_saved() {
     assert!(crop.success());
     assert!(out.join("sunset-crop-10-20-30-40.png").exists());
 
-    let info = art_cli()
+    let info = quill()
         .arg("info")
-        .arg(out.join("sunset.artapp"))
+        .arg(out.join("sunset.quill"))
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&info.stdout);
@@ -110,7 +110,7 @@ fn mistakes_are_reported_with_the_command_number() {
     )
     .unwrap();
     for command in ["check", "render"] {
-        let output = art_cli()
+        let output = quill()
             .arg(command)
             .arg(&script)
             .arg("--out")
@@ -118,7 +118,7 @@ fn mistakes_are_reported_with_the_command_number() {
             .output()
             .unwrap();
         let output = if command == "check" {
-            art_cli().arg(command).arg(&script).output().unwrap()
+            quill().arg(command).arg(&script).output().unwrap()
         } else {
             output
         };
@@ -134,7 +134,7 @@ fn mistakes_are_reported_with_the_command_number() {
 
 #[test]
 fn checking_the_example_finds_no_problems() {
-    let output = art_cli().arg("check").arg(example()).output().unwrap();
+    let output = quill().arg("check").arg(example()).output().unwrap();
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(text.starts_with("OK:"), "{text}");
@@ -146,9 +146,9 @@ fn checking_the_example_finds_no_problems() {
 
 #[test]
 fn wrong_usage_gets_help() {
-    let output = art_cli().args(["render"]).output().unwrap();
+    let output = quill().args(["render"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("art-cli help"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("quill help"));
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn every_example_script_is_free_of_mistakes() {
     for entry in std::fs::read_dir(folder).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "json") {
-            let output = art_cli().arg("check").arg(&path).output().unwrap();
+            let output = quill().arg("check").arg(&path).output().unwrap();
             assert!(
                 output.status.success(),
                 "{}: {}",
@@ -173,10 +173,10 @@ fn every_example_script_is_free_of_mistakes() {
 
 #[test]
 fn a_reader_that_stops_early_is_not_an_error() {
-    // Like `art-cli render ... | head -1`: the reading end of the output
-    // is closed before art-cli gets to print anything.
+    // Like `quill render ... | head -1`: the reading end of the output
+    // is closed before quill gets to print anything.
     let out = folder("pipe");
-    let mut child = art_cli()
+    let mut child = quill()
         .args(["render", example().to_str().unwrap(), "--preview", "--out"])
         .arg(&out)
         .stdout(Stdio::piped())
@@ -222,7 +222,7 @@ fn check_says_where_things_are_and_what_looks_wrong() {
     std::fs::create_dir_all(&out).unwrap();
     let script = out.join("sprite.json");
     std::fs::write(&script, SPRITE).unwrap();
-    let output = art_cli().arg("check").arg(&script).output().unwrap();
+    let output = quill().arg("check").arg(&script).output().unwrap();
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);
     for expected in [
@@ -250,7 +250,7 @@ fn seeing_options_and_the_short_summary() {
     let script = out.join("sprite.json");
     std::fs::write(&script, SPRITE).unwrap();
     let render = |extra: &[&str]| {
-        let output = art_cli()
+        let output = quill()
             .arg("render")
             .arg(&script)
             .args(["--out", out.to_str().unwrap()])
@@ -281,7 +281,7 @@ fn seeing_options_and_the_short_summary() {
     let only = render(&["--layers", "Body"]);
     assert!(only.contains("Labels (hidden)"), "{only}");
     assert_ne!(std::fs::read(out.join("sprite.png")).unwrap(), png);
-    let missing = art_cli()
+    let missing = quill()
         .arg("render")
         .arg(&script)
         .args(["--out", out.to_str().unwrap(), "--hide", "Skech"])
@@ -314,7 +314,7 @@ fn check_lists_the_outermost_groups_unless_asked_for_detail() {
     )
     .unwrap();
     let check = |detail: bool| {
-        let mut command = art_cli();
+        let mut command = quill();
         command.arg("check");
         if detail {
             command.arg("--detail");
@@ -340,7 +340,7 @@ fn check_lists_the_outermost_groups_unless_asked_for_detail() {
 #[test]
 fn crops_can_go_past_the_edges_and_info_reads_scripts() {
     let out = folder("edges");
-    let crop = art_cli()
+    let crop = quill()
         .args([
             "render",
             example().to_str().unwrap(),
@@ -354,7 +354,7 @@ fn crops_can_go_past_the_edges_and_info_reads_scripts() {
     assert!(crop.status.success());
     assert!(out.join("sunset-crop--20--10-100-60.png").exists());
     assert!(String::from_utf8_lossy(&crop.stdout).contains("outside the canvas"));
-    let outside = art_cli()
+    let outside = quill()
         .args([
             "render",
             example().to_str().unwrap(),
@@ -371,7 +371,7 @@ fn crops_can_go_past_the_edges_and_info_reads_scripts() {
             .contains("entirely outside the 1600 x 1000 canvas")
     );
 
-    let info = art_cli().arg("info").arg(example()).output().unwrap();
+    let info = quill().arg("info").arg(example()).output().unwrap();
     let text = String::from_utf8_lossy(&info.stdout);
     assert!(
         text.contains("Clouds  [visible, opacity 100%, normal]  painted x 0..1600, y 51..486, by commands 11-19"),
@@ -398,7 +398,7 @@ fn frames_of_an_animation_are_painted_and_checked() {
     let script = out.join("anim.json");
     std::fs::write(&script, ANIMATED).unwrap();
     let run = |extra: &[&str]| {
-        art_cli()
+        quill()
             .arg("render")
             .arg(&script)
             .args(["--out", out.to_str().unwrap()])
@@ -412,7 +412,7 @@ fn frames_of_an_animation_are_painted_and_checked() {
     assert!(text.contains("frame 0 was painted"), "{text}");
     assert!(out.join("anim-slide-000.png").exists());
     assert!(
-        !out.join("anim-slide-000.artapp").exists(),
+        !out.join("anim-slide-000.quill").exists(),
         "frames are flat pictures"
     );
 
@@ -430,7 +430,7 @@ fn frames_of_an_animation_are_painted_and_checked() {
     let usage = run(&["--all-frames", "--sheet"]);
     assert_eq!(usage.status.code(), Some(2));
 
-    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    let check = quill().arg("check").arg(&script).output().unwrap();
     assert!(check.status.success());
     let text = String::from_utf8_lossy(&check.stdout);
     assert!(
@@ -450,7 +450,7 @@ fn frames_of_an_animation_are_painted_and_checked() {
         ),
     )
     .unwrap();
-    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    let check = quill().arg("check").arg(&script).output().unwrap();
     assert_eq!(check.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&check.stderr)
@@ -478,7 +478,7 @@ fn the_motion_summary_shows_steps_and_warns_about_jumps_and_pops() {
     std::fs::create_dir_all(&out).unwrap();
     let script = out.join("motion.json");
     std::fs::write(&script, BAD_MOTION).unwrap();
-    let check = art_cli().arg("check").arg(&script).output().unwrap();
+    let check = quill().arg("check").arg(&script).output().unwrap();
     assert!(check.status.success());
     let text = String::from_utf8_lossy(&check.stdout);
     for expected in [
@@ -500,7 +500,7 @@ fn the_motion_summary_shows_steps_and_warns_about_jumps_and_pops() {
 
     // The frame sheet, onion skin and GIF are saved with their names.
     let render = |extra: &[&str]| {
-        let output = art_cli()
+        let output = quill()
             .arg("render")
             .arg(&script)
             .args(["--out", out.to_str().unwrap()])
@@ -525,7 +525,7 @@ fn the_motion_summary_shows_steps_and_warns_about_jumps_and_pops() {
     );
     render(&["--frame", "0", "--onion"]);
     assert!(out.join("motion-bad-000-onion.png").exists());
-    let usage = art_cli()
+    let usage = quill()
         .arg("render")
         .arg(&script)
         .args(["--out", out.to_str().unwrap(), "--onion"])
@@ -564,7 +564,7 @@ fn check_counts_use_over_every_frame_and_says_which_frames_warn() {
     let script = out.join("later.json");
     std::fs::write(&script, LATER_USE).unwrap();
     let check = |extra: &[&str]| {
-        let output = art_cli()
+        let output = quill()
             .arg("check")
             .arg(&script)
             .args(extra)
@@ -626,7 +626,7 @@ fn check_counts_use_over_every_frame_and_says_which_frames_warn() {
 fn export_writes_the_sheet_its_json_frames_and_a_gif() {
     let out = folder("export");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
-    let output = art_cli()
+    let output = quill()
         .args([
             "export",
             script.to_str().unwrap(),
@@ -673,7 +673,7 @@ fn export_writes_the_sheet_its_json_frames_and_a_gif() {
     );
 
     // --scale enlarges with sharp pixels, and the JSON says so.
-    let scaled = art_cli()
+    let scaled = quill()
         .args([
             "export",
             script.to_str().unwrap(),
@@ -697,7 +697,7 @@ fn export_writes_the_sheet_its_json_frames_and_a_gif() {
     assert!(!json.contains("\"idle\""), "only the walk");
 
     // An MP4 through ffmpeg, or the frames and the command when there's none.
-    let video = art_cli()
+    let video = quill()
         .args([
             "export",
             script.to_str().unwrap(),
@@ -717,7 +717,7 @@ fn export_writes_the_sheet_its_json_frames_and_a_gif() {
     assert!(made || told, "{text}");
 
     let picture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sunset.json");
-    let wrong = art_cli()
+    let wrong = quill()
         .args(["export", picture.to_str().unwrap(), "--out"])
         .arg(&out)
         .output()
@@ -729,7 +729,7 @@ fn export_writes_the_sheet_its_json_frames_and_a_gif() {
 
 #[test]
 fn measure_says_how_big_a_text_is_before_painting() {
-    let output = art_cli()
+    let output = quill()
         .args(["measure", "Duck Forge", "--size", "48", "--fit", "180"])
         .output()
         .unwrap();
@@ -738,7 +738,7 @@ fn measure_says_how_big_a_text_is_before_painting() {
     assert!(text.starts_with("\"Duck Forge\" at size 48: "), "{text}");
     assert!(text.contains(" px (1 line, each 58.1 px high)"), "{text}");
     assert!(text.contains("to fit in 180 px, use size 33."), "{text}");
-    let usage = art_cli().args(["measure"]).output().unwrap();
+    let usage = quill().args(["measure"]).output().unwrap();
     assert_eq!(usage.status.code(), Some(2));
 }
 
@@ -757,7 +757,7 @@ fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
           { "cmd": "pixels", "at": [0, 0], "rows": ["kk....", "..rr..", "....kk"], "colors": { "k": "ink", "r": "red" } } ] }"##,
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["render", pixel.to_str().unwrap(), "--pixels", "--out"])
         .arg(&out)
         .output()
@@ -776,7 +776,7 @@ fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
     );
 
     // --scale 0.5 saves name-50pct.png (not -preview).
-    let output = art_cli()
+    let output = quill()
         .args([
             "render",
             example().to_str().unwrap(),
@@ -794,7 +794,7 @@ fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
 
     // export --animation says which animations it left out.
     let animated = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
-    let output = art_cli()
+    let output = quill()
         .args([
             "export",
             animated.to_str().unwrap(),
@@ -831,7 +831,7 @@ fn review_fixes_pixels_scale_names_export_skips_and_frame_empty_layers() {
               { "cmd": "ellipse", "center": [0, 0], "radius": 5, "fill": "#000000" } ] } ] } } }"##,
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["check", entrance.to_str().unwrap()])
         .output()
         .unwrap();
@@ -868,7 +868,7 @@ fn check_prints_the_intent_and_warns_about_a_focal_part_that_is_not_there() {
               { "cmd": "ellipse", "center": [100, 50], "radius": 20, "fill": "sun" } ] } ] }"##,
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["check", script.to_str().unwrap()])
         .output()
         .unwrap();
@@ -880,7 +880,7 @@ fn check_prints_the_intent_and_warns_about_a_focal_part_that_is_not_there() {
         .unwrap()
         .replace("\"focal\": \"duck\"", "\"focal\": \"goose\"");
     std::fs::write(&script, text2).unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["check", script.to_str().unwrap()])
         .output()
         .unwrap();
@@ -909,7 +909,7 @@ fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() 
               { "cmd": "ellipse", "center": [60, 60], "radius": [20, 12], "fill": "ink" } ] } ] }"##,
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["views", script.to_str().unwrap(), "--out"])
         .arg(&out)
         .output()
@@ -938,7 +938,7 @@ fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() 
 
     // One view alone, and the same every time.
     let single = || {
-        let output = art_cli()
+        let output = quill()
             .args([
                 "views",
                 script.to_str().unwrap(),
@@ -958,7 +958,7 @@ fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() 
     let first = single();
     assert_eq!(first, single(), "the same picture gives the same views");
     assert!(!out.join("pond-heat.png").exists());
-    let second_sheet = art_cli()
+    let second_sheet = quill()
         .args(["views", script.to_str().unwrap(), "--out"])
         .arg(&out)
         .output()
@@ -967,14 +967,14 @@ fn views_saves_a_sheet_of_seven_or_single_views_and_never_changes_the_picture() 
     assert_eq!(sheet, std::fs::read(out.join("pond-views.png")).unwrap());
 
     // Mistakes are explained.
-    let output = art_cli()
+    let output = quill()
         .args(["views", script.to_str().unwrap(), "--frame", "2"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains("this script has no animations"), "{err}");
-    let output = art_cli()
+    let output = quill()
         .args(["views", script.to_str().unwrap(), "--sheet"])
         .output()
         .unwrap();
@@ -1000,7 +1000,7 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
               { "cmd": "ellipse", "center": [60, 60], "radius": 40, "fill": "green" } ] } ] }"##,
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args(["critique", script.to_str().unwrap(), "--detail"])
         .output()
         .unwrap();
@@ -1020,7 +1020,7 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
     assert!(text.contains("the focal point is dead centre"), "{text}");
     assert!(text.contains("every part's numbers:"), "{text}");
     assert!(text.contains("Numbers can't judge beauty"), "{text}");
-    let scored = art_cli()
+    let scored = quill()
         .args(["critique", script.to_str().unwrap(), "--score"])
         .output()
         .unwrap();
@@ -1031,7 +1031,7 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
             && scored.contains("readability 1, values 1, colour 2, focal point 2, detail 3"),
         "{scored}"
     );
-    let again = art_cli()
+    let again = quill()
         .args(["critique", script.to_str().unwrap(), "--detail"])
         .output()
         .unwrap();
@@ -1051,7 +1051,7 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
 
     // Frames of an animation: one line each, and the worst named.
     let walk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/duck-animated.json");
-    let output = art_cli()
+    let output = quill()
         .args(["critique", walk.to_str().unwrap(), "--frames", "0-2"])
         .output()
         .unwrap();
@@ -1062,7 +1062,7 @@ fn critique_reports_values_focal_point_key_and_readability_with_numbers() {
         "{text}"
     );
     assert!(text.contains("worst frame: "), "{text}");
-    let output = art_cli()
+    let output = quill()
         .args(["critique", script.to_str().unwrap(), "--frames", "0-2"])
         .output()
         .unwrap();
@@ -1084,7 +1084,7 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
             { "cmd": "rect", "x": 32, "y": 0, "width": 32, "height": 32, "fill": "blue" } ] }"##,
     )
     .unwrap();
-    let status = art_cli()
+    let status = quill()
         .args(["render", script.to_str().unwrap(), "--out"])
         .arg(&out)
         .status()
@@ -1092,7 +1092,7 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
     assert!(status.success());
     let picture = out.join("halves.png");
 
-    let output = art_cli()
+    let output = quill()
         .args([
             "palette",
             picture.to_str().unwrap(),
@@ -1112,7 +1112,7 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
     assert!(text.contains("shares: c1 50%, c2 50%"), "{text}");
     assert!(out.join("halves-palette.png").exists());
 
-    let output = art_cli()
+    let output = quill()
         .args(["values", script.to_str().unwrap(), "--out"])
         .arg(&out)
         .output()
@@ -1126,7 +1126,7 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
     assert!(text.contains("value group when squinted"), "{text}");
     assert!(out.join("halves-values.png").exists());
 
-    let output = art_cli()
+    let output = quill()
         .args([
             "compare",
             picture.to_str().unwrap(),
@@ -1144,12 +1144,12 @@ fn palette_values_and_compare_work_on_pictures_and_scripts() {
     );
     assert!(out.join("compare.png").exists());
 
-    let output = art_cli()
+    let output = quill()
         .args(["compare", picture.to_str().unwrap()])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    let output = art_cli()
+    let output = quill()
         .args(["palette", script.to_str().unwrap(), "--colors", "0"])
         .output()
         .unwrap();
@@ -1173,7 +1173,7 @@ fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
     )
     .unwrap();
     let packets = out.join("packets");
-    let output = art_cli()
+    let output = quill()
         .args(["blind-read", script.to_str().unwrap(), "--out"])
         .arg(&packets)
         .output()
@@ -1211,7 +1211,7 @@ fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
         assert!(!name.contains(leak));
     }
     // The same picture gets the same name.
-    let again = art_cli()
+    let again = quill()
         .args(["blind-read", script.to_str().unwrap(), "--out"])
         .arg(&packets)
         .output()
@@ -1225,7 +1225,7 @@ fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
         "1. A dark oval on orange.\n2. The oval.\n3. Warm, quiet.\n",
     )
     .unwrap();
-    let output = art_cli()
+    let output = quill()
         .args([
             "blind-read",
             script.to_str().unwrap(),
@@ -1246,7 +1246,7 @@ fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
         "{record}"
     );
     assert!(record.contains(&format!("piece-{code}.png")));
-    let output = art_cli()
+    let output = quill()
         .args([
             "blind-read",
             script.to_str().unwrap(),
@@ -1256,5 +1256,309 @@ fn the_blind_read_packet_leaks_nothing_and_the_record_is_written() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2), "--record needs --verdict");
+    std::fs::remove_dir_all(out).ok();
+}
+
+/// `art-cli`, the old name, still runs every command the same way: the
+/// same picture, the same output, and one line on the error output.
+#[test]
+fn art_cli_is_still_there_and_paints_the_same() {
+    let out = folder("art-cli-shim");
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine/tests/fixtures/old-script.json");
+    let old = Command::new(env!("CARGO_BIN_EXE_art-cli"))
+        .args(["render", script.to_str().unwrap(), "--out"])
+        .arg(out.join("old"))
+        .output()
+        .unwrap();
+    let new = quill()
+        .args(["render", script.to_str().unwrap(), "--out"])
+        .arg(out.join("new"))
+        .output()
+        .unwrap();
+    assert!(old.status.success() && new.status.success());
+    let stderr = String::from_utf8_lossy(&old.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("art-cli is now called quill"),
+        "{stderr}"
+    );
+    let picture = |which: &str| std::fs::read(out.join(which).join("old-script.png")).unwrap();
+    assert_eq!(picture("old"), picture("new"));
+    // Only the folder names differ in what's printed (with \ on Windows).
+    let (old_dir, new_dir) = (out.join("old"), out.join("new"));
+    let text = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stdout)
+            .replace(&old_dir.display().to_string(), "OUT")
+            .replace(&new_dir.display().to_string(), "OUT")
+    };
+    let strip_time = |t: String| {
+        t.lines()
+            .filter(|l| !l.contains(" in "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(strip_time(text(&old)), strip_time(text(&new)));
+    // The picture is saved as .quill now.
+    assert!(out.join("new").join("old-script.quill").exists());
+    std::fs::remove_dir_all(out).ok();
+}
+
+#[test]
+fn version_and_the_old_format_note() {
+    let version = quill().arg("--version").output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("quill {}", env!("CARGO_PKG_VERSION"))
+    );
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../engine/tests/fixtures/old-script.json");
+    let check = quill()
+        .args(["check", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&check.stdout);
+    assert!(check.status.success(), "{text}");
+    assert!(
+        text.contains("note: \"format\": \"artapp-script\" is the old name"),
+        "{text}"
+    );
+    // A new-format script gets no note.
+    let check = quill()
+        .args(["check", example().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&check.stdout).contains("old name"));
+}
+
+#[test]
+fn presets_lists_every_built_in_preset_and_a_script_can_use_them() {
+    let out = quill().arg("presets").output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}");
+    for name in [
+        "Pencil (graphite)",
+        "Ink pen",
+        "Marker",
+        "Soft airbrush",
+        "Chalk",
+        "Soft eraser",
+    ] {
+        assert!(text.contains(&format!("\n{name}")), "{name}: {text}");
+    }
+    assert!(
+        text.contains("\"grain\":0.75"),
+        "the settings are shown: {text}"
+    );
+    // The example line it prints is a brush command that works.
+    let folder = folder("presets");
+    std::fs::create_dir_all(&folder).unwrap();
+    let script = folder.join("pencil.json");
+    std::fs::write(
+        &script,
+        r##"{ "commands": [
+            { "cmd": "canvas", "width": 120, "height": 60 },
+            {"cmd": "brush", "preset": "Pencil (graphite)", "color": "#2A2A30"},
+            { "cmd": "stroke", "points": [[10, 30], [110, 30]] }
+        ] }"##,
+    )
+    .unwrap();
+    let check = quill()
+        .args(["check", script.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let extra = quill().args(["presets", "pencil"]).output().unwrap();
+    assert_eq!(extra.status.code(), Some(2));
+}
+
+#[test]
+fn every_command_has_its_own_help() {
+    for command in [
+        "render",
+        "check",
+        "export",
+        "info",
+        "measure",
+        "presets",
+        "views",
+        "critique",
+        "palette",
+        "values",
+        "compare",
+        "gallery",
+        "blind-read",
+    ] {
+        for asked in [
+            vec![command, "--help"],
+            vec![command, "-h"],
+            vec!["help", command],
+        ] {
+            let out = quill().args(&asked).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "{asked:?}: {text}");
+            assert!(
+                text.starts_with(&format!("quill {command}\n")),
+                "{asked:?}: {text}"
+            );
+            assert!(
+                text.contains(&format!("  quill {command}")),
+                "{asked:?}: its usage"
+            );
+        }
+    }
+    // Only that command's options.
+    let render = quill()
+        .args(["render", "examples/sunset.json", "--help"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&render.stdout);
+    assert!(
+        text.contains("--zoom") && text.contains("RENDER OPTIONS"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("GALLERY OPTIONS") && !text.contains("quill views"),
+        "{text}"
+    );
+    let nothing = quill().args(["help", "paint"]).output().unwrap();
+    assert_eq!(nothing.status.code(), Some(2));
+}
+
+#[test]
+fn zoom_adds_an_enlarged_copy_and_leaves_the_picture_its_own_size() {
+    let out = folder("zoom");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("tile.json");
+    std::fs::write(
+        &script,
+        r##"{ "palette": { "red": "#C04040" }, "commands": [
+            { "cmd": "canvas", "width": 16, "height": 8, "pixel": true },
+            { "cmd": "rect", "x": 2, "y": 2, "width": 4, "height": 4, "fill": "red" }
+        ] }"##,
+    )
+    .unwrap();
+    let status = quill()
+        .args(["render", script.to_str().unwrap(), "--zoom", "4", "--out"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let size = |file: &str| {
+        let image = quill_engine::image::Image::load(&out.join(file)).unwrap();
+        (image.width(), image.height())
+    };
+    assert_eq!(size("tile.png"), (16, 8), "the picture keeps its size");
+    assert_eq!(size("tile-zoom4.png"), (64, 32));
+    std::fs::remove_dir_all(out).ok();
+}
+
+#[test]
+fn tile_shows_the_picture_two_by_two_and_where_edges_do_not_meet() {
+    let out = folder("tile");
+    std::fs::create_dir_all(&out).unwrap();
+    let script = out.join("sky.json");
+    // A sky darkening downwards: as a repeating background its bottom
+    // meets its top with a hard line.
+    std::fs::write(
+        &script,
+        r##"{ "commands": [
+            { "cmd": "canvas", "width": 60, "height": 40 },
+            { "cmd": "gradient", "from": [0, 0], "to": [0, 40], "colors": ["#A0D0FF", "#203060"] }
+        ] }"##,
+    )
+    .unwrap();
+    let run = quill()
+        .args(["render", script.to_str().unwrap(), "--tile", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success(), "{text}");
+    assert!(
+        text.contains("tile: top and bottom edges don't meet"),
+        "{text}"
+    );
+    assert!(!text.contains("left and right edges don't meet"), "{text}");
+    let image = quill_engine::image::Image::load(&out.join("sky-tile.png")).unwrap();
+    assert_eq!((image.width(), image.height()), (120, 80));
+    // A flat colour repeats cleanly.
+    std::fs::write(
+        &script,
+        r##"{ "commands": [ { "cmd": "canvas", "width": 60, "height": 40, "paper": "#336633" } ] }"##,
+    )
+    .unwrap();
+    let run = quill()
+        .args(["render", script.to_str().unwrap(), "--tile", "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&run.stdout);
+    assert!(text.contains("tile: opposite edges meet"), "{text}");
+    std::fs::remove_dir_all(out).ok();
+}
+
+#[test]
+fn atlas_packs_tiles_into_one_png_with_their_places() {
+    let out = folder("atlas");
+    std::fs::create_dir_all(&out).unwrap();
+    let tile = |name: &str, color: &str, size: u32| {
+        let path = out.join(format!("{name}.json"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{ "commands": [ {{ "cmd": "canvas", "width": {size}, "height": {size}, "paper": "{color}" }},
+                   {{ "cmd": "rect", "x": 0, "y": 0, "width": {size}, "height": {size}, "fill": "{color}" }} ] }}"#
+            ),
+        )
+        .unwrap();
+        path.to_str().unwrap().to_owned()
+    };
+    let (grass, water, rock) = (
+        tile("grass", "#40A040", 16),
+        tile("water", "#3070D0", 16),
+        tile("rock", "#808080", 16),
+    );
+    let run = quill()
+        .args([
+            "atlas",
+            &grass,
+            &water,
+            &rock,
+            "--name",
+            "ground",
+            "--columns",
+            "3",
+            "--out",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("ground.json")).unwrap()).unwrap();
+    assert_eq!(json["columns"], 3);
+    assert_eq!(json["tile"]["width"], 16);
+    assert_eq!(json["tiles"]["water"]["x"], 16);
+    assert_eq!(json["tiles"]["rock"]["index"], 2);
+    let image = quill_engine::image::Image::load(&out.join("ground.png")).unwrap();
+    assert_eq!((image.width(), image.height()), (48, 16));
+    // Each tile's pixels are where the JSON says.
+    assert_eq!(image.pixel(20, 5), [0x30, 0x70, 0xD0, 255]);
+    // Two tiles with one name is a mistake.
+    let again = quill()
+        .args(["atlas", &grass, &grass, "--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(1));
     std::fs::remove_dir_all(out).ok();
 }

@@ -1,17 +1,26 @@
 [package]
-name = "art_cli"
-description = "Art App on the command line: render painting scripts, check them, look inside .artapp files. No window or graphics card needed."
+name = "quill_cli"
+description = "Duck Quill on the command line: render painting scripts, check them, look inside .quill files. No window or graphics card needed."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-# The program is called art-cli (art-cli.exe on Windows).
+# The code is a library (src/lib.rs) so that two programs can run it:
+# `quill`, and `art-cli`, its old name, kept so agents' old scripts still work.
+[lib]
+name = "quill_cli"
+path = "src/lib.rs"
+
 [[bin]]
-name = "art-cli"
+name = "quill"
 path = "src/main.rs"
 
+[[bin]]
+name = "art-cli"
+path = "src/bin/art-cli.rs"
+
 [dependencies]
-art_engine.workspace = true
+quill_engine.workspace = true
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]

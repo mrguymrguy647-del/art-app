@@ -223,6 +223,100 @@ impl Mask {
     }
 }
 
+impl Mask {
+    /// Where either mask is: each pixel takes the higher of the two. The
+    /// result covers both rectangles.
+    pub fn union(&self, other: &Mask) -> Mask {
+        let mut both = Mask::new(self.rect.union(&other.rect));
+        let r = both.rect;
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                both.set(x, y, self.get(x, y).max(other.get(x, y)));
+            }
+        }
+        both
+    }
+
+    /// This mask with `other` taken away: each pixel keeps the part of it
+    /// that `other` doesn't cover. Soft edges stay soft.
+    pub fn subtract(&self, other: &Mask) -> Mask {
+        let mut rest = self.clone();
+        let r = self.rect.intersect(&other.rect);
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                let kept = u32::from(self.get(x, y)) * (255 - u32::from(other.get(x, y)));
+                rest.set(x, y, ((kept + 127) / 255) as u8);
+            }
+        }
+        rest
+    }
+
+    /// The mask with its edges softened over about `radius` pixels (a
+    /// feather), staying inside `limits`. Three box blurs one after the
+    /// other look like a smooth (Gaussian) blur and are quick: each is a
+    /// running sum, so the cost doesn't grow with the radius.
+    pub fn feathered(&self, radius: f32, limits: PixelRect) -> Mask {
+        // Three boxes of half-width w spread an edge over about 3w pixels.
+        let half = (radius / 3.0).ceil().max(0.0) as i32;
+        if half == 0 {
+            return self.clone();
+        }
+        let rect = self.rect.grown(3 * half).intersect(&limits);
+        let mut grown = Mask::new(rect);
+        let r = grown.rect;
+        for y in r.top..r.bottom {
+            for x in r.left..r.right {
+                grown.set(x, y, self.get(x, y));
+            }
+        }
+        let (width, height) = (grown.width(), grown.values.len() / grown.width().max(1));
+        let mut values: Vec<u32> = grown.values.iter().map(|&v| u32::from(v)).collect();
+        for _ in 0..3 {
+            box_blur(&mut values, width, height, half as usize, true);
+            box_blur(&mut values, width, height, half as usize, false);
+        }
+        for (value, blurred) in grown.values.iter_mut().zip(values) {
+            *value = blurred.min(255) as u8;
+        }
+        grown
+    }
+}
+
+/// One box blur along rows (`across`) or columns of `values`, each new
+/// value the average of the `half` values on either side and itself.
+/// Outside the mask counts as 0, so edges fade out.
+fn box_blur(values: &mut [u32], width: usize, height: usize, half: usize, across: bool) {
+    let (lines, length) = if across {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let at = |line: usize, i: usize| {
+        if across {
+            line * width + i
+        } else {
+            i * width + line
+        }
+    };
+    let span = (2 * half + 1) as u32;
+    let mut line_values = vec![0u32; length];
+    for line in 0..lines {
+        for (i, value) in line_values.iter_mut().enumerate() {
+            *value = values[at(line, i)];
+        }
+        let mut sum: u32 = line_values[..half.min(length)].iter().sum();
+        for i in 0..length {
+            if i + half < length {
+                sum += line_values[i + half];
+            }
+            if i > half {
+                sum -= line_values[i - half - 1];
+            }
+            values[at(line, i)] = (sum + span / 2) / span;
+        }
+    }
+}
+
 // ---- The paint bucket ------------------------------------------------------
 
 /// Which pixels the paint bucket looks at to decide where to stop.
@@ -951,14 +1045,27 @@ pub fn fill_layer(
     paint: &Paint,
     opacity: f32,
 ) -> TilesBefore {
+    fill_layer_within(document, layer, paint, opacity, None)
+}
+
+/// Like [`fill_layer`], but only inside `clip` (a selection) if one is given.
+pub fn fill_layer_within(
+    document: &mut Document,
+    layer: LayerId,
+    paint: &Paint,
+    opacity: f32,
+    clip: Option<&Mask>,
+) -> TilesBefore {
     let bounds = document.bounds();
+    let rect = clip.map_or(bounds, |clip| bounds.intersect(&clip.rect()));
     match document.layer_mut(layer) {
-        Some(target) => paint_rect(
+        Some(target) => paint_rect_within(
             &mut target.surface,
-            bounds,
+            rect,
             paint,
             opacity,
             BrushMode::Paint,
+            clip,
         ),
         None => TilesBefore::new(),
     }

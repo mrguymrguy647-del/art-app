@@ -1,17 +1,18 @@
 # Quick start: painting with scripts
 
-Art App paints pictures from **painting scripts**: JSON files that list what to draw, step by step.
-`art-cli` turns a script into a PNG (and an `.artapp` file with the layers), with no window or
+Duck Quill paints pictures from **painting scripts**: JSON files that list what to draw, step by step.
+`quill` turns a script into a PNG (and a `.quill` file with the layers), with no window or
 graphics card. This page is enough to start; [script-format.md](script-format.md) has every
 command and option, and [AI_GUIDE.md](AI_GUIDE.md) has techniques and a workflow.
 
-## 1. Build art-cli (once)
+## 1. Build quill (once)
 
 ```bash
-cargo build --release -p art_cli
+cargo build --release -p quill_cli
 ```
 
-The program is `target/release/art-cli` (`art-cli.exe` on Windows).
+The program is `target/release/quill` (`quill.exe` on Windows). `art-cli`, its name before the
+app was renamed Duck Quill, still works.
 
 ## 2. A first script
 
@@ -49,11 +50,11 @@ the second one mirrored and red; a title with an outline.
 ## 3. The loop
 
 ```bash
-art-cli check two-ducks.json             # mistakes, and where everything landed
-art-cli render two-ducks.json --preview  # a quick look: out/two-ducks-preview.png
-art-cli views two-ducks.json             # seven views on one sheet: out/two-ducks-views.png
-art-cli critique two-ducks.json          # about fifteen findings in numbers, with hints
-art-cli render two-ducks.json            # full size: out/two-ducks.png and .artapp
+quill check two-ducks.json             # mistakes, and where everything landed
+quill render two-ducks.json --preview  # a quick look: out/two-ducks-preview.png
+quill views two-ducks.json             # seven views on one sheet: out/two-ducks-views.png
+quill critique two-ducks.json          # about fifteen findings in numbers, with hints
+quill render two-ducks.json            # full size: out/two-ducks.png and .quill
 ```
 
 Read what it prints before opening the picture:
@@ -129,9 +130,9 @@ then its own, once per frame. Any number of a `group` or `use` can be keyframes:
 ```
 
 ```bash
-art-cli check bounce.json                         # every frame, plus a motion summary
-art-cli render bounce.json --frame-sheet --transparent   # all frames in one numbered picture
-art-cli export bounce.json --gif --sheet          # a GIF, and a sprite sheet with its JSON
+quill check bounce.json                         # every frame, plus a motion summary
+quill render bounce.json --frame-sheet --transparent   # all frames in one numbered picture
+quill export bounce.json --gif --sheet          # a GIF, and a sprite sheet with its JSON
 ```
 
 Pixel art: `{ "cmd": "canvas", "width": 32, "height": 32, "pixel": true }` paints the same
@@ -151,4 +152,7 @@ worked example are in [AI_GUIDE.md](AI_GUIDE.md), "Making it beautiful".
 
 - [script-format.md](script-format.md): every command and option, with examples.
 - [AI_GUIDE.md](AI_GUIDE.md): a workflow, techniques for skies, light and texture, common mistakes.
-- `art-cli help`: every option of `render`, `check` and `info`.
+- `quill help`: every command and option; `quill render --help` (any command): just that one.
+- Pencil, ink and other brushes by name: `{"cmd": "brush", "preset": "Ink pen"}` (`quill presets`
+  lists them). For games: `render --tile` for repeating backgrounds, `quill atlas` for tilesets
+  ([sprite-sheet-format.md](sprite-sheet-format.md)).

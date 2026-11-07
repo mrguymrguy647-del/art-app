@@ -1,5 +1,5 @@
 {
-  "format": "artapp-script",
+  "format": "duckquill-script",
   "version": 1,
   "title": "Every command",
   "notes": "Used by tests/reference.rs: every command and option from before groups, so old scripts must keep painting exactly these pixels.",

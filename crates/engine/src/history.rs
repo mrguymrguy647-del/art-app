@@ -148,6 +148,9 @@ impl Command for CommandGroup {
 struct Step {
     command: Box<dyn Command>,
     script: Vec<ScriptCommand>,
+    /// A change scripts can't make (a paste, moving a selection): Export
+    /// strokes says it's missing.
+    unrecordable: bool,
 }
 
 /// The undo and redo lists.
@@ -159,7 +162,12 @@ pub struct History {
     /// The script of steps that were forgotten to save memory: they can't
     /// be undone any more, but they're still part of the picture.
     settled: Vec<ScriptCommand>,
+    /// How many of the settled steps had no script command.
+    unrecordable_settled: usize,
     memory_limit: usize,
+    /// Goes up with every change, undo and redo: something that keeps
+    /// a copy (autosave) can tell whether it's still up to date.
+    generation: u64,
     /// How many undo steps there were when the picture was last saved.
     /// `None` if that point can't be reached any more (e.g. you undid past
     /// it and then made a new change).
@@ -179,7 +187,9 @@ impl History {
             undo: VecDeque::new(),
             redo: Vec::new(),
             settled: Vec::new(),
+            unrecordable_settled: 0,
             memory_limit,
+            generation: 0,
             saved_at: Some(0),
         }
     }
@@ -187,6 +197,18 @@ impl History {
     /// Remembers that the picture was just saved (or freshly opened).
     pub fn mark_saved(&mut self) {
         self.saved_at = Some(self.undo.len());
+    }
+
+    /// Counts as changed since it was saved, whatever the undo steps say
+    /// (a picture restored after a crash was never saved by you).
+    pub fn mark_unsaved(&mut self) {
+        self.saved_at = None;
+        self.generation += 1;
+    }
+
+    /// A number that changes whenever the picture does (see `generation`).
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// True if the picture has changed since it was last saved. Undoing
@@ -209,13 +231,19 @@ impl History {
             self.saved_at = None;
         }
         self.redo.clear();
-        self.undo.push_back(Step { command, script });
+        self.generation += 1;
+        self.undo.push_back(Step {
+            command,
+            script,
+            unrecordable: false,
+        });
 
         // Too much memory? Forget the oldest changes, but always keep the
         // newest one, however big it is.
         while self.memory_used() > self.memory_limit && self.undo.len() > 1 {
             if let Some(oldest) = self.undo.pop_front() {
                 self.settled.extend(oldest.script);
+                self.unrecordable_settled += usize::from(oldest.unrecordable);
             }
             // Everything shifted down by one step.
             self.saved_at = self.saved_at.and_then(|saved| saved.checked_sub(1));
@@ -229,6 +257,7 @@ impl History {
         };
         step.command.undo(document);
         self.redo.push(step);
+        self.generation += 1;
         true
     }
 
@@ -240,6 +269,7 @@ impl History {
         };
         step.command.redo(document);
         self.undo.push_back(step);
+        self.generation += 1;
         true
     }
 
@@ -267,6 +297,21 @@ impl History {
             .sum()
     }
 
+    /// Records a change that has no script command (a paste, moving a
+    /// selection): it undoes like any other, and Export strokes knows it's
+    /// missing from the script.
+    pub fn push_unrecordable(&mut self, command: Box<dyn Command>) {
+        self.push(command);
+        if let Some(step) = self.undo.back_mut() {
+            step.unrecordable = true;
+        }
+    }
+
+    /// How many changes still in the picture have no script command.
+    pub fn unrecordable_steps(&self) -> usize {
+        self.unrecordable_settled + self.undo.iter().filter(|s| s.unrecordable).count()
+    }
+
     /// Everything still in the picture, as painting-script commands,
     /// oldest first: what was recorded with each step that hasn't been
     /// undone.
@@ -285,6 +330,7 @@ mod tests {
 
     use super::*;
     use crate::brush::{BrushMode, BrushSettings};
+    use crate::layer_commands::LayerPresenceCommand;
     use crate::stroke::{Stroke, StrokePoint};
     use crate::tile::Rgba8;
 
@@ -572,5 +618,24 @@ mod tests {
         assert!(history.memory_used() <= 3 * TILE_BYTES);
         assert!(history.undo_steps() < 6, "some old steps were dropped");
         assert!(history.undo_steps() >= 1, "the newest step is always kept");
+    }
+
+    #[test]
+    fn the_generation_counts_every_change_and_a_restored_picture_is_unsaved() {
+        let mut document = Document::new(64, 64);
+        let mut history = History::default();
+        let start = history.generation();
+        history.push(Box::new(LayerPresenceCommand::add_layer(&mut document)));
+        assert_eq!(history.generation(), start + 1);
+        history.undo(&mut document);
+        history.redo(&mut document);
+        assert_eq!(history.generation(), start + 3);
+        history.mark_saved();
+        assert!(!history.is_modified());
+        history.mark_unsaved();
+        assert!(history.is_modified());
+        // Undoing back to the start doesn't make it look saved.
+        history.undo(&mut document);
+        assert!(history.is_modified());
     }
 }

@@ -1,4 +1,4 @@
-//! The Art App painting engine.
+//! The Duck Quill painting engine.
 //!
 //! Everything about pictures lives here: pixels, brushes, layers, undo.
 //! It has no window or UI code, so it can be tested on its own with
@@ -21,8 +21,11 @@ pub mod layer_transform;
 pub mod noise;
 pub mod pen;
 pub mod pixels;
+pub mod presets;
 pub mod random;
+pub mod reference;
 pub mod script;
+pub mod selection;
 pub mod senses;
 pub mod smoothing;
 pub mod sprites;

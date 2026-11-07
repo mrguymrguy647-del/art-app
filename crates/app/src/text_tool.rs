@@ -13,13 +13,13 @@
 
 use std::collections::BTreeMap;
 
-use art_engine::document::Document;
-use art_engine::history::{Command as UndoStep, CommandGroup, History};
-use art_engine::layer::LayerId;
-use art_engine::script::{CanvasCmd, Command, PlayOptions, Player, Script, TextCmd, record};
-use art_engine::text::{self, Align};
-use art_engine::view::Point;
 use eframe::egui::{self, Key};
+use quill_engine::document::Document;
+use quill_engine::history::{Command as UndoStep, CommandGroup, History};
+use quill_engine::layer::LayerId;
+use quill_engine::script::{CanvasCmd, Command, PlayOptions, Player, Script, TextCmd, record};
+use quill_engine::text::{self, Align};
+use quill_engine::view::Point;
 
 /// The Text tool's settings (the colour is the brush colour).
 pub struct TextSettings {
@@ -87,6 +87,7 @@ impl TextEdit {
         }
         let [r, g, b] = settings.outline_color;
         Some(TextCmd {
+            name: None,
             text: self.text.clone(),
             at: [round(self.at.x), round(self.at.y)],
             size: Some((settings.size * 10.0).round() / 10.0),
@@ -244,7 +245,7 @@ fn paint(document: &mut Document, layer: LayerId, command: &TextCmd) -> Vec<Box<
         notes: None,
         seed: 1,
         palette: BTreeMap::new(),
-        animations: art_engine::script::Animations::default(),
+        animations: quill_engine::script::Animations::default(),
         pivot: None,
         intent: None,
         commands: vec![
@@ -278,9 +279,9 @@ fn round(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use art_engine::document::Background;
-    use art_engine::file;
-    use art_engine::script::record;
+    use quill_engine::document::Background;
+    use quill_engine::file;
+    use quill_engine::script::record;
 
     fn png(document: &Document) -> Vec<u8> {
         let mut bytes = Vec::new();

@@ -43,6 +43,52 @@ impl StrokePoint {
     }
 }
 
+/// Mirror lines: every dab is stamped again mirrored across them, in the
+/// same stroke (so where the copies overlap, near a line, they don't
+/// darken each other).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Symmetry {
+    /// Where the lines cross, in canvas pixels.
+    pub centre: (f32, f32),
+    /// Left and right mirror each other across the line going down
+    /// through `centre`.
+    pub vertical: bool,
+    /// Top and bottom mirror each other across the line going across.
+    pub horizontal: bool,
+    /// How far both lines are turned, degrees clockwise (0: upright).
+    pub angle: f32,
+}
+
+impl Symmetry {
+    /// The mirrored copies of a dab at (x, y) turned `angle` degrees
+    /// (not the dab itself): one for one line, three for both.
+    pub fn copies(&self, (x, y): (f32, f32), angle: f32) -> Vec<((f32, f32), f32)> {
+        let (sin, cos) = self.angle.to_radians().sin_cos();
+        let (dx, dy) = (x - self.centre.0, y - self.centre.1);
+        // Along the turned "across" direction (u) and "down" direction (v).
+        let a = dx * cos + dy * sin;
+        let b = -dx * sin + dy * cos;
+        let back = |a: f32, b: f32| {
+            (
+                self.centre.0 + a * cos - b * sin,
+                self.centre.1 + a * sin + b * cos,
+            )
+        };
+        let mut copies = Vec::with_capacity(3);
+        // A direction mirrored across a line at angle t becomes 2t - itself.
+        if self.vertical {
+            copies.push((back(-a, b), 2.0 * (self.angle + 90.0) - angle));
+        }
+        if self.horizontal {
+            copies.push((back(a, -b), 2.0 * self.angle - angle));
+        }
+        if self.vertical && self.horizontal {
+            copies.push((back(-a, -b), angle + 180.0));
+        }
+        copies
+    }
+}
+
 /// The curve between two points is drawn as short straight pieces of at
 /// most this many pixels: too short to see the corners.
 const CURVE_PIECE_LENGTH: f32 = 2.0;
@@ -58,6 +104,8 @@ pub struct Stroke {
     limits: PixelRect,
     /// A group's mask: paint only lands inside it, as much as it covers.
     clip: Option<Arc<Mask>>,
+    /// Mirror lines: each dab is stamped again across them.
+    symmetry: Option<Symmetry>,
     /// The shape of each dab, unless it's simply round.
     tip: Option<Arc<TipShape>>,
     /// A pattern (noise, a texture) painted instead of the brush colour.
@@ -92,6 +140,7 @@ impl Stroke {
             brush,
             limits,
             clip: None,
+            symmetry: None,
             random: Random::new(0),
             last_dab: None,
             heading: 0.0,
@@ -208,6 +257,12 @@ impl Stroke {
         self
     }
 
+    /// Every dab is painted again mirrored across these lines.
+    pub fn mirrored(mut self, symmetry: Symmetry) -> Self {
+        self.symmetry = Some(symmetry);
+        self
+    }
+
     /// Where the brush's dynamics get their randomness: the same seed
     /// always gives the same stroke.
     pub fn seeded(mut self, seed: u64) -> Self {
@@ -242,6 +297,26 @@ impl Stroke {
             return;
         }
         let dab = self.vary(dab, at);
+        // The mirrored copies get the same random variation as the dab.
+        if let Some(symmetry) = self.symmetry {
+            for (centre, angle) in symmetry.copies(dab.centre, dab.angle) {
+                self.stamp_dab(
+                    layer,
+                    VariedDab {
+                        centre,
+                        angle,
+                        ..dab
+                    },
+                    at.pressure,
+                );
+            }
+        }
+        self.stamp_dab(layer, dab, at.pressure);
+    }
+
+    /// Stamps one dab, already varied, at its centre.
+    fn stamp_dab(&mut self, layer: &mut Surface, dab: VariedDab, pressure: f32) {
+        let locked = layer.locked;
         let (cx, cy) = dab.centre;
         let reach = match &self.tip {
             // The soft edge can go half a pixel further.
@@ -256,9 +331,10 @@ impl Stroke {
             (cy + reach).ceil() as i32,
         )
         .intersect(&self.limits);
-        let centre = StrokePoint::new(cx, cy, at.pressure);
+        let centre = StrokePoint::new(cx, cy, pressure);
         let (sin, cos) = dab.angle.to_radians().sin_cos();
         let varies_color = self.brush.dynamics.varies_color();
+        let tooth = self.brush.tooth(pressure);
 
         for coord in rect.tiles() {
             let (left, top) = coord.origin();
@@ -281,6 +357,11 @@ impl Stroke {
                     .entry(coord)
                     .or_insert_with(|| vec![self.brush.color; TILE_PIXELS].into_boxed_slice())
             });
+            // How dark the layer was before this stroke, for the tooth.
+            let original = match self.before.get(&coord) {
+                Some(before) => before.as_ref(),
+                None => layer.tile(coord),
+            };
             let mut changed = false;
             for y in area.top..area.bottom {
                 for x in area.left..area.right {
@@ -298,8 +379,21 @@ impl Stroke {
                                 * dab_coverage(distance, reach - 0.5, self.brush.hardness)
                         }
                     };
-                    let target = dab.opacity * shape;
                     let i = tile_index(x - left, y - top);
+                    let mut target = dab.opacity * shape;
+                    if let Some(tooth) = &tooth {
+                        // The grain makes the edge, so it's not also faded.
+                        target = dab.opacity * shape.sqrt();
+                        // The tooth only ever takes away: skip it where
+                        // the dab couldn't add anything anyway.
+                        if target <= coverage[i] {
+                            continue;
+                        }
+                        let already = original.map_or(0.0, |t| {
+                            darkness_around(t, (x - left) as usize, (y - top) as usize)
+                        });
+                        target *= tooth.at(x, y, shape, already);
+                    }
                     if target > coverage[i] {
                         // Flow 1: jump straight to the target. Lower flow:
                         // move part of the way, so paint builds up.
@@ -335,6 +429,13 @@ impl Stroke {
                     let mut strength = coverage[i];
                     if let Some(clip) = clip {
                         strength *= f32::from(clip.get(x, y)) / 255.0;
+                    }
+                    // A build-up limit: the layer darkens towards the limit,
+                    // never past it, however often it's gone over.
+                    if self.brush.build_up > 0.0 && self.brush.mode == BrushMode::Paint && !locked {
+                        let a = f32::from(original.a) / 255.0;
+                        let room = (self.brush.build_up - a).max(0.0);
+                        strength *= (room / (1.0 - a).max(1e-3)).min(1.0);
                     }
                     let color = colors.map_or(self.brush.color, |c| c[i]);
                     let pixel = match (self.brush.mode, &self.source) {
@@ -415,7 +516,21 @@ impl Stroke {
     }
 }
 
+/// How dark the layer is at a tile pixel and around it, 0..1: a white
+/// valley among graphite counts as fairly dark, so going over it again
+/// fills it, as graphite smears into the paper's tooth.
+fn darkness_around(tile: &Tile, x: usize, y: usize) -> f32 {
+    let last = TILE_SIZE - 1;
+    let alpha = |x: usize, y: usize| f32::from(tile.pixel(x, y).a);
+    let around = alpha(x.saturating_sub(1), y)
+        + alpha((x + 1).min(last), y)
+        + alpha(x, y.saturating_sub(1))
+        + alpha(x, (y + 1).min(last));
+    alpha(x, y).max(around / 4.0) / 255.0
+}
+
 /// One dab, with the dynamics applied.
+#[derive(Clone, Copy)]
 struct VariedDab {
     centre: (f32, f32),
     radius: f32,

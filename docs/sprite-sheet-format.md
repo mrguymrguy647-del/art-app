@@ -1,6 +1,6 @@
 # Sprite sheets: the PNG and its JSON
 
-`art-cli export duck.json` writes `duck.png` and `duck.json` (and the app's **File → Export
+`quill export duck.json` writes `duck.png` and `duck.json` (and the app's **File → Export
 animation** does the same). This page says what's in them, so another program, such as Duck
 Forge, can load them.
 
@@ -52,3 +52,35 @@ at the end, start again if `loop`, otherwise stay on the last frame. In Duck For
   background; the paper colour if none is given). Without `ffmpeg`, the frames are written and
   the exact command to run is printed.
 - `--scale 8` enlarges all of them with sharp pixels; `--animation walk` exports one animation.
+
+## Tilesets
+
+`quill atlas grass.json water.json sand.json --name ground` paints each script (one tile or
+sprite each, at full size on a see-through background) and packs them into `ground.png` with
+`ground.json` beside it. Tiles are named after their script files and stay in the order given.
+
+```json
+{
+  "image": "ground.png",
+  "scale": 1,
+  "padding": 1,
+  "tile": { "width": 16, "height": 16 },
+  "columns": 2,
+  "rows": 2,
+  "tiles": {
+    "grass": { "index": 0, "x": 1, "y": 1, "width": 16, "height": 16 },
+    "water": { "index": 1, "x": 18, "y": 1, "width": 16, "height": 16 },
+    "sand":  { "index": 2, "x": 1, "y": 18, "width": 16, "height": 16 }
+  }
+}
+```
+
+| Field | |
+|---|---|
+| `image` | The PNG's file name, next to the JSON. |
+| `scale` | How many times the tiles were enlarged with sharp pixels (`--scale`). |
+| `padding` | See-through pixels between tiles and round the edge (`--padding`, default 0). With 0 and tiles of one size, the picture is an exact grid. |
+| `tile`, `columns`, `rows` | Only when every tile is the same size: the grid, so a game can also cut the picture by the tile size (tile number `n` is in row `n / columns`, column `n % columns`). |
+| `tiles` | By name: `index` (the order given), and `x`, `y`, `width`, `height` of its rectangle in the PNG. Tiles of different sizes are packed in rows (`--columns` per row), each row as tall as its tallest tile. |
+
+A script with animations gives its first frame (use `quill export` for all its frames).

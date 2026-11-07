@@ -1,13 +1,13 @@
-//! `art-cli blind-read`: the leak-proof blind-read test. A packet holds
+//! `quill blind-read`: the leak-proof blind-read test. A packet holds
 //! only the picture under a neutral name and the three questions, so a
 //! reader who was not told the intent can say what they see; then the
 //! answers and the verdict are recorded next to the script.
 
 use std::path::{Path, PathBuf};
 
-use art_engine::document::Background;
-use art_engine::image::Image;
-use art_engine::script::PlayOptions;
+use quill_engine::document::Background;
+use quill_engine::image::Image;
+use quill_engine::script::PlayOptions;
 
 use crate::gallery::BLIND_READ_QUESTIONS;
 use crate::{Problem, failed, load, paint_frame};
@@ -54,7 +54,7 @@ fn parse(args: &[String]) -> Result<Options, Problem> {
     }
     options.script = script.ok_or_else(|| {
         Problem::Usage(
-            "blind-read needs a script: `art-cli blind-read picture.json [--out folder]` makes the \
+            "blind-read needs a script: `quill blind-read picture.json [--out folder]` makes the \
              packet; `--record answers.txt --verdict \"reads\"` records the answers"
                 .into(),
         )
@@ -138,7 +138,7 @@ pub fn blind_read(args: &[String]) -> Result<(), Problem> {
          and folders leak the intent)"
     );
     say!(
-        "  then record its answers: art-cli blind-read {} --record answers.txt --verdict \"reads\" \
+        "  then record its answers: quill blind-read {} --record answers.txt --verdict \"reads\" \
          (or \"doesn't read: ...\")",
         path.display()
     );
@@ -149,7 +149,7 @@ pub fn blind_read(args: &[String]) -> Result<(), Problem> {
 /// answers as given, the intent they're measured against, the verdict.
 fn record(
     path: &Path,
-    script: &art_engine::script::Script,
+    script: &quill_engine::script::Script,
     code: &str,
     answers: &Path,
     verdict: &str,

@@ -1,13 +1,16 @@
 //! The tool panel: pick a tool (brush, eraser, eyedropper, paint bucket,
 //! gradient, text), choose a colour, and adjust the tool's settings.
 
-use art_engine::brush::{BrushSettings, Dynamics, MAX_SIZE, MIN_SIZE, Tip};
-use art_engine::fill::GradientShape;
-use art_engine::text::Align;
 use eframe::egui::{self, Slider};
+use quill_engine::brush::{BrushSettings, Dynamics, MAX_SIZE, MIN_SIZE, Tip};
+use quill_engine::fill::GradientShape;
+use quill_engine::text::Align;
 
 use crate::color_panel::ColorPicker;
 use crate::paint_tool::{GradientEnd, PaintTool, Tool};
+use crate::presets_panel::PresetsPanel;
+use crate::select_tool::SelectShape;
+use crate::symmetry_view::SymmetryMode;
 
 /// The paint bucket can grow its fill by at most this many pixels.
 const MAX_FILL_GROW: u32 = 8;
@@ -23,6 +26,7 @@ pub fn brush_panel(
     ui: &mut egui::Ui,
     tools: &mut PaintTool,
     colors: &mut ColorPicker,
+    presets: &mut PresetsPanel,
 ) -> PanelActions {
     let mut actions = PanelActions::default();
 
@@ -41,10 +45,26 @@ pub fn brush_panel(
         ui.selectable_value(&mut tools.tool, Tool::Text, "Text (T)")
             .on_hover_text("Click on the canvas and type");
     });
+    ui.horizontal_wrapped(|ui| {
+        ui.weak("Select:");
+        for shape in SelectShape::ALL {
+            let name = shape.label().split(' ').next().unwrap_or_default();
+            ui.selectable_value(&mut tools.tool, Tool::Select(shape), name)
+                .on_hover_text(format!(
+                    "{}. Shift adds to the selection, Alt takes away from it.",
+                    shape.label()
+                ));
+        }
+    });
     ui.add_space(4.0);
 
     // Scrolls if the window is too short to show everything.
     egui::ScrollArea::vertical().show(ui, |ui| {
+        if matches!(tools.tool, Tool::Brush | Tool::Eraser) {
+            presets.ui(ui, tools);
+            symmetry_row(ui, tools);
+            ui.separator();
+        }
         if tools.tool != Tool::Eraser {
             let recent = tools.recent_colors.clone();
             colors.ui(ui, &mut tools.brush.color, &recent);
@@ -54,12 +74,17 @@ pub fn brush_panel(
             Tool::Fill => fill_settings(ui, tools),
             Tool::Gradient => gradient_settings(ui, tools),
             Tool::Text => text_settings(ui, tools),
+            Tool::Select(shape) => select_help(ui, shape),
             _ => brush_settings(ui, tools),
         }
 
         ui.separator();
         // Clearing can be undone like any other change.
-        if ui.button("Clear layer").clicked() {
+        if ui
+            .button("Clear layer")
+            .on_hover_text("With a selection, only what's selected")
+            .clicked()
+        {
             actions.clear_layer = true;
         }
 
@@ -71,6 +96,49 @@ pub fn brush_panel(
     });
 
     actions
+}
+
+/// Symmetry for the brush and eraser: a mode and, when on, a button that
+/// puts the mirror lines back in the middle.
+fn symmetry_row(ui: &mut egui::Ui, tools: &mut PaintTool) {
+    ui.horizontal(|ui| {
+        ui.label("Symmetry").on_hover_text(
+            "Paint on one side of a mirror line and the other side is painted too. \
+             Drag the round handle on a line to move it.",
+        );
+        egui::ComboBox::from_id_salt("symmetry")
+            .selected_text(tools.symmetry.mode.label())
+            .show_ui(ui, |ui| {
+                for mode in SymmetryMode::ALL {
+                    ui.selectable_value(&mut tools.symmetry.mode, mode, mode.label());
+                }
+            });
+        if tools.symmetry.mode != SymmetryMode::Off
+            && ui
+                .small_button("Centre")
+                .on_hover_text("Put the mirror lines back in the middle of the canvas")
+                .clicked()
+        {
+            tools.symmetry.centre_lines();
+        }
+    });
+}
+
+/// What the selection tools do: they have no settings of their own.
+fn select_help(ui: &mut egui::Ui, shape: SelectShape) {
+    ui.label(match shape {
+        SelectShape::Rect | SelectShape::Ellipse => "Drag a box. A click drops the selection.",
+        SelectShape::Lasso => "Draw around what you want.",
+        SelectShape::Polygon => {
+            "Click corner after corner. Double-click, Enter, or click the first corner to \
+             close it; Backspace takes a corner back, Esc gives up."
+        }
+    });
+    ui.add_space(4.0);
+    ui.weak(
+        "Shift adds, Alt takes away. While something is selected, painting stays inside it. \
+         The Select and Edit menus have the rest.",
+    );
 }
 
 /// Size, opacity, softness and pen pressure: for the brush and eraser.
