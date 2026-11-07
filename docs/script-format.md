@@ -473,7 +473,10 @@ Round gradients stay round when a group is stretched more one way than the other
 
 `define` stores a drawing as a **symbol** without painting anything. `use` paints it, placed with the
 same fields as a `group` (`translate`, `scale`, `rotate`, `mirror`, `origin`, `opacity`,
-`scale_brush`). Draw symbols around `[0, 0]`, so `translate` says where they go.
+`scale_brush`). Draw symbols around `[0, 0]`, so `translate` says where they go. On a `use`,
+`origin` is in the symbol's own coordinates, not the canvas's: `"mirror": "x"` with no `origin` flips
+the symbol in place around its own `[0, 0]`, and `"origin": [10, 0]` flips it around the symbol's x 10,
+wherever `translate` puts it.
 
 | | |
 |---|---|

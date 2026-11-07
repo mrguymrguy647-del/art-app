@@ -5,16 +5,11 @@ description: Paint pictures, game sprites, sprite sheets, pixel art and short an
 
 # Painting with Duck Quill
 
-A painting script is a JSON file of commands; `quill` paints it into a PNG and a `.quill`
-(layers kept). Same script, same pixels, every time. One-page intro: `docs/QUICKSTART.md`. Every
-command and option: `docs/script-format.md`. Techniques: `docs/AI_GUIDE.md`.
+A painting script is a JSON file of commands; `quill` paints it into a PNG and a `.quill` (layers kept). Same script, same pixels, every time. One-page intro: `docs/QUICKSTART.md`. Every command and option: `docs/script-format.md`. Techniques: `docs/AI_GUIDE.md`.
 
 ## Setup (once)
 
-From the repository's root: `cargo build --release -p quill_cli` (a few minutes the first time). Then use
-`target/release/quill` (below `quill`; it isn't on the PATH, so give its full path from elsewhere; `art-cli` still
-works). Pictures go to `out/` in the folder you run it from (`--out <folder>` on render, views, export, atlas; check
-and critique only print). `quill <command> --help` lists one command's options. Start from `examples/two-ducks.json`.
+From the repository's root: `cargo build --release -p quill_cli` (a few minutes the first time). Then use `target/release/quill` (below `quill`; it isn't on the PATH, so give its full path from elsewhere; `art-cli` still works). Pictures go to `out/` in the folder you run it from (`--out <folder>` on render, views, export, atlas; check and critique only print). `quill <command> --help` lists one command's options. Start from `examples/two-ducks.json`.
 
 ## The process (after every stage: `quill views` and `quill critique`; fix before moving on)
 
@@ -145,12 +140,17 @@ The canvas is one frame. An `animations` section plays the script's commands and
   walk.json --frame-sheet --transparent`, `--frame 3 --onion`. Export: `quill export walk.json --sheet --gif --mp4
   --scale 4` (sprite sheet with its JSON, `docs/sprite-sheet-format.md`, a GIF, an MP4). `examples/duck-animated.json`
   is a full idle and walk; `examples/duck-sheet.json` a character sheet (swap, mirror, labels).
+- A script with animations renders as `out/<name>-<animation>-000.png` (frame 0; `--frame n`, `--all-frames`), not `out/<name>.png`.
 
 ## Pixel art
 
 `{ "cmd": "canvas", "width": 32, "height": 32, "pixel": { "supersample": 8, "outline": "ink" } }`:
 every command is painted 8 times bigger and shrunk to crisp whole pixels in the palette's colours (the palette is locked: no hex colours; 4 to 8 colours is right). Decimals are fine in positions.
 Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k": "ink", "w": "body" }, "rows": ["kw"] }`. Animation moves by whole pixels. Look with `--zoom 8`; export `--scale 1` for the game, `--scale 8` for people. `examples/duck-pixel.json` is a 32-pixel duck with idle and walk.
+
+## Game tiles
+
+`quill render ground.json --tile` also saves `out/ground-tile.png` (the tile 2 × 2) and says whether opposite edges meet, or where they jump. To make it seamless, paint anything that crosses an edge twice, at x and x ± the width (y ± the height for top and bottom): a stone at `[60, 30]` on a 64-wide tile again at `[-4, 30]`. Or keep things away from the edges. `scatter`, `jitter` and other random marks come out different in each copy, so keep them off the edges. Pack tiles and sprites (one script each) with `quill atlas grass.json water.json --name set`: `out/set.png` and `out/set.json`, which gives each tile's `"index"`, `"x"`, `"y"`, `"width"` and `"height"` by name under `"tiles"` (plus `"tile"`, `"columns"` and `"rows"` when all are one size). Format: `docs/sprite-sheet-format.md`, "Tilesets".
 
 ## Seeing and checking
 
@@ -190,8 +190,7 @@ Tiny things are `pixels` rows: `{ "cmd": "pixels", "at": [6, 3], "colors": { "k"
   **Mask** (a group paints only inside something): `{"cmd": "group", "mask": {"layer": "Water"}, "commands": [...]}`
   (or `{"symbol": "duck", "translate": [x, y]}`, or an area). `"lock": true` recolours a layer without changing its
   edges; `{"cmd": "select", "rect": [x, y, w, h]}` limits every command after it (`"none": true` ends it).
-- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it. The worked example:
-  `docs/AI_GUIDE.md`, "Making it beautiful".
+- `jitter` (2–6) on shapes gives a hand-made edge; `seed` a random command once you like it. The worked example: `docs/AI_GUIDE.md`, "Making it beautiful".
 
 ## Report back
 
